@@ -1,0 +1,155 @@
+@page "/movie/{Id:int}"
+@inject IMovieRepository MovieRepo
+@inject IServiceProvider ServiceProvider
+@inject NavigationManager NavigationManager
+
+<PageTitle>@(_movie?.Title ?? "电影详情")</PageTitle>
+
+@if (_movie == null)
+{
+    <MudProgressCircular Color="Color.Primary" Indeterminate="true" />
+}
+else
+{
+    <MudGrid>
+        <MudItem xs="12" md="4">
+            <MudImage Src="@GetPosterUrl(_movie)" Height="400" ObjectFit="ObjectFit.Cover" Elevation="8" />
+        </MudItem>
+        <MudItem xs="12" md="8">
+            <MudText Typo="Typo.h3" Style="color: #E94560;">@_movie.Title</MudText>
+            @if (!string.IsNullOrEmpty(_movie.OriginalTitle) && _movie.OriginalTitle != _movie.Title)
+            {
+                <MudText Typo="Typo.subtitle1" Style="color: gray;">@_movie.OriginalTitle</MudText>
+            }
+
+            <MudChipSet T="string" Style="margin: 12px 0;">
+                @if (_movie.ReleaseYear.HasValue)
+                {
+                    <MudChip T="string" Size="Size.Small" Color="Color.Primary">@_movie.ReleaseYear</MudChip>
+                }
+                @if (!string.IsNullOrEmpty(_movie.Resolution))
+                {
+                    <MudChip T="string" Size="Size.Small" Color="Color.Secondary">@_movie.Resolution</MudChip>
+                }
+                @if (_movie.Rating.HasValue)
+                {
+                    <MudChip T="string" Size="Size.Small" Style="background:#FFD700;">
+                        <MudIcon Icon="@Icons.Material.Filled.Star" Size="Size.Small" />
+                        @_movie.Rating.Value.ToString("0.0")
+                    </MudChip>
+                }
+                @if (_movie.Runtime.HasValue)
+                {
+                    <MudChip T="string" Size="Size.Small" Style="color:#ffffff;">@(_movie.Runtime)分钟</MudChip>
+                }
+                @if (!string.IsNullOrEmpty(_movie.VideoCodec))
+                {
+                    <MudChip T="string" Size="Size.Small" Style="color:#ffffff;">@_movie.VideoCodec</MudChip>
+                }
+                @if (!string.IsNullOrEmpty(_movie.AudioCodec))
+                {
+                    <MudChip T="string" Size="Size.Small" Style="color:#ffffff;">@_movie.AudioCodec</MudChip>
+                }
+            </MudChipSet>
+
+            @if (!string.IsNullOrEmpty(_movie.Genres))
+            {
+                <MudChipSet T="string">
+                    @foreach (var genre in GetGenres())
+                    {
+                        <MudChip T="string" Size="Size.Small" Variant="Variant.Outlined" Color="Color.Secondary">@genre</MudChip>
+                    }
+                </MudChipSet>
+            }
+
+            <MudText Typo="Typo.body1" Style="margin: 16px 0; line-height: 1.8;">
+                @(_movie.Overview ?? "暂无简介")
+            </MudText>
+
+            @if (!string.IsNullOrEmpty(_movie.Director))
+            {
+                <MudText Typo="Typo.body2"><strong>导演:</strong> @_movie.Director</MudText>
+            }
+            @if (!string.IsNullOrEmpty(_movie.Cast))
+            {
+                <MudText Typo="Typo.body2"><strong>主演:</strong> @_movie.Cast</MudText>
+            }
+            <MudText Typo="Typo.body2"><strong>文件大小:</strong> @FormatFileSize(_movie.FileSize)</MudText>
+            <MudText Typo="Typo.caption" Style="color: gray; margin-top: 8px;">@_movie.FilePath</MudText>
+
+            <MudStack Row="true" Style="margin-top: 24px;" Spacing="2">
+                <MudButton Variant="Variant.Filled" Color="Color.Primary" StartIcon="@Icons.Material.Filled.PlayArrow"
+                           OnClick="PlayMovie" Style="background:#E94560;">播放</MudButton>
+                <MudButton Variant="Variant.Outlined" Color="Color.Secondary"
+                           OnClick="ToggleWatched">
+                    @(_movie.IsWatched ? "标为未看" : "标为已看")
+                </MudButton>
+                <MudIconButton Icon="@(_movie.IsFavorite ? Icons.Material.Filled.Favorite : Icons.Material.Filled.FavoriteBorder)"
+                               Color="Color.Error" OnClick="ToggleFavorite" />
+                <MudRating @bind-SelectedValue="_userRating" Size="Size.Small" OnSelectedValueChanged="OnRatingChanged" />
+            </MudStack>
+        </MudItem>
+    </MudGrid>
+}
+
+@code {
+    [Parameter] public int Id { get; set; }
+    private Movie? _movie;
+    private int _userRating;
+
+    protected override async Task OnInitializedAsync()
+    {
+        _movie = await MovieRepo.GetByIdAsync(Id);
+        _userRating = _movie?.UserRating ?? 0;
+    }
+
+    private string GetPosterUrl(Movie movie)
+    {
+        if (!string.IsNullOrWhiteSpace(movie.PosterPath))
+            return $"https://image.tmdb.org/t/p/w500{movie.PosterPath}";
+        return "images/placeholder-poster.png";
+    }
+
+    private List<string> GetGenres()
+    {
+        if (_movie?.Genres == null) return new();
+        try { return System.Text.Json.JsonSerializer.Deserialize<List<string>>(_movie.Genres) ?? new(); }
+        catch { return new(); }
+    }
+
+    private void PlayMovie()
+    {
+        if (_movie == null) return;
+        NavigationManager.NavigateTo($"/play/{_movie.Id}");
+    }
+
+    private async Task ToggleWatched()
+    {
+        if (_movie == null) return;
+        _movie.IsWatched = !_movie.IsWatched;
+        if (_movie.IsWatched) _movie.WatchedAt = DateTime.UtcNow;
+        await MovieRepo.UpdateAsync(_movie);
+    }
+
+    private async Task ToggleFavorite()
+    {
+        if (_movie == null) return;
+        _movie.IsFavorite = !_movie.IsFavorite;
+        await MovieRepo.UpdateAsync(_movie);
+    }
+
+    private async void OnRatingChanged(int rating)
+    {
+        if (_movie == null) return;
+        _movie.UserRating = rating;
+        await MovieRepo.UpdateAsync(_movie);
+    }
+
+    private static string FormatFileSize(long bytes) => bytes switch
+    {
+        < 1024 => $"{bytes} B",
+        < 1024 * 1024 => $"{bytes / 1024.0:F1} KB",
+        < 1024 * 1024 * 1024 => $"{bytes / (1024.0 * 1024):F1} MB",
+        _ => $"{bytes / (1024.0 * 1024 * 1024):F2} GB"
+    };
+}

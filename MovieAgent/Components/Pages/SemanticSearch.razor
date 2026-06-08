@@ -1,0 +1,282 @@
+@page "/semantic-search"
+@inject IMovieRepository MovieRepo
+@inject IVectorDatabaseService VectorDb
+@inject IPlayerService PlayerService
+@inject NavigationManager NavigationManager
+@implements IAsyncDisposable
+
+<PageTitle>语义搜索</PageTitle>
+
+<MudContainer MaxWidth="MaxWidth.Large" Style="padding: 16px;">
+    <MudPaper Elevation="0" Style="background: #1A1A2E; padding: 24px; border-radius: 12px; margin-bottom: 16px;">
+        <MudStack Spacing="3">
+            <MudStack Row="true" AlignItems="AlignItems.Center" Justify="Justify.SpaceBetween">
+                <MudText Typo="Typo.h4" Style="color: #E94560;">语义搜索</MudText>
+                <MudChip T="string" Color="Color.Primary">向量库: @_totalRecords / @_totalMovies</MudChip>
+            </MudStack>
+
+            <MudStack Row="true" Spacing="3" AlignItems="AlignItems.Stretch">
+                <MudTextField @ref="_searchRef" @bind-Value="_searchText" Label="自然语言描述你想看的电影" FullWidth
+                              Variant="Variant.Outlined" Style="flex: 1;"
+                              HelperText="例如：关于太空冒险的科幻片、悬疑推理、温暖的治愈系电影..."
+                              OnKeyDown="OnKeyDown" />
+                <MudButton Variant="Variant.Filled" Color="Color.Primary" OnClick="DoSearch" Disabled="@_isSearching"
+                           Style="background:#E94560; min-width: 120px;" StartIcon="@Icons.Material.Filled.Search">
+                    @(_isSearching ? "搜索中..." : "搜索")
+                </MudButton>
+            </MudStack>
+
+            <MudStack Row="true" Spacing="3">
+                <MudButton Variant="Variant.Outlined" Color="Color.Secondary" OnClick="BuildIndex"
+                           Disabled="@_isBuilding" StartIcon="@Icons.Material.Filled.Build">
+                    @(_isBuilding ? $"生成向量中... ({_builtCount}/{_totalToBuild})" : "构建向量索引")
+                </MudButton>
+                <MudButton Variant="Variant.Outlined" Color="Color.Secondary" OnClick="RebuildIndex"
+                           Disabled="@_isBuilding" StartIcon="@Icons.Material.Filled.Refresh">
+                    重新构建所有向量
+                </MudButton>
+            </MudStack>
+        </MudStack>
+    </MudPaper>
+
+    @if (_isSearching)
+    {
+        <MudPaper Elevation="0" Style="background: #1A1A2E; padding: 32px; border-radius: 12px; text-align: center;">
+            <MudProgressCircular Color="Color.Primary" Indeterminate="true" Size="Size.Large" />
+            <MudText Style="color: #E0E0E0; margin-top: 12px;">正在搜索电影向量...</MudText>
+        </MudPaper>
+    }
+    else if (_searchResults != null && _searchResults.Any())
+    {
+        <MudText Typo="Typo.h6" Style="color: #E0E0E0; margin-bottom: 16px;">找到 @_searchResults.Count 部相似电影</MudText>
+        <MudGrid>
+            @foreach (var r in _searchResults)
+            {
+                <MudItem xs="12" sm="6" md="4">
+                    <MudCard Style="background: #2D2D44; border-radius: 12px; overflow: hidden; cursor: pointer;"
+                             @onclick="() => GoToDetail(r.MovieId)">
+                        <MudCardContent Style="padding: 16px;">
+                            <MudStack Row="true" AlignItems="AlignItems.Center" Justify="Justify.SpaceBetween" Style="margin-bottom: 8px;">
+                                <MudText Style="color: #E94560; font-weight: bold; max-width: 200px;" Overflow="Overflow.Ellipsis">@r.Title</MudText>
+                                <MudChip T="string" Size="Size.Small" Color="Color.Primary">@r.Similarity.ToString("0.00")</MudChip>
+                            </MudStack>
+                            @if (!string.IsNullOrWhiteSpace(r.Overview))
+                            {
+                                <MudText Typo="Typo.body2" Style="color: #B0B0C0;">
+                                    @r.Overview.Substring(0, Math.Min(120, r.Overview.Length))...
+                                </MudText>
+                            }
+                        </MudCardContent>
+                        <MudCardActions Style="padding: 8px 16px 16px 16px;">
+                            <MudButton Variant="Variant.Filled" Color="Color.Primary" Size="Size.Small"
+                                       Style="background:#E94560;" OnClick="(e => PlayMovie(r.MovieId))">
+                                播放
+                            </MudButton>
+                            <MudButton Variant="Variant.Text" Color="Color.Secondary" Size="Size.Small"
+                                       OnClick="(e => GoToDetail(r.MovieId))">
+                                详情
+                            </MudButton>
+                        </MudCardActions>
+                    </MudCard>
+                </MudItem>
+            }
+        </MudGrid>
+    }
+    else if (!string.IsNullOrWhiteSpace(_searchText) && !_isSearching)
+    {
+        <MudPaper Elevation="0" Style="background: #1A1A2E; padding: 24px; border-radius: 12px; text-align: center;">
+            <MudIcon Icon="@Icons.Material.Filled.SearchOff" Color="Color.Secondary" Size="Size.Large" />
+            <MudText Style="color: #E0E0E0; margin-top: 12px;">没有找到相关电影</MudText>
+            <MudText Typo="Typo.body2" Style="color: gray;">请尝试其他描述，或先构建向量索引</MudText>
+        </MudPaper>
+    }
+    else
+    {
+        <MudPaper Elevation="0" Style="background: #1A1A2E; padding: 24px; border-radius: 12px;">
+            <MudText Style="color: #E0E0E0;">
+                欢迎使用语义搜索！
+            </MudText>
+            <MudList T="string" Style="color: #B0B0C0;">
+                <MudListItem T="string" Icon="@Icons.Material.Filled.Star">
+                    输入自然语言描述，如「关于太空冒险的科幻片」
+                </MudListItem>
+                <MudListItem T="string" Icon="@Icons.Material.Filled.Star">
+                    系统会将电影简介转换为向量并搜索最相似的电影
+                </MudListItem>
+                <MudListItem T="string" Icon="@Icons.Material.Filled.Star">
+                    首次使用请点击「构建向量索引」
+                </MudListItem>
+            </MudList>
+        </MudPaper>
+    }
+</MudContainer>
+
+@code {
+    private string _searchText = string.Empty;
+    private bool _isSearching;
+    private bool _isBuilding;
+    private int _builtCount;
+    private int _totalToBuild;
+    private int _totalRecords;
+    private int _totalMovies;
+    private List<VectorSearchResult>? _searchResults;
+    private MudTextField<string>? _searchRef;
+
+    protected override async Task OnInitializedAsync()
+    {
+        await VectorDb.EnsureDatabaseAsync();
+        _totalRecords = await VectorDb.GetRecordCountAsync();
+        var movies = await MovieRepo.GetAllAsync();
+        _totalMovies = movies.Count;
+    }
+
+    private Task OnKeyDown(KeyboardEventArgs e)
+    {
+        if (e.Key == "Enter") return DoSearch();
+        return Task.CompletedTask;
+    }
+
+    private async Task DoSearch()
+    {
+        if (string.IsNullOrWhiteSpace(_searchText) || _isSearching) return;
+
+        _isSearching = true;
+        _searchResults = null;
+        StateHasChanged();
+
+        try
+        {
+            var results = await VectorDb.SearchAsync(_searchText, 12);
+            _searchResults = results;
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"[SemanticSearch] 搜索失败: {ex.Message}");
+            _searchResults = new List<VectorSearchResult>();
+        }
+        finally
+        {
+            _isSearching = false;
+            StateHasChanged();
+        }
+    }
+
+    private async Task BuildIndex()
+    {
+        if (_isBuilding) return;
+
+        var movies = await MovieRepo.GetAllAsync();
+        var toProcess = new List<Movie>();
+        foreach (var m in movies)
+        {
+            if (!await VectorDb.HasMovieAsync(m.Id))
+            {
+                toProcess.Add(m);
+            }
+        }
+
+        if (!toProcess.Any()) return;
+
+        _isBuilding = true;
+        _builtCount = 0;
+        _totalToBuild = toProcess.Count;
+        StateHasChanged();
+
+        try
+        {
+            foreach (var m in toProcess)
+            {
+                try
+                {
+                    var text = $"{m.Title}. {m.Overview ?? string.Empty}";
+                    var vector = await VectorDb.GenerateEmbeddingAsync(text);
+                    if (vector != null && vector.Length > 0)
+                    {
+                        await VectorDb.AddMovieAsync(m.Id, vector, m.Title, m.Overview);
+                    }
+                }
+                catch (Exception ex)
+                {
+                    Console.WriteLine($"[SemanticSearch] 处理电影 {m.Id} 失败: {ex.Message}");
+                }
+
+                _builtCount++;
+                _totalRecords = await VectorDb.GetRecordCountAsync();
+                StateHasChanged();
+            }
+        }
+        finally
+        {
+            _isBuilding = false;
+            _totalRecords = await VectorDb.GetRecordCountAsync();
+            StateHasChanged();
+        }
+    }
+
+    private async Task RebuildIndex()
+    {
+        if (_isBuilding) return;
+
+        var movies = await MovieRepo.GetAllAsync();
+        if (!movies.Any()) return;
+
+        _isBuilding = true;
+        _builtCount = 0;
+        _totalToBuild = movies.Count;
+        StateHasChanged();
+
+        try
+        {
+            foreach (var m in movies)
+            {
+                try
+                {
+                    var text = $"{m.Title}. {m.Overview ?? string.Empty}";
+                    var vector = await VectorDb.GenerateEmbeddingAsync(text);
+                    if (vector != null && vector.Length > 0)
+                    {
+                        await VectorDb.AddMovieAsync(m.Id, vector, m.Title, m.Overview);
+                    }
+                }
+                catch (Exception ex)
+                {
+                    Console.WriteLine($"[SemanticSearch] 重建电影 {m.Id} 失败: {ex.Message}");
+                }
+
+                _builtCount++;
+                _totalRecords = await VectorDb.GetRecordCountAsync();
+                StateHasChanged();
+            }
+        }
+        finally
+        {
+            _isBuilding = false;
+            _totalRecords = await VectorDb.GetRecordCountAsync();
+            StateHasChanged();
+        }
+    }
+
+    private void GoToDetail(int movieId)
+    {
+        NavigationManager.NavigateTo($"/movie/{movieId}");
+    }
+
+    private async Task PlayMovie(int movieId)
+    {
+        var movie = await MovieRepo.GetByIdAsync(movieId);
+        if (movie == null) return;
+        try
+        {
+            await PlayerService.PlayAsync(movie.FilePath);
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"[SemanticSearch] 播放失败: {ex.Message}");
+        }
+    }
+
+    public async ValueTask DisposeAsync()
+    {
+        // VectorDB doesn't need disposal of its own
+    }
+}

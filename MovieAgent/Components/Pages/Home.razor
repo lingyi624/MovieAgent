@@ -1,0 +1,344 @@
+@page "/"
+@inject IMovieRepository MovieRepo
+@inject IMovieScannerService ScannerService
+@inject IServiceProvider ServiceProvider
+@inject NavigationManager NavigationManager
+
+<PageTitle>Movie Agent - 首页</PageTitle>
+
+<MudText Typo="Typo.h4" GutterBottom Style="color: #E94560;">电影海报墙</MudText>
+
+<MudGrid>
+    <MudItem xs="12" sm="6" md="3">
+        <MudTextField @bind-Value="_searchKeyword" @bind-Value:after="OnSearchChanged" Label="搜索电影" Immediate="true"
+                      Adornment="Adornment.End" AdornmentIcon="@Icons.Material.Filled.Search"
+                      Variant="Variant.Outlined" DebounceInterval="300" />
+    </MudItem>
+    <MudItem xs="6" sm="3" md="2">
+        <MudSelect @bind-Value="_selectedGenre" @bind-Value:after="OnGenreChanged" Label="类型" Variant="Variant.Outlined" T="string">
+            <MudSelectItem T="string" Value="@null">全部</MudSelectItem>
+            @foreach (var genre in _genres)
+            {
+                <MudSelectItem T="string" Value="@genre">@genre</MudSelectItem>
+            }
+        </MudSelect>
+    </MudItem>
+    <MudItem xs="6" sm="3" md="2">
+        <MudSelect @bind-Value="_selectedResolution" @bind-Value:after="OnResolutionChanged" Label="分辨率" Variant="Variant.Outlined" T="string">
+            <MudSelectItem T="string" Value="@null">全部</MudSelectItem>
+            @foreach (var resolution in _resolutions)
+            {
+                <MudSelectItem T="string" Value="@resolution">@resolution</MudSelectItem>
+            }
+        </MudSelect>
+    </MudItem>
+    <MudItem xs="12" md="3">
+        <MudButton Variant="Variant.Filled" Color="Color.Primary" OnClick="StartScan"
+                   StartIcon="@Icons.Material.Filled.Refresh" Style="background:#E94560;">
+            扫描NAS
+        </MudButton>
+        <MudButton Variant="Variant.Outlined" Color="Color.Secondary" OnClick="ToggleWatched" Style="margin-left:8px;">
+            @(_showWatched == null ? "全部" : _showWatched == true ? "已看" : "未看")
+        </MudButton>
+    </MudItem>
+</MudGrid>
+
+@if (_isScanning)
+{
+    <MudCard Elevation="4" Style="margin: 16px 0; padding: 16px; background: #2D2D44;">
+        <MudText Typo="Typo.body1" Style="color: #E94560; font-weight: bold; margin-bottom: 12px;">扫描进度</MudText>
+        
+        <div style="display: flex; align-items: center; justify-content: center; margin-bottom: 12px;">
+            @if (_scanStatus.Contains("扫描视频文件"))
+            {
+                <MudProgressCircular Size="Size.Medium" Color="Color.Primary" Indeterminate="true" Style="margin-right: 16px;" />
+            }
+            <MudProgressLinear 
+                Color="Color.Primary" 
+                Value="_scanProgressPercent" 
+                Style="flex: 1;"
+                ShowProgressValue="true" />
+        </div>
+        
+        <MudGrid>
+            <MudItem xs="12" md="4">
+                <MudText Typo="Typo.body2">状态:</MudText>
+                <MudText Typo="Typo.body1" Style="color: white;">@_scanStatus</MudText>
+            </MudItem>
+            <MudItem xs="12" md="4">
+                <MudText Typo="Typo.body2">已找到:</MudText>
+                <MudText Typo="Typo.body1" Style="color: #4CAF50; font-weight: bold;">@_scanFoundCount 部</MudText>
+            </MudItem>
+            <MudItem xs="12" md="4">
+                <MudText Typo="Typo.body2">已导入:</MudText>
+                <MudText Typo="Typo.body1" Style="color: #2196F3; font-weight: bold;">@_scanImportedCount 部</MudText>
+            </MudItem>
+        </MudGrid>
+        
+        @if (!string.IsNullOrEmpty(_scanCurrentFile))
+        {
+            <MudText Typo="Typo.caption" Style="color: gray; margin-top: 12px; font-style: italic;">
+                当前处理: @_scanCurrentFile
+            </MudText>
+        }
+    </MudCard>
+}
+
+<MudText Style="margin-top: 16px; color: gray;">共 @_totalCount 部电影</MudText>
+
+<MudGrid>
+    @foreach (var movie in _movies)
+    {
+        <MudItem xs="6" sm="4" md="3" lg="2">
+            <MudCard Elevation="4" Class="movie-card" Style="cursor: pointer; transition: transform 0.2s;">
+                <MudCardMedia Image="@GetPosterUrl(movie)" Height="280" />
+                <MudCardContent>
+                    <MudText Typo="Typo.body2" Style="font-weight: bold; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: #E0E0E0;">
+                        @movie.Title
+                    </MudText>
+                    <MudText Typo="Typo.caption" Style="color: #888; margin-top: 4px;">
+                        @(movie.ReleaseYear?.ToString() ?? "未知") | @(movie.Resolution ?? "未知")
+                        @if (movie.Rating.HasValue)
+                        {
+                            <MudIcon Icon="@Icons.Material.Filled.Star" Size="Size.Small" Style="color: #FFD700; vertical-align: middle; margin-left: 4px;" />
+                            @movie.Rating.Value.ToString("0.0")
+                        }
+                    </MudText>
+                    @if (!string.IsNullOrEmpty(movie.Genres))
+                    {
+                        <div style="margin-top: 6px; display: flex; flex-wrap: wrap; gap: 4px;">
+                            @foreach (var genre in ParseGenres(movie.Genres))
+                            {
+                                <MudChip T="string" Size="Size.Small" Color="Color.Info" Style="background: rgba(99, 102, 241, 0.3); border-color: rgba(99, 102, 241, 0.5); color: #A5B4FC; font-size: 10px;">
+                                    @genre
+                                </MudChip>
+                            }
+                        </div>
+                    }
+                </MudCardContent>
+                <MudCardActions>
+                    <MudIconButton Icon="@Icons.Material.Filled.PlayArrow" Color="Color.Primary"
+                                   OnClick="() => PlayMovie(movie)" Size="Size.Small" />
+                    <MudIconButton Icon="@Icons.Material.Filled.Info" Color="Color.Secondary"
+                                   OnClick="() => NavigateToDetail(movie.Id)" Size="Size.Small" />
+                    @if (movie.IsWatched)
+                    {
+                        <MudChip T="string" Size="Size.Small" Color="Color.Success">已看</MudChip>
+                    }
+                </MudCardActions>
+            </MudCard>
+        </MudItem>
+    }
+</MudGrid>
+
+@if (_movies.Count == 0 && !_isScanning)
+{
+    <MudAlert Severity="Severity.Info" Style="margin-top: 40px;">
+        还没有电影，请点击"扫描NAS"按钮开始扫描，或在设置中配置NAS共享路径。
+    </MudAlert>
+}
+
+<MudPagination Selected="_currentPage" Count="_totalPages" SelectedChanged="OnPageChanged"
+               Style="margin-top: 24px; justify-content: center;" />
+
+@code {
+    private List<Movie> _movies = new();
+    private List<string> _genres = new();
+    private List<string> _resolutions = new();
+    private string? _searchKeyword;
+    private string? _selectedGenre;
+    private string? _selectedResolution;
+    private bool? _showWatched;
+    private bool _isScanning;
+    private string _scanStatus = "";
+    private int _scanFoundCount = 0;
+    private int _scanImportedCount = 0;
+    private int _scanCurrentIndex = 0;
+    private int _scanTotalFiles = 0;
+    private string _scanCurrentFile = "";
+    private int _scanProgressPercent = 0;
+    private int _currentPage = 1;
+    private int _totalPages = 1;
+    private int _totalCount;
+
+    protected override async Task OnInitializedAsync()
+    {
+        _genres = await MovieRepo.GetAllGenresAsync();
+        _resolutions = await MovieRepo.GetAllResolutionsAsync();
+        await LoadMovies();
+    }
+
+    private async Task LoadMovies()
+    {
+        var filter = new MovieFilter
+        {
+            SearchKeyword = _searchKeyword,
+            Genres = _selectedGenre != null ? new List<string> { _selectedGenre } : null,
+            Resolution = _selectedResolution,
+            IsWatched = _showWatched,
+            Page = _currentPage,
+            PageSize = 24
+        };
+        _movies = await MovieRepo.GetUniqueMoviesAsync(filter);
+        _totalCount = await MovieRepo.GetUniqueMovieCountAsync(filter);
+        _totalPages = Math.Max(1, (int)Math.Ceiling(_totalCount / 24.0));
+    }
+
+    private string GetPosterUrl(Movie movie)
+    {
+        if (!string.IsNullOrWhiteSpace(movie.PosterPath))
+            return $"https://image.tmdb.org/t/p/w342{movie.PosterPath}";
+        return "images/placeholder-poster.png";
+    }
+
+    private async Task StartScan()
+    {
+        _isScanning = true;
+        _scanStatus = "正在扫描NAS共享路径...";
+        _scanFoundCount = 0;
+        _scanImportedCount = 0;
+        _scanCurrentIndex = 0;
+        _scanTotalFiles = 0;
+        _scanCurrentFile = "";
+        _scanProgressPercent = 0;
+        StateHasChanged();
+
+        ScannerService.ScanProgressChanged += OnScanProgressChanged;
+
+        try
+        {
+            var sharePaths = new List<string>();
+            var shareFile = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "share.json");
+            if (File.Exists(shareFile))
+            {
+                var json = await File.ReadAllTextAsync(shareFile);
+                var config = System.Text.Json.JsonSerializer.Deserialize<ShareConfig>(json);
+                if (config?.Shares != null) sharePaths = config.Shares;
+            }
+
+            _scanStatus = $"正在扫描 {sharePaths.Count} 个共享路径...";
+            StateHasChanged();
+
+            _scanStatus = "正在扫描视频文件...";
+            _scanProgressPercent = 0;
+            StateHasChanged();
+            
+            var files = await ScannerService.ScanVideoFilesAsync(sharePaths);
+            _scanFoundCount = files.Count;
+            _scanTotalFiles = files.Count;
+            StateHasChanged();
+
+            if (files.Count > 0)
+            {
+                _scanStatus = "正在导入电影信息...";
+                _scanProgressPercent = 0;
+                StateHasChanged();
+                
+                var imported = await ScannerService.ImportNewMoviesAsync(files);
+                _scanImportedCount = imported;
+                _scanProgressPercent = 100;
+                _scanStatus = $"导入完成！新增 {imported} 部电影";
+            }
+            else
+            {
+                _scanStatus = "扫描完成！未发现新视频文件";
+            }
+            StateHasChanged();
+        }
+        catch (Exception ex)
+        {
+            _scanStatus = $"扫描出错: {ex.Message}";
+            StateHasChanged();
+        }
+        finally
+        {
+            ScannerService.ScanProgressChanged -= OnScanProgressChanged;
+        }
+
+        await Task.Delay(2000);
+
+        _isScanning = false;
+        _genres = await MovieRepo.GetAllGenresAsync();
+        _resolutions = await MovieRepo.GetAllResolutionsAsync();
+        await LoadMovies();
+    }
+
+    private void OnScanProgressChanged(object? sender, ScanProgressEventArgs e)
+    {
+        if (!string.IsNullOrEmpty(e.CurrentFileName))
+        {
+            _scanCurrentFile = e.CurrentFileName;
+        }
+        if (e.CurrentIndex > 0 && e.TotalFiles > 0)
+        {
+            _scanCurrentIndex = e.CurrentIndex;
+            _scanProgressPercent = (int)((double)e.CurrentIndex / e.TotalFiles * 100);
+            _scanImportedCount = e.TotalScanned;
+        }
+        StateHasChanged();
+    }
+
+    private void GetDirs(string sharePath,ref int dirs)
+    {
+        dirs += Directory.GetDirectories(sharePath).Count();
+        
+        // foreach (var son in Directory.GetDirectories(sharePath))
+        //     if (Directory.GetFiles(son).Any())
+        //     { 
+        //         GetDirs(son, dirs);
+        //     }
+       
+    }
+
+    private void PlayMovie(Movie movie)
+    {
+        NavigationManager.NavigateTo($"/play/{movie.Id}");
+    }
+
+    private void NavigateToDetail(int id) => NavigationManager.NavigateTo($"/movie/{id}");
+
+    private List<string> ParseGenres(string genresJson)
+    {
+        try
+        {
+            var genres = System.Text.Json.JsonSerializer.Deserialize<List<string>>(genresJson);
+            return genres?.Take(2).ToList() ?? new List<string>();
+        }
+        catch
+        {
+            return new List<string>();
+        }
+    }
+
+    private async Task ApplyFilter()
+    {
+        _currentPage = 1;
+        await LoadMovies();
+        StateHasChanged();
+    }
+
+    private async Task OnSearchChanged()
+    {
+        await ApplyFilter();
+    }
+
+    private async Task OnGenreChanged()
+    {
+        await ApplyFilter();
+    }
+
+    private async Task OnResolutionChanged()
+    {
+        await ApplyFilter();
+    }
+
+    private async Task ToggleWatched()
+    {
+        _showWatched = _showWatched switch { null => true, true => false, false => null };
+        await ApplyFilter();
+    }
+
+    private async Task OnPageChanged(int page) { _currentPage = page; await LoadMovies(); }
+
+    public class ShareConfig { public List<string> Shares { get; set; } = new(); }
+}

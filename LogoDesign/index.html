@@ -1,0 +1,321 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>MovieAgent Logo Design</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background: linear-gradient(135deg, #0a0a0f 0%, #1a1a2e 50%, #16213e 100%);
+            min-height: 100vh;
+            padding: 60px 20px;
+            color: #fff;
+        }
+
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+        }
+
+        header {
+            text-align: center;
+            margin-bottom: 60px;
+        }
+
+        h1 {
+            font-size: 3rem;
+            font-weight: 700;
+            background: linear-gradient(90deg, #e94560, #00d9ff);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            background-clip: text;
+            margin-bottom: 10px;
+        }
+
+        .subtitle {
+            color: rgba(255, 255, 255, 0.6);
+            font-size: 1.1rem;
+        }
+
+        .logo-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
+            gap: 40px;
+            padding: 20px;
+        }
+
+        .logo-card {
+            background: rgba(255, 255, 255, 0.05);
+            backdrop-filter: blur(10px);
+            border-radius: 20px;
+            padding: 40px;
+            text-align: center;
+            transition: all 0.3s ease;
+            border: 1px solid rgba(255, 255, 255, 0.1);
+        }
+
+        .logo-card:hover {
+            transform: translateY(-5px);
+            background: rgba(255, 255, 255, 0.08);
+            border-color: rgba(255, 255, 255, 0.2);
+        }
+
+        .logo-preview {
+            width: 180px;
+            height: 180px;
+            margin: 0 auto 30px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+
+        .logo-preview svg {
+            width: 100%;
+            height: 100%;
+            transition: transform 0.3s ease;
+        }
+
+        .logo-card:hover .logo-preview svg {
+            transform: scale(1.05);
+        }
+
+        .logo-name {
+            font-size: 1.3rem;
+            font-weight: 600;
+            margin-bottom: 10px;
+            color: #fff;
+        }
+
+        .logo-description {
+            color: rgba(255, 255, 255, 0.5);
+            font-size: 0.9rem;
+            line-height: 1.5;
+        }
+
+        .color-info {
+            margin-top: 20px;
+            padding-top: 20px;
+            border-top: 1px solid rgba(255, 255, 255, 0.1);
+        }
+
+        .color-info span {
+            display: inline-block;
+            margin: 5px 10px;
+            padding: 5px 12px;
+            background: rgba(255, 255, 255, 0.1);
+            border-radius: 8px;
+            font-size: 0.8rem;
+            font-family: monospace;
+        }
+
+        .download-btn {
+            display: inline-block;
+            margin-top: 20px;
+            padding: 12px 30px;
+            background: linear-gradient(90deg, #e94560, #ff6b35);
+            color: white;
+            text-decoration: none;
+            border-radius: 30px;
+            font-weight: 600;
+            transition: all 0.3s ease;
+        }
+
+        .download-btn:hover {
+            transform: scale(1.05);
+            box-shadow: 0 10px 30px rgba(233, 69, 96, 0.4);
+        }
+
+        .footer {
+            text-align: center;
+            margin-top: 60px;
+            padding-top: 30px;
+            border-top: 1px solid rgba(255, 255, 255, 0.1);
+            color: rgba(255, 255, 255, 0.4);
+            font-size: 0.9rem;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <header>
+            <h1>MovieAgent Logo Designs</h1>
+            <p class="subtitle">专业的电影媒体播放器品牌标识设计</p>
+        </header>
+
+        <div class="logo-grid">
+            <!-- Logo 1: 电影胶片 + 播放按钮 -->
+            <div class="logo-card">
+                <div class="logo-preview">
+                    <svg viewBox="0 0 200 200" xmlns="http://www.w3.org/2000/svg">
+                        <defs>
+                            <linearGradient id="grad1" x1="0%" y1="0%" x2="100%" y2="100%">
+                                <stop offset="0%" style="stop-color:#e94560"/>
+                                <stop offset="100%" style="stop-color:#ff6b35"/>
+                            </linearGradient>
+                            <linearGradient id="grad1b" x1="100%" y1="0%" x2="0%" y2="100%">
+                                <stop offset="0%" style="stop-color:#e94560"/>
+                                <stop offset="100%" style="stop-color:#ff6b35"/>
+                            </linearGradient>
+                        </defs>
+                        <rect x="20" y="20" width="160" height="160" rx="20" fill="none" stroke="url(#grad1)" stroke-width="3"/>
+                        <path d="M35 60 Q35 80 55 80 L35 100 Q35 120 55 120 L35 140" stroke="url(#grad1)" stroke-width="4" fill="none" stroke-linecap="round"/>
+                        <path d="M165 60 Q165 80 145 80 L165 100 Q165 120 145 120 L165 140" stroke="url(#grad1b)" stroke-width="4" fill="none" stroke-linecap="round"/>
+                        <polygon points="80,60 80,140 120,100" fill="url(#grad1)"/>
+                        <circle cx="100" cy="100" r="45" fill="none" stroke="url(#grad1)" stroke-width="2" opacity="0.3"/>
+                    </svg>
+                </div>
+                <h3 class="logo-name">FilmPlay</h3>
+                <p class="logo-description">结合电影胶片元素与播放按钮，展现媒体播放器的核心功能，渐变色彩增添现代感。</p>
+                <div class="color-info">
+                    <span>#e94560</span>
+                    <span>#ff6b35</span>
+                </div>
+                <a href="#" class="download-btn">下载 SVG</a>
+            </div>
+
+            <!-- Logo 2: 播放按钮 + 光影效果 -->
+            <div class="logo-card">
+                <div class="logo-preview">
+                    <svg viewBox="0 0 200 200" xmlns="http://www.w3.org/2000/svg">
+                        <defs>
+                            <radialGradient id="grad2" cx="30%" cy="30%" r="70%">
+                                <stop offset="0%" style="stop-color:#00d9ff"/>
+                                <stop offset="100%" style="stop-color:#0077b6"/>
+                            </radialGradient>
+                            <filter id="glow">
+                                <feGaussianBlur stdDeviation="3" result="coloredBlur"/>
+                                <feMerge>
+                                    <feMergeNode in="coloredBlur"/>
+                                    <feMergeNode in="SourceGraphic"/>
+                                </feMerge>
+                            </filter>
+                        </defs>
+                        <circle cx="100" cy="100" r="70" fill="url(#grad2)"/>
+                        <circle cx="100" cy="100" r="60" fill="#0a0a0f"/>
+                        <polygon points="75,65 75,135 130,100" fill="#00d9ff" filter="url(#glow)"/>
+                        <circle cx="100" cy="100" r="35" fill="none" stroke="#00d9ff" stroke-width="1" opacity="0.5"/>
+                        <circle cx="100" cy="100" r="45" fill="none" stroke="#00d9ff" stroke-width="1" opacity="0.3"/>
+                    </svg>
+                </div>
+                <h3 class="logo-name">GlowPlay</h3>
+                <p class="logo-description">发光效果的播放按钮，科技感十足，深蓝色调传达专业与信赖。</p>
+                <div class="color-info">
+                    <span>#00d9ff</span>
+                    <span>#0077b6</span>
+                </div>
+                <a href="#" class="download-btn">下载 SVG</a>
+            </div>
+
+            <!-- Logo 3: 字母 MA 组合 -->
+            <div class="logo-card">
+                <div class="logo-preview">
+                    <svg viewBox="0 0 200 200" xmlns="http://www.w3.org/2000/svg">
+                        <defs>
+                            <linearGradient id="grad3" x1="0%" y1="0%" x2="100%" y2="100%">
+                                <stop offset="0%" style="stop-color:#7b2cbf"/>
+                                <stop offset="100%" style="stop-color:#e94560"/>
+                            </linearGradient>
+                        </defs>
+                        <rect x="30" y="30" width="140" height="140" rx="25" fill="url(#grad3)"/>
+                        <path d="M55 70 L55 130 L95 130 L75 95 L105 60 L55 60 Z" fill="#fff"/>
+                        <path d="M105 70 L105 130 M125 70 L125 130 M145 70 L145 130" stroke="#fff" stroke-width="10" stroke-linecap="round"/>
+                        <circle cx="155" cy="155" r="15" fill="#fff" opacity="0.3"/>
+                    </svg>
+                </div>
+                <h3 class="logo-name">MA Monogram</h3>
+                <p class="logo-description">MovieAgent 的首字母 MA 组合设计，现代简约风格，紫色渐变传达创意与创新。</p>
+                <div class="color-info">
+                    <span>#7b2cbf</span>
+                    <span>#e94560</span>
+                </div>
+                <a href="#" class="download-btn">下载 SVG</a>
+            </div>
+
+            <!-- Logo 4: 电影银幕风格 -->
+            <div class="logo-card">
+                <div class="logo-preview">
+                    <svg viewBox="0 0 200 200" xmlns="http://www.w3.org/2000/svg">
+                        <defs>
+                            <linearGradient id="grad4" x1="0%" y1="100%" x2="0%" y2="0%">
+                                <stop offset="0%" style="stop-color:#1a1a2e"/>
+                                <stop offset="100%" style="stop-color:#16213e"/>
+                            </linearGradient>
+                        </defs>
+                        <rect x="25" y="45" width="150" height="90" rx="5" fill="url(#grad4)"/>
+                        <polygon points="25,45 100,15 175,45" fill="none" stroke="#4a5568" stroke-width="2"/>
+                        <polygon points="25,135 100,185 175,135" fill="none" stroke="#4a5568" stroke-width="2"/>
+                        <circle cx="100" cy="90" r="25" fill="#e94560"/>
+                        <polygon points="90,80 90,100 110,90" fill="#fff"/>
+                        <circle cx="100" cy="90" r="35" fill="none" stroke="#e94560" stroke-width="2" opacity="0.3"/>
+                    </svg>
+                </div>
+                <h3 class="logo-name">ScreenPlay</h3>
+                <p class="logo-description">以电影银幕为灵感，简约的三角形银幕造型配合播放按钮，简洁而富有识别性。</p>
+                <div class="color-info">
+                    <span>#e94560</span>
+                    <span>#1a1a2e</span>
+                </div>
+                <a href="#" class="download-btn">下载 SVG</a>
+            </div>
+
+            <!-- Logo 5: 圆形播放按钮 -->
+            <div class="logo-card">
+                <div class="logo-preview">
+                    <svg viewBox="0 0 200 200" xmlns="http://www.w3.org/2000/svg">
+                        <defs>
+                            <linearGradient id="grad5" x1="0%" y1="0%" x2="100%" y2="100%">
+                                <stop offset="0%" style="stop-color:#06d6a0"/>
+                                <stop offset="100%" style="stop-color:#118ab2"/>
+                            </linearGradient>
+                        </defs>
+                        <circle cx="100" cy="100" r="80" fill="none" stroke="url(#grad5)" stroke-width="4" stroke-dasharray="10 5"/>
+                        <circle cx="100" cy="100" r="55" fill="url(#grad5)"/>
+                        <circle cx="100" cy="100" r="50" fill="#0a0a0f"/>
+                        <polygon points="85,75 85,125 130,100" fill="url(#grad5)"/>
+                        <circle cx="170" cy="30" r="8" fill="#06d6a0" opacity="0.5"/>
+                        <circle cx="30" cy="170" r="6" fill="#118ab2" opacity="0.5"/>
+                    </svg>
+                </div>
+                <h3 class="logo-name">PlayCircle</h3>
+                <p class="logo-description">圆形设计配合渐变色彩，清新的绿色系传达活力与现代感，适合科技产品。</p>
+                <div class="color-info">
+                    <span>#06d6a0</span>
+                    <span>#118ab2</span>
+                </div>
+                <a href="#" class="download-btn">下载 SVG</a>
+            </div>
+
+            <!-- Logo 6: 极简风格 -->
+            <div class="logo-card">
+                <div class="logo-preview">
+                    <svg viewBox="0 0 200 200" xmlns="http://www.w3.org/2000/svg">
+                        <rect x="30" y="50" width="140" height="100" rx="8" fill="none" stroke="#fff" stroke-width="2"/>
+                        <polygon points="55,65 55,135 100,100" fill="#fff"/>
+                        <line x1="120" y1="75" x2="150" y2="75" stroke="#fff" stroke-width="3" stroke-linecap="round"/>
+                        <line x1="120" y1="100" x2="145" y2="100" stroke="#fff" stroke-width="3" stroke-linecap="round"/>
+                        <line x1="120" y1="125" x2="135" y2="125" stroke="#fff" stroke-width="3" stroke-linecap="round"/>
+                    </svg>
+                </div>
+                <h3 class="logo-name">MinimalPlay</h3>
+                <p class="logo-description">极简主义设计，黑白配色，干净利落的线条展现专业品质与现代美学。</p>
+                <div class="color-info">
+                    <span>#ffffff</span>
+                    <span>#0a0a0f</span>
+                </div>
+                <a href="#" class="download-btn">下载 SVG</a>
+            </div>
+        </div>
+
+        <footer class="footer">
+            <p>MovieAgent Logo Design Collection | 2024</p>
+        </footer>
+    </div>
+</body>
+</html>

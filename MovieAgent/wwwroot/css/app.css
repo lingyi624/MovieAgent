@@ -1,0 +1,64 @@
+*, *::before, *::after {
+    box-sizing: border-box;
+    margin: 0;
+    padding: 0;
+}
+
+body {
+    font-family: 'Microsoft YaHei', 'Segoe UI', sans-serif;
+    background: #0F0F23;
+    color: #E0E0E0;
+    overflow-x: hidden;
+}
+
+.movie-card {
+    transition: transform 0.3s ease, box-shadow 0.3s ease;
+}
+
+.movie-card:hover {
+    transform: translateY(-4px);
+    box-shadow: 0 8px 25px rgba(233, 69, 96, 0.3);
+}
+
+.chat-container::-webkit-scrollbar {
+    width: 6px;
+}
+
+.chat-container::-webkit-scrollbar-track {
+    background: #1A1A2E;
+}
+
+.chat-container::-webkit-scrollbar-thumb {
+    background: #E94560;
+    border-radius: 3px;
+}
+
+.mud-nav-link.active {
+    background: rgba(233, 69, 96, 0.2) !important;
+    color: #E94560 !important;
+}
+
+.mud-appbar {
+    transition: background 0.3s ease;
+}
+
+.mud-card {
+    background: #2D2D44 !important;
+    color: white !important;
+}
+
+.mud-input {
+    background: #1A1A2E !important;
+}
+
+.mud-drawer {
+    background: #1A1A2E !important;
+}
+
+.mud-tabs .mud-tab {
+    color: white !important;
+}
+
+.mud-tabs .mud-tab.mud-tab-active {
+    color: #E94560 !important;
+}

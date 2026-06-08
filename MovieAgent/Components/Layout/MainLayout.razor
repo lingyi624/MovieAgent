@@ -1,0 +1,51 @@
+@inherits LayoutComponentBase
+@inject IMovieRepository MovieRepo
+@inject IAgentService AgentService
+@inject IMovieScannerService ScannerService
+
+<MudThemeProvider />
+<MudDialogProvider />
+<MudSnackbarProvider />
+<MudPopoverProvider />
+
+<MudLayout>
+        <MudAppBar Elevation="2" Style="background: linear-gradient(135deg, #1A1A2E 0%, #16213E 100%);">
+            <MudIconButton Icon="@Icons.Material.Filled.Menu" Color="Color.Inherit" OnClick="ToggleDrawer" />
+            <img src="logo.svg" alt="MovieAgent Logo" style="width: 36px; height: 36px; margin-left: 8px;" />
+            <MudText Typo="Typo.h6" Style="color: #E94560; font-weight: bold; margin-left: 8px;">
+                Movie Agent
+            </MudText>
+            <MudSpacer />
+        <MudButton Style="margin-right: 8px; color: white;" Href="/chat" StartIcon="@Icons.Material.Filled.Message">
+            AI 对话
+        </MudButton>
+        <MudIconButton Icon="@Icons.Material.Filled.Search" Color="Color.Inherit" Href="/" />
+        <MudIconButton Icon="@Icons.Material.Filled.Settings" Color="Color.Inherit" Href="/settings" />
+    </MudAppBar>
+
+    <MudDrawer @bind-Open="_drawerOpen" Anchor="Anchor.Left" Variant="DrawerVariant.Temporary" Style="background: #1A1A2E; color: white;">
+        <MudNavMenu>
+            <MudText Typo="Typo.h6" Style="padding: 16px; color: #E94560;">菜单</MudText>
+            <MudDivider Style="background: #E94560;" />
+            <MudNavLink Href="/" Icon="@Icons.Material.Filled.Home" Match="NavLinkMatch.All">首页</MudNavLink>
+            <MudNavLink Href="/dashboard" Icon="@Icons.Material.Filled.BarChart">观影统计</MudNavLink>
+            <MudNavLink Href="/movies" Icon="@Icons.Material.Filled.Movie">电影库</MudNavLink>
+            <MudNavLink Href="/semantic-search" Icon="@Icons.Material.Filled.AutoAwesome">语义搜索</MudNavLink>
+            <MudNavLink Href="/chat" Icon="@Icons.Material.Filled.Chat">AI 对话</MudNavLink>
+            <MudNavLink Href="/report" Icon="@Icons.Material.Filled.Report">观影报告</MudNavLink>
+            <MudNavLink Href="/settings" Icon="@Icons.Material.Filled.Settings">设置</MudNavLink>
+        </MudNavMenu>
+    </MudDrawer>
+
+    <MudMainContent>
+        <MudContainer MaxWidth="MaxWidth.ExtraExtraLarge" Style="padding: 24px; min-height: calc(100vh - 64px);">
+            @Body
+        </MudContainer>
+    </MudMainContent>
+</MudLayout>
+
+@code {
+    private bool _drawerOpen;
+
+    private void ToggleDrawer() => _drawerOpen = !_drawerOpen;
+}

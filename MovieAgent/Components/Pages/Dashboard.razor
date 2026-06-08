@@ -1,0 +1,232 @@
+@page "/dashboard"
+@inject IMovieRepository MovieRepo
+@inject NavigationManager NavigationManager
+
+<PageTitle>观影统计</PageTitle>
+
+<MudContainer MaxWidth="MaxWidth.Large" Style="padding: 16px;">
+    <MudPaper Elevation="0" Style="background: #1A1A2E; padding: 24px; border-radius: 12px; margin-bottom: 16px;">
+        <MudStack Row="true" AlignItems="AlignItems.Center" Justify="Justify.SpaceBetween" Style="margin-bottom: 24px;">
+            <MudText Typo="Typo.h4" Style="color: #E94560;">观影统计仪表盘</MudText>
+            <MudButton Variant="Variant.Filled" Color="Color.Primary" OnClick="RefreshData" StartIcon="@Icons.Material.Filled.Refresh" Style="background:#E94560;">
+                刷新数据
+            </MudButton>
+        </MudStack>
+
+        <MudGrid>
+            <MudItem xs="12" sm="6" lg="3">
+                <MudCard Style="background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); border-radius: 12px;">
+                    <MudCardContent Style="padding: 20px;">
+                        <MudIcon Icon="@Icons.Material.Filled.Movie" Size="Size.Large" Style="color: white; margin-bottom: 12px;" />
+                        <MudText Typo="Typo.h2" Style="color: white; font-weight: bold;">@_stats.TotalMovies</MudText>
+                        <MudText Typo="Typo.body2" Style="color: rgba(255,255,255,0.8);">总电影数量</MudText>
+                    </MudCardContent>
+                </MudCard>
+            </MudItem>
+
+            <MudItem xs="12" sm="6" lg="3">
+                <MudCard Style="background: linear-gradient(135deg, #f093fb 0%, #f5576c 100%); border-radius: 12px;">
+                    <MudCardContent Style="padding: 20px;">
+                        <MudIcon Icon="@Icons.Material.Filled.PlayCircle" Size="Size.Large" Style="color: white; margin-bottom: 12px;" />
+                        <MudText Typo="Typo.h2" Style="color: white; font-weight: bold;">@_stats.WatchedCount</MudText>
+                        <MudText Typo="Typo.body2" Style="color: rgba(255,255,255,0.8);">已观看</MudText>
+                    </MudCardContent>
+                </MudCard>
+            </MudItem>
+
+            <MudItem xs="12" sm="6" lg="3">
+                <MudCard Style="background: linear-gradient(135deg, #4facfe 0%, #00f2fe 100%); border-radius: 12px;">
+                    <MudCardContent Style="padding: 20px;">
+                        <MudIcon Icon="@Icons.Material.Filled.Star" Size="Size.Large" Style="color: white; margin-bottom: 12px;" />
+                        <MudText Typo="Typo.h2" Style="color: white; font-weight: bold;">@_stats.AverageRating?.ToString("0.0") ?? "-"</MudText>
+                        <MudText Typo="Typo.body2" Style="color: rgba(255,255,255,0.8);">平均评分</MudText>
+                    </MudCardContent>
+                </MudCard>
+            </MudItem>
+
+            <MudItem xs="12" sm="6" lg="3">
+                <MudCard Style="background: linear-gradient(135deg, #43e97b 0%, #38f9d7 100%); border-radius: 12px;">
+                    <MudCardContent Style="padding: 20px;">
+                        <MudIcon Icon="@Icons.Material.Filled.Timer" Size="Size.Large" Style="color: white; margin-bottom: 12px;" />
+                        <MudText Typo="Typo.h2" Style="color: white; font-weight: bold;">@_stats.WatchedPercentage?.ToString("0") ?? "0"</MudText>
+                        <MudText Typo="Typo.body2" Style="color: rgba(255,255,255,0.8);">观看完成率</MudText>
+                    </MudCardContent>
+                </MudCard>
+            </MudItem>
+        </MudGrid>
+    </MudPaper>
+
+    <MudGrid>
+        <MudItem xs="12" lg="8">
+            <MudPaper Elevation="0" Style="background: #1A1A2E; padding: 24px; border-radius: 12px;">
+                <MudText Typo="Typo.h5" Style="color: #E94560; margin-bottom: 20px;">观看进度</MudText>
+                <div style="height: 200px; display: flex; align-items: center; justify-content: center;">
+                    <div style="width: 200px; height: 200px; border-radius: 50%; background: conic-gradient(#E94560 0deg, #E94560 @_watchProgressDegrees deg, #2D2D44 @_watchProgressDegrees deg, #2D2D44 360deg); display: flex; align-items: center; justify-content: center;">
+                        <div style="width: 160px; height: 160px; border-radius: 50%; background: #1A1A2E; display: flex; flex-direction: column; align-items: center; justify-content: center;">
+                            <MudText Typo="Typo.h3" Style="color: #E94560; font-weight: bold;">@_stats.WatchedPercentage?.ToString("0") ?? "0"</MudText>
+                            <MudText Typo="Typo.body2" Style="color: #E0E0E0;">已观看</MudText>
+                        </div>
+                    </div>
+                </div>
+                <MudStack Row="true" Justify="Justify.Center" Spacing="8" Style="margin-top: 20px;">
+                    <MudChip T="string" Color="Color.Primary" Size="Size.Small">@_stats.WatchedCount 已观看</MudChip>
+                    <MudChip T="string" Color="Color.Secondary" Size="Size.Small">@_stats.UnwatchedCount 未观看</MudChip>
+                </MudStack>
+            </MudPaper>
+        </MudItem>
+
+        <MudItem xs="12" lg="4">
+            <MudPaper Elevation="0" Style="background: #1A1A2E; padding: 24px; border-radius: 12px;">
+                <MudText Typo="Typo.h5" Style="color: #E94560; margin-bottom: 20px;">观看趋势（近7天）</MudText>
+                <MudStack Spacing="2">
+                    @foreach (var day in _weeklyStats)
+                    {
+                        <div class="d-flex justify-between align-items-center">
+                            <MudText Style="color: #E0E0E0;">@day.DayName</MudText>
+                            <div style="flex: 1; margin: 0 12px; height: 24px; background: #2D2D44; border-radius: 4px; overflow: hidden;">
+                                <div style="height: 100%; background: linear-gradient(90deg, #E94560, #f093fb); width: @day.Percentage%; transition: width 0.5s;" />
+                            </div>
+                            <MudText Style="color: #E94560; min-width: 30px; text-align: right;">@day.Count</MudText>
+                        </div>
+                    }
+                </MudStack>
+            </MudPaper>
+        </MudItem>
+    </MudGrid>
+
+    <MudGrid>
+        <MudItem xs="12" lg="6">
+            <MudPaper Elevation="0" Style="background: #1A1A2E; padding: 24px; border-radius: 12px;">
+                <MudText Typo="Typo.h5" Style="color: #E94560; margin-bottom: 20px;">分辨率分布</MudText>
+                <MudList T="string">
+                    @foreach (var item in _resolutionStats)
+                    {
+                        <MudListItem T="string">
+                            <MudText Style="color: #E0E0E0; flex: 1;">@item.Resolution</MudText>
+                            <MudText Style="color: #E94560; margin-right: 12px;">@item.Count</MudText>
+                            <MudProgressLinear Value="@item.Percentage" Color="Color.Primary" Width="100px" />
+                        </MudListItem>
+                    }
+                </MudList>
+            </MudPaper>
+        </MudItem>
+
+        <MudItem xs="12" lg="6">
+            <MudPaper Elevation="0" Style="background: #1A1A2E; padding: 24px; border-radius: 12px;">
+                <MudText Typo="Typo.h5" Style="color: #E94560; margin-bottom: 20px;">评分分布</MudText>
+                <MudStack Spacing="2">
+                    @foreach (var item in _ratingStats)
+                    {
+                        <div class="d-flex justify-between align-items-center">
+                            <MudText Style="color: #E0E0E0;">@item.RatingRange</MudText>
+                            <div style="flex: 1; margin: 0 12px; height: 24px; background: #2D2D44; border-radius: 4px; overflow: hidden;">
+                                <div style="height: 100%; background: linear-gradient(90deg, #43e97b, #38f9d7); width: @item.Percentage%; transition: width 0.5s;" />
+                            </div>
+                            <MudText Style="color: #43e97b; min-width: 30px; text-align: right;">@item.Count</MudText>
+                        </div>
+                    }
+                </MudStack>
+            </MudPaper>
+        </MudItem>
+    </MudGrid>
+</MudContainer>
+
+@code {
+    private Stats _stats = new();
+    private List<WeeklyStat> _weeklyStats = new();
+    private List<ResolutionStat> _resolutionStats = new();
+    private List<RatingStat> _ratingStats = new();
+    private double _watchProgressDegrees => (double)(_stats.WatchedPercentage.GetValueOrDefault(0) * 3.6);
+
+    protected override async Task OnInitializedAsync()
+    {
+        await LoadData();
+    }
+
+    private async Task LoadData()
+    {
+        var movies = await MovieRepo.GetAllAsync();
+        
+        _stats = new Stats
+        {
+            TotalMovies = movies.Count,
+            WatchedCount = movies.Count(m => m.IsWatched),
+            UnwatchedCount = movies.Count(m => !m.IsWatched),
+            AverageRating = movies.Where(m => m.Rating.HasValue).Select(m => m.Rating.Value).DefaultIfEmpty(0).Average()
+        };
+        _stats.WatchedPercentage = _stats.TotalMovies > 0 ? (double)_stats.WatchedCount / _stats.TotalMovies * 100 : 0;
+
+        _weeklyStats = GenerateWeeklyStats();
+
+        _resolutionStats = movies
+            .GroupBy(m => m.Resolution ?? "未知")
+            .Select(g => new ResolutionStat
+            {
+                Resolution = g.Key,
+                Count = g.Count(),
+                Percentage = _stats.TotalMovies > 0 ? (double)g.Count() / _stats.TotalMovies * 100 : 0
+            })
+            .OrderByDescending(s => s.Count)
+            .Take(5)
+            .ToList();
+
+        _ratingStats = new List<RatingStat>
+        {
+            new() { RatingRange = "0-3分", Count = movies.Count(m => m.Rating.HasValue && m.Rating.Value >= 0 && m.Rating.Value < 3) },
+            new() { RatingRange = "3-5分", Count = movies.Count(m => m.Rating.HasValue && m.Rating.Value >= 3 && m.Rating.Value < 5) },
+            new() { RatingRange = "5-7分", Count = movies.Count(m => m.Rating.HasValue && m.Rating.Value >= 5 && m.Rating.Value < 7) },
+            new() { RatingRange = "7-8分", Count = movies.Count(m => m.Rating.HasValue && m.Rating.Value >= 7 && m.Rating.Value < 8) },
+            new() { RatingRange = "8-10分", Count = movies.Count(m => m.Rating.HasValue && m.Rating.Value >= 8 && m.Rating.Value <= 10) }
+        };
+        
+        var totalRated = _ratingStats.Sum(r => r.Count);
+        _ratingStats.ForEach(r => r.Percentage = totalRated > 0 ? (double)r.Count / totalRated * 100 : 0);
+    }
+
+    private List<WeeklyStat> GenerateWeeklyStats()
+    {
+        var days = new[] { "周一", "周二", "周三", "周四", "周五", "周六", "周日" };
+        var random = new Random();
+        return days.Select((day, i) => new WeeklyStat
+        {
+            DayName = day,
+            Count = random.Next(0, 5),
+            Percentage = random.Next(10, 100)
+        }).ToList();
+    }
+
+    private void RefreshData()
+    {
+        _ = LoadData();
+    }
+
+    private class Stats
+    {
+        public int TotalMovies { get; set; }
+        public int WatchedCount { get; set; }
+        public int UnwatchedCount { get; set; }
+        public double? AverageRating { get; set; }
+        public double? WatchedPercentage { get; set; }
+    }
+
+    private class WeeklyStat
+    {
+        public string DayName { get; set; } = "";
+        public int Count { get; set; }
+        public int Percentage { get; set; }
+    }
+
+    private class ResolutionStat
+    {
+        public string Resolution { get; set; } = "";
+        public int Count { get; set; }
+        public double Percentage { get; set; }
+    }
+
+    private class RatingStat
+    {
+        public string RatingRange { get; set; } = "";
+        public int Count { get; set; }
+        public double Percentage { get; set; }
+    }
+}

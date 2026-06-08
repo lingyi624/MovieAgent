@@ -1,0 +1,245 @@
+@page "/play/{movieId:int}"
+@inject IMovieRepository MovieRepo
+@inject IPlayerService PlayerService
+@inject IPlayHistoryService PlayHistoryService
+@inject NavigationManager NavigationManager
+@inject IServiceProvider ServiceProvider
+@implements IDisposable
+@using System.Diagnostics
+
+<PageTitle>@(_movie?.Title ?? "播放")</PageTitle>
+
+<MudContainer MaxWidth="MaxWidth.Large" Style="padding: 16px;">
+    @if (_movie == null)
+    {
+        <MudProgressCircular Color="Color.Primary" Indeterminate="true" />
+    }
+    else
+    {
+        <MudPaper Elevation="0" Style="background: #1A1A2E; padding: 24px; border-radius: 12px;">
+            <MudStack Spacing="4">
+                <MudStack Row="true" AlignItems="AlignItems.Center" Justify="Justify.SpaceBetween">
+                    <MudButton Variant="Variant.Text" Color="Color.Primary" OnClick="NavigateBack" StartIcon="@Icons.Material.Filled.ArrowBack">
+                        返回
+                    </MudButton>
+                    <MudText Typo="Typo.h5" Style="color: #E94560;">@_movie.Title</MudText>
+                    <MudText Style="color: gray;">@_playStatus</MudText>
+                </MudStack>
+
+                <div style="background: #000; width: 100%; aspect-ratio: 16 / 9; border-radius: 8px; overflow: hidden; position: relative;">
+                    @if (_isPlaying)
+                    {
+                        <div style="position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%); color: #E0E0E0; text-align: center; padding: 20px;">
+                            <MudIcon Icon="@Icons.Material.Filled.Tv" Size="Size.Large" Color="Color.Primary" />
+                            <MudText Typo="Typo.h6" Style="color: #E94560; margin-top: 16px;">@_playStatus</MudText>
+                            <MudText Typo="Typo.body2" Style="color: #888; margin-top: 8px;">视频正在应用内播放器中播放 - 请查看上方的播放窗口</MudText>
+                        </div>
+                    }
+                    else
+                    {
+                        <div style="position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%); color: #E0E0E0; text-align: center; padding: 20px;">
+                            <MudIcon Icon="@Icons.Material.Filled.PlayCircle" Size="Size.Large" Color="Color.Primary" />
+                            <MudText Typo="Typo.h6" Style="color: #E0E0E0; margin-top: 16px;">@_movie?.Title</MudText>
+                            <MudText Typo="Typo.body2" Style="color: #888; margin-top: 8px;">点击"播放"按钮开始观看</MudText>
+                        </div>
+                    }
+                </div>
+
+                <MudStack Row="true" AlignItems="AlignItems.Center" Spacing="3">
+                    <MudButton Variant="Variant.Filled" Color="Color.Primary" OnClick="TogglePlay" Size="Size.Large"
+                               StartIcon="@(_isPlaying ? Icons.Material.Filled.Pause : Icons.Material.Filled.PlayArrow)"
+                               Style="background:#E94560;">
+                        @(_isPlaying ? "暂停" : "播放")
+                    </MudButton>
+                    <MudButton Variant="Variant.Outlined" Color="Color.Secondary" OnClick="StopPlayback" StartIcon="@Icons.Material.Filled.Stop">
+                        停止
+                    </MudButton>
+                    <MudButton Variant="Variant.Outlined" Color="Color.Secondary" OnClick="PlayExternal" StartIcon="@Icons.Material.Filled.OpenInNew">
+                        外置播放器
+                    </MudButton>
+                </MudStack>
+
+                <MudDivider Style="margin: 16px 0;" />
+
+                <MudGrid>
+                    <MudItem xs="12" md="4">
+                        <MudImage Src="@GetPosterUrl(_movie)" Height="300" ObjectFit="ObjectFit.Cover" Style="border-radius: 8px;" />
+                    </MudItem>
+                    <MudItem xs="12" md="8">
+                        <MudText Typo="Typo.h6" Style="color: #E94560;">@_movie.Title</MudText>
+                        <MudChipSet T="string" Style="margin: 12px 0;">
+                            @if (_movie.ReleaseYear.HasValue)
+                            {
+                                <MudChip T="string" Size="Size.Small" Color="Color.Primary">@_movie.ReleaseYear</MudChip>
+                            }
+                            @if (!string.IsNullOrEmpty(_movie.Resolution))
+                            {
+                                <MudChip T="string" Size="Size.Small" Color="Color.Secondary">@_movie.Resolution</MudChip>
+                            }
+                            @if (_movie.Rating.HasValue)
+                            {
+                                <MudChip T="string" Size="Size.Small" Style="background:#FFD700;">
+                                    <MudIcon Icon="@Icons.Material.Filled.Star" Size="Size.Small" /> @_movie.Rating.Value.ToString("0.0")
+                                </MudChip>
+                            }
+                        </MudChipSet>
+                        <MudText Typo="Typo.body1" Style="color: #E0E0E0; line-height: 1.8;">
+                            @(_movie.Overview ?? "暂无简介")
+                        </MudText>
+                        <MudText Typo="Typo.caption" Style="color: gray; margin-top: 8px;">@_movie.FilePath</MudText>
+                    </MudItem>
+                </MudGrid>
+            </MudStack>
+        </MudPaper>
+    }
+</MudContainer>
+
+@code {
+    [Parameter] public int movieId { get; set; }
+    private Movie? _movie;
+    private bool _isPlaying;
+    private bool _isPaused;
+    private string _playStatus = "准备就绪";
+    private bool _disposed;
+
+    protected override async Task OnInitializedAsync()
+    {
+        _movie = await MovieRepo.GetByIdAsync(movieId);
+        if (_movie == null)
+        {
+            NavigationManager.NavigateTo("/");
+            return;
+        }
+    }
+
+    private async Task TogglePlay()
+    {
+        if (_movie == null) return;
+
+        if (!_isPlaying && !_isPaused)
+        {
+            await StartPlayback();
+        }
+        else if (_isPlaying)
+        {
+            PlayerService.Pause();
+            _isPlaying = false;
+            _isPaused = true;
+            _playStatus = "已暂停";
+        }
+        else if (_isPaused)
+        {
+            PlayerService.Resume();
+            _isPlaying = true;
+            _isPaused = false;
+            _playStatus = "正在播放";
+        }
+    }
+
+    private async Task StartPlayback()
+    {
+        if (_movie == null) return;
+
+        try
+        {
+            _playStatus = "正在加载...";
+            StateHasChanged();
+            await PlayerService.PlayAsync(_movie.FilePath);
+            _isPlaying = true;
+            _isPaused = false;
+            _playStatus = "正在播放";
+            
+            // 更新电影观看状态
+            _movie.IsWatched = true;
+            _movie.WatchedAt = DateTime.UtcNow;
+            await MovieRepo.UpdateAsync(_movie);
+            
+            // 添加播放历史记录
+            await PlayHistoryService.AddPlayHistoryAsync(
+                movieId: _movie.Id,
+                duration: _movie.Runtime,
+                completed: false
+            );
+            
+            Debug.WriteLine($"[Player] 播放历史已记录: {_movie.Title}");
+        }
+        catch (Exception ex)
+        {
+            Debug.WriteLine($"[Player] Play failed: {ex.Message}");
+            var dialog = ServiceProvider.GetRequiredService<IDialogService>();
+            await dialog.ShowAsync<ErrorDialog>($"播放失败: {ex.Message}\n\n文件路径: {_movie.FilePath}");
+            _playStatus = "播放失败";
+            _isPlaying = false;
+            _isPaused = false;
+        }
+    }
+
+    private async void StopPlayback()
+    {
+        PlayerService.Stop();
+        _isPlaying = false;
+        _isPaused = false;
+        _playStatus = "已停止";
+        
+        // 记录停止时的历史
+        if (_movie != null)
+        {
+            try
+            {
+                // 获取当前播放进度并记录
+                var currentProgress = (int)PlayerService.Position.TotalSeconds;
+                await PlayHistoryService.AddPlayHistoryAsync(
+                    movieId: _movie.Id,
+                    progress: currentProgress / 60, // 转换为分钟
+                    duration: _movie.Runtime,
+                    completed: _movie.Runtime.HasValue && currentProgress > (_movie.Runtime.Value * 60 * 0.9)
+                );
+                Debug.WriteLine($"[Player] 停止历史已记录，进度: {currentProgress}秒");
+            }
+            catch (Exception ex)
+            {
+                Debug.WriteLine($"[Player] 记录停止历史失败: {ex.Message}");
+            }
+        }
+    }
+
+    private async Task PlayExternal()
+    {
+        if (_movie == null) return;
+        try
+        {
+            await PlayerService.PlayAsync(_movie.FilePath);
+            _playStatus = "已启动外置播放器";
+        }
+        catch (Exception ex)
+        {
+            var dialog = ServiceProvider.GetRequiredService<IDialogService>();
+            await dialog.ShowAsync<ErrorDialog>($"启动失败: {ex.Message}");
+        }
+    }
+
+    private void NavigateBack()
+    {
+        StopPlayback();
+        NavigationManager.NavigateTo($"/movie/{movieId}");
+    }
+
+    private string GetPosterUrl(Movie movie)
+    {
+        if (!string.IsNullOrWhiteSpace(movie.PosterPath))
+            return $"https://image.tmdb.org/t/p/w500{movie.PosterPath}";
+        return "images/placeholder-poster.png";
+    }
+
+    public void Dispose()
+    {
+        if (_disposed) return;
+        _disposed = true;
+
+        if (_isPlaying || _isPaused)
+        {
+            try { PlayerService.Stop(); }
+            catch { }
+        }
+    }
+}

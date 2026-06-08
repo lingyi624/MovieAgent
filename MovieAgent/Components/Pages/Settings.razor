@@ -1,0 +1,177 @@
+@page "/settings"
+@inject IConfiguration Config
+@inject ISnackbar Snackbar
+
+<PageTitle>设置</PageTitle>
+
+<MudText Typo="Typo.h4" GutterBottom Style="color: #E94560;">设置</MudText>
+
+<MudTabs Elevation="2" Rounded="true" Style="background: linear-gradient(135deg, #2D2D44 0%, #1A1A2E 100%); color: #E0E0E0;" >
+    <MudTabPanel Text="NAS 共享" Style="background: #1A1A2E; color: #E0E0E0;">
+        <MudText Typo="Typo.h6" Style="margin: 16px 0;">NAS 共享路径配置</MudText>
+        <MudPaper Elevation="1" Style="padding: 16px; background: #1A1A2E;">
+            @foreach (var share in _shares)
+            {
+                <MudGrid Style="margin-bottom: 8px;">
+                    <MudItem xs="9">
+                        <MudTextField @bind-Value="share.Path" Label="共享路径" Variant="Variant.Outlined"
+                                      Placeholder="\\192.168.1.11\disk1" Style="background: #2D2D44;" />
+                    </MudItem>
+                    <MudItem xs="2">
+                        <MudChip T="string" Color="@(share.IsOnline ? Color.Success : Color.Error)" Size="Size.Small" Style="margin-top: 12px;">
+                            @(share.IsOnline ? "在线" : "离线")
+                        </MudChip>
+                    </MudItem>
+                    <MudItem xs="1">
+                        <MudIconButton Icon="@Icons.Material.Filled.Delete" Color="Color.Error" OnClick="() => RemoveShare(share)" />
+                    </MudItem>
+                </MudGrid>
+            }
+            <MudButton Variant="Variant.Outlined" OnClick="AddShare" StartIcon="@Icons.Material.Filled.Add">添加共享路径</MudButton>
+            <MudButton Variant="Variant.Filled" Color="Color.Primary" OnClick="SaveShares" Style="margin-left: 8px; background: #E94560;">保存</MudButton>
+        </MudPaper>
+    </MudTabPanel>
+
+    <MudTabPanel Text="播放器" Style="background: #1A1A2E; color: #E0E0E0;">
+        <MudText Typo="Typo.h6" Style="margin: 16px 0;">外部播放器配置</MudText>
+        <MudPaper Elevation="1" Style="padding: 16px; background: #2D2D44;">
+            <MudTextField @bind-Value="_playerPath" Label="播放器路径" Variant="Variant.Outlined"
+                          Placeholder="C:\Program Files\DAUM\PotPlayer\PotPlayerMini64.exe"
+                          HelperText="留空使用系统默认播放器" Style="margin-bottom: 16px; background: #2D2D44;" />
+            <MudButton Variant="Variant.Outlined" Color="Color.Secondary" OnClick="BrowsePlayer" StartIcon="@Icons.Material.Filled.FolderOpen">浏览</MudButton>
+            <MudButton Variant="Variant.Filled" Color="Color.Primary" OnClick="SavePlayerSettings" Style="margin-left: 8px; background: #E94560;">保存</MudButton>
+        </MudPaper>
+    </MudTabPanel>
+
+    <MudTabPanel Text="TMDB API" Style="background: #1A1A2E; color: #E0E0E0;">
+        <MudText Typo="Typo.h6" Style="margin: 16px 0;">TMDB API 配置</MudText>
+        <MudPaper Elevation="1" Style="padding: 16px; background: #2D2D44;">
+            <MudTextField @bind-Value="_tmdbApiKey" Label="API Key" Variant="Variant.Outlined" InputType="InputType.Password"
+                          Placeholder="输入你的 TMDB API Key" Style="margin-bottom: 16px; background: #2D2D44;" />
+            <MudButton Variant="Variant.Filled" Color="Color.Primary" OnClick="SaveTmdbSettings" Style="background: #E94560;">保存</MudButton>
+        </MudPaper>
+    </MudTabPanel>
+
+    <MudTabPanel Text="AI 模型" Style="background: #1A1A2E; color: #E0E0E0;">
+        <MudText Typo="Typo.h6" Style="margin: 16px 0;">Ollama 配置</MudText>
+        <MudPaper Elevation="1" Style="padding: 16px; background: #2D2D44;">
+            <MudTextField @bind-Value="_modelUrl" Label="Ollama 地址" Variant="Variant.Outlined"
+                          Placeholder="http://localhost:11434" Style="margin-bottom: 16px; background: #2D2D44;" />
+            <MudTextField @bind-Value="_modelName" Label="模型名称" Variant="Variant.Outlined"
+                          Placeholder="llama3:latest" Style="margin-bottom: 16px; background: #2D2D44;" />
+            <MudButton Variant="Variant.Filled" Color="Color.Primary" OnClick="SaveAiSettings" Style="background: #E94560;">保存</MudButton>
+        </MudPaper>
+    </MudTabPanel>
+</MudTabs>
+
+@code {
+    private List<ShareItem> _shares = new();
+    private string _playerPath = "";
+    private string _tmdbApiKey = "";
+    private string _modelUrl = "http://localhost:11434";
+    private string _modelName = "llama3:latest";
+
+    protected override void OnInitialized()
+    {
+        LoadShares();
+        _playerPath = Config["Player:Path"] ?? "";
+        _tmdbApiKey = Config["TMDB:ApiKey"] ?? "";
+        _modelUrl = Config["AI:ModelUrl"] ?? "http://localhost:11434";
+        _modelName = Config["AI:ModelName"] ?? "llama3:latest";
+    }
+
+    private void LoadShares()
+    {
+        var shareFile = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "share.json");
+        if (File.Exists(shareFile))
+        {
+            var json = File.ReadAllText(shareFile);
+            var config = System.Text.Json.JsonSerializer.Deserialize<ShareConfig>(json);
+            if (config?.Shares != null)
+                _shares = config.Shares.Select(s => new ShareItem { Path = s, IsOnline = Directory.Exists(s) }).ToList();
+        }
+    }
+
+    private void AddShare() => _shares.Add(new ShareItem { Path = "", IsOnline = false });
+
+    private void RemoveShare(ShareItem item) => _shares.Remove(item);
+
+    private void SaveShares()
+    {
+        try
+        {
+            var config = new ShareConfig { Shares = _shares.Select(s => s.Path).Where(p => !string.IsNullOrWhiteSpace(p)).ToList() };
+            var json = System.Text.Json.JsonSerializer.Serialize(config, new System.Text.Json.JsonSerializerOptions { WriteIndented = true });
+            File.WriteAllText(Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "share.json"), json);
+            Snackbar.Add("NAS 共享路径已保存", Severity.Success);
+        }
+        catch (Exception ex)
+        {
+            Snackbar.Add($"保存失败: {ex.Message}", Severity.Error);
+        }
+    }
+
+    private void SavePlayerSettings()
+    {
+        try
+        {
+            var config = new Dictionary<string, object> { ["Player:Path"] = _playerPath };
+            SaveAppSettings(config);
+            Snackbar.Add("播放器配置已保存", Severity.Success);
+        }
+        catch (Exception ex)
+        {
+            Snackbar.Add($"保存失败: {ex.Message}", Severity.Error);
+        }
+    }
+
+    private void SaveTmdbSettings()
+    {
+        try
+        {
+            var config = new Dictionary<string, object> { ["TMDB:ApiKey"] = _tmdbApiKey };
+            SaveAppSettings(config);
+            Snackbar.Add("TMDB API 配置已保存", Severity.Success);
+        }
+        catch (Exception ex)
+        {
+            Snackbar.Add($"保存失败: {ex.Message}", Severity.Error);
+        }
+    }
+
+    private void SaveAiSettings()
+    {
+        try
+        {
+            var config = new Dictionary<string, object>
+            {
+                ["AI:ModelUrl"] = _modelUrl,
+                ["AI:ModelName"] = _modelName
+            };
+            SaveAppSettings(config);
+            Snackbar.Add("AI 模型配置已保存", Severity.Success);
+        }
+        catch (Exception ex)
+        {
+            Snackbar.Add($"保存失败: {ex.Message}", Severity.Error);
+        }
+    }
+
+    private void SaveAppSettings(Dictionary<string, object> updates)
+    {
+        var path = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "appsettings.json");
+        var json = File.Exists(path) ? File.ReadAllText(path) : "{}";
+        var doc = System.Text.Json.JsonSerializer.Deserialize<Dictionary<string, object>>(json) ?? new();
+        foreach (var kv in updates) doc[kv.Key] = kv.Value;
+        File.WriteAllText(path, System.Text.Json.JsonSerializer.Serialize(doc, new System.Text.Json.JsonSerializerOptions { WriteIndented = true }));
+    }
+
+    private void BrowsePlayer()
+    {
+        var dialog = new Microsoft.Win32.OpenFileDialog { Filter = "可执行文件|*.exe|所有文件|*.*" };
+        if (dialog.ShowDialog() == true) _playerPath = dialog.FileName;
+    }
+
+    public class ShareItem { public string Path { get; set; } = ""; public bool IsOnline { get; set; } }
+    public class ShareConfig { public List<string> Shares { get; set; } = new(); }
+}

@@ -1,0 +1,203 @@
+@page "/movies"
+@inject IMovieRepository MovieRepo
+@inject NavigationManager NavigationManager
+@inject IJSRuntime JSRuntime
+@using Microsoft.JSInterop
+
+<PageTitle>电影库</PageTitle>
+
+<MudText Typo="Typo.h4" GutterBottom Style="color: #E94560;">电影库</MudText>
+
+<MudGrid>
+    <MudItem xs="12" sm="6" md="4">
+        <MudTextField @bind-Value="_searchTerm" @bind-Value:after="OnSearchChanged" Label="搜索" Variant="Variant.Outlined" Immediate="true"
+                      Adornment="Adornment.End" AdornmentIcon="@Icons.Material.Filled.Search"
+                      DebounceInterval="300" />
+    </MudItem>
+    <MudItem xs="6" sm="3" md="2">
+        <MudSelect @bind-Value="_sortBy" Label="排序" Variant="Variant.Outlined" T="string">
+            <MudSelectItem Value="@("created")">添加时间</MudSelectItem>
+            <MudSelectItem Value="@("title")">标题</MudSelectItem>
+            <MudSelectItem Value="@("year")">年份</MudSelectItem>
+            <MudSelectItem Value="@("rating")">评分</MudSelectItem>
+        </MudSelect>
+    </MudItem>
+    <MudItem xs="6" sm="3" md="2">
+        <MudSwitch @bind-Value="_sortDesc" Label="降序" Color="Color.Primary" />
+    </MudItem>
+</MudGrid>
+
+<div @ref="_scrollContainer" id="movie-list-container" style="height: calc(100vh - 250px); overflow-y: auto;" @onscroll="OnScroll">
+    <MudTable Items="_movies" Hover="true" Striped="true" Elevation="2" Style="background: #2D2D44;">
+        <HeaderContent>
+            <MudTh Style="color: #E94560; font-weight: bold;">海报</MudTh>
+            <MudTh Style="color: #E94560; font-weight: bold;">标题</MudTh>
+            <MudTh Style="color: #E94560; font-weight: bold;">年份</MudTh>
+            <MudTh Style="color: #E94560; font-weight: bold;">分辨率</MudTh>
+            <MudTh Style="color: #E94560; font-weight: bold;">评分</MudTh>
+            <MudTh Style="color: #E94560; font-weight: bold;">状态</MudTh>
+            <MudTh Style="color: #E94560; font-weight: bold;">操作</MudTh>
+        </HeaderContent>
+        <RowTemplate>
+            <MudTd>
+                <MudImage Src="@GetPosterUrl(context)" Height="60" Width="40" ObjectFit="ObjectFit.Cover" />
+            </MudTd>
+            <MudTd>
+                <MudText Style="font-weight: bold; color: #E0E0E0;">@context.Title</MudText>
+                @if (!string.IsNullOrEmpty(context.OriginalTitle) && context.OriginalTitle != context.Title)
+                {
+                    <MudText Typo="Typo.caption" Style="color: #888888;">@context.OriginalTitle</MudText>
+                }
+            </MudTd>
+            <MudTd Style="color: #CCCCCC;">@(context.ReleaseYear?.ToString() ?? "-")</MudTd>
+            <MudTd>
+                @if (!string.IsNullOrEmpty(context.Resolution))
+                {
+                    <MudChip T="string" Size="Size.Small" Color="Color.Primary">@context.Resolution</MudChip>
+                }
+            </MudTd>
+            <MudTd Style="color: #E0E0E0;">
+                @if (context.Rating.HasValue)
+                {
+                    <MudIcon Icon="@Icons.Material.Filled.Star" Size="Size.Small" Style="color: #FFD700;" />
+                    @context.Rating.Value.ToString("0.0")
+                }
+            </MudTd>
+            <MudTd Style="color: #E0E0E0;">
+                @if (context.IsWatched)
+                {
+                    <MudChip T="string" Size="Size.Small" Color="Color.Success">已看</MudChip>
+                }
+                else
+                {
+                    <MudChip T="string" Size="Size.Small" Color="Color.Warning">未看</MudChip>
+                }
+                @if (context.IsFavorite)
+                {
+                    <MudChip T="string" Size="Size.Small" Color="Color.Info" Style="margin-left: 4px;">收藏</MudChip>
+                }
+            </MudTd>
+            <MudTd>
+                <MudIconButton Icon="@Icons.Material.Filled.PlayArrow" Size="Size.Small" Color="Color.Primary" OnClick="() => PlayMovie(context)" />
+                <MudIconButton Icon="@Icons.Material.Filled.Info" Size="Size.Small" Color="Color.Secondary" OnClick="() => GoToDetail(context)" />
+            </MudTd>
+        </RowTemplate>
+    </MudTable>
+
+    <div style="padding: 16px; text-align: center;">
+        @if (_isLoading)
+        {
+            <MudProgressCircular Size="Size.Small" Indeterminate="true" Color="Color.Primary" />
+            <MudText Style="color: #888; margin-left: 8px;">加载中...</MudText>
+        }
+        else if (!_hasMore)
+        {
+            <MudText Style="color: #888;">- 已加载全部 @_movies.Count 部影片 -</MudText>
+        }
+    </div>
+</div>
+
+@code {
+    private List<Movie> _movies = new();
+    private string _searchTerm = "";
+    private string _sortBy = "created";
+    private bool _sortDesc = true;
+    private int _currentPage = 1;
+    private int _pageSize = 20;
+    private bool _isLoading = false;
+    private bool _hasMore = true;
+    private ElementReference _scrollContainer;
+
+    protected override async Task OnInitializedAsync() => await LoadMovies(true);
+
+    private async Task LoadMovies(bool resetPage = false)
+    {
+        if (resetPage)
+        {
+            _currentPage = 1;
+            _movies.Clear();
+            _hasMore = true;
+        }
+
+        _isLoading = true;
+        StateHasChanged();
+
+        try
+        {
+            var filter = new MovieFilter
+            {
+                SearchKeyword = _searchTerm,
+                SortBy = _sortBy,
+                SortDescending = _sortDesc,
+                Page = _currentPage,
+                PageSize = _pageSize
+            };
+
+            var movies = await MovieRepo.GetAllAsync(filter);
+            
+            if (movies.Count < _pageSize)
+            {
+                _hasMore = false;
+            }
+
+            _movies.AddRange(movies);
+        }
+        finally
+        {
+            _isLoading = false;
+            StateHasChanged();
+        }
+    }
+
+    private async Task LoadMore()
+    {
+        if (_isLoading || !_hasMore) return;
+        
+        _currentPage++;
+        await LoadMovies();
+    }
+
+    private async Task OnScroll()
+    {
+        if (_isLoading || !_hasMore) return;
+
+        try
+        {
+            var scrollTop = await JSRuntime.InvokeAsync<double>("eval", 
+                "document.getElementById('movie-list-container')?.scrollTop ?? 0");
+            var scrollHeight = await JSRuntime.InvokeAsync<double>("eval", 
+                "document.getElementById('movie-list-container')?.scrollHeight ?? 0");
+            var clientHeight = await JSRuntime.InvokeAsync<double>("eval", 
+                "document.getElementById('movie-list-container')?.clientHeight ?? 0");
+
+            // 当滚动到距离底部 100px 时自动加载
+            if (scrollTop + clientHeight >= scrollHeight - 100)
+            {
+                await LoadMore();
+            }
+        }
+        catch
+        {
+            // 忽略 JS 错误
+        }
+    }
+
+    private async Task OnSearchChanged()
+    {
+        await LoadMovies(true);
+    }
+
+    private string GetPosterUrl(Movie movie)
+    {
+        if (!string.IsNullOrWhiteSpace(movie.PosterPath))
+            return $"https://image.tmdb.org/t/p/w92{movie.PosterPath}";
+        return "images/placeholder-poster.png";
+    }
+
+    private void PlayMovie(Movie movie)
+    {
+        NavigationManager.NavigateTo($"/play/{movie.Id}");
+    }
+
+    private void GoToDetail(Movie movie) => NavigationManager.NavigateTo($"/movie/{movie.Id}");
+}
