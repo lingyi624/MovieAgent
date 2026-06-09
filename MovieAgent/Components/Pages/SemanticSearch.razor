@@ -19,6 +19,7 @@
                 <MudTextField @ref="_searchRef" @bind-Value="_searchText" Label="自然语言描述你想看的电影" FullWidth
                               Variant="Variant.Outlined" Style="flex: 1;"
                               HelperText="例如：关于太空冒险的科幻片、悬疑推理、温暖的治愈系电影..."
+                              HelperTextOnFocus="true"
                               OnKeyDown="OnKeyDown" />
                 <MudButton Variant="Variant.Filled" Color="Color.Primary" OnClick="DoSearch" Disabled="@_isSearching"
                            Style="background:#E94560; min-width: 120px;" StartIcon="@Icons.Material.Filled.Search">
@@ -57,7 +58,7 @@
                              @onclick="() => GoToDetail(r.MovieId)">
                         <MudCardContent Style="padding: 16px;">
                             <MudStack Row="true" AlignItems="AlignItems.Center" Justify="Justify.SpaceBetween" Style="margin-bottom: 8px;">
-                                <MudText Style="color: #E94560; font-weight: bold; max-width: 200px;" Overflow="Overflow.Ellipsis">@r.Title</MudText>
+                                <MudText Style="color: #E94560; font-weight: bold; max-width: 200px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">@r.Title</MudText>
                                 <MudChip T="string" Size="Size.Small" Color="Color.Primary">@r.Similarity.ToString("0.00")</MudChip>
                             </MudStack>
                             @if (!string.IsNullOrWhiteSpace(r.Overview))

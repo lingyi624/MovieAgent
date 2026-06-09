@@ -1,0 +1,126 @@
+@inject IMovieRepository MovieRepo
+@inject NavigationManager NavigationManager
+
+<MudTextField T="string" 
+              @bind-Value="_searchText"
+              Placeholder="搜索电影..."
+              Adornment="Adornment.End"
+              AdornmentIcon="@Icons.Material.Filled.Search"
+              Style="width: 350px; background: rgba(255,255,255,0.08); border-radius: 20px; border: 1px solid rgba(255,255,255,0.1);"
+              color="Color.Inherit"
+              Variant="Variant.Outlined"
+              OnKeyUp="HandleKeyUp"
+              @onfocus="ShowSearchPanel"
+              inputStyle="color: white; font-size: 13px;"
+              AdornmentColor="Color.Inherit" />
+
+<MudPopover @bind-open="_showSearchPanel" 
+            AnchorOrigin="Origin.BottomRight" 
+            TransformOrigin="Origin.TopRight"
+            Style="width: 500px; max-height: 60vh; overflow-y: auto; margin-top: 8px;">
+    <MudCard Elevation="8" Style="background: #1A1A2E; color: white;">
+        @if (_searchResults.Any())
+        {
+            <MudList T="string">
+                @foreach (var movie in _searchResults.Take(10))
+                {
+                    <MudListItem clickable="true" 
+                                 OnClick="() => NavigateToMovie(movie.Id)"
+                                 Style="cursor: pointer;">
+                        <div style="display: flex; align-items: center; width: 100%;">
+                            @if (!string.IsNullOrEmpty(movie.PosterPath))
+                            {
+                                <img src="https://image.tmdb.org/t/p/w45/@movie.PosterPath" 
+                                     alt="@movie.Title" 
+                                     style="width: 45px; height: 67px; object-fit: cover; border-radius: 4px; margin-right: 12px;" />
+                            }
+                            <div style="flex: 1;">
+                                <MudText Typo="Typo.body1" Style="color: white;">@movie.Title</MudText>
+                                <MudText Typo="Typo.caption" Style="color: gray;">
+                                    @movie.ReleaseYear?.ToString()
+                                    @if (movie.Rating.HasValue)
+                                    {
+                                        <span> · <MudIcon Icon="@Icons.Material.Filled.Star" Size="Size.Small" 
+                                                         Style="color: #FFD700; font-size: 10px;" />@movie.Rating.Value.ToString("0.0")</span>
+                                    }
+                                </MudText>
+                            </div>
+                        </div>
+                    </MudListItem>
+                }
+            </MudList>
+            
+            @if (_searchResults.Count > 10)
+            {
+                <MudCardActions Style="justify-content: center;">
+                    <MudButton text="true" Color="Color.Primary" OnClick="NavigateToSearch">
+                        查看更多 (@(_searchResults.Count - 10) 部电影)
+                    </MudButton>
+                </MudCardActions>
+            }
+        }
+        else if (!string.IsNullOrEmpty(_searchText))
+        {
+            <MudCardContent Style="text-align: center; padding: 16px;">
+                <MudText Typo="Typo.body2" Style="color: gray;">未找到匹配的电影</MudText>
+            </MudCardContent>
+        }
+        else
+        {
+            <MudCardContent Style="padding: 16px;">
+                <MudText Typo="Typo.body2" Style="color: gray;">输入关键词搜索电影</MudText>
+            </MudCardContent>
+        }
+    </MudCard>
+</MudPopover>
+
+@code {
+    private string _searchText = string.Empty;
+    private bool _showSearchPanel;
+    private List<Movie> _searchResults = new List<Movie>();
+
+    private async void HandleKeyUp(KeyboardEventArgs e)
+    {
+        if (e.Key == "Enter" && !string.IsNullOrWhiteSpace(_searchText))
+        {
+            NavigateToSearch();
+            return;
+        }
+        
+        await SearchMovies();
+    }
+
+    private async Task SearchMovies()
+    {
+        if (string.IsNullOrWhiteSpace(_searchText))
+        {
+            _searchResults.Clear();
+            return;
+        }
+
+        var allMovies = await MovieRepo.GetAllAsync();
+        _searchResults = allMovies.Where(m => 
+            m.Title.IndexOf(_searchText, StringComparison.OrdinalIgnoreCase) >= 0 ||
+            m.Overview?.IndexOf(_searchText, StringComparison.OrdinalIgnoreCase) >= 0 ||
+            m.Genres?.IndexOf(_searchText, StringComparison.OrdinalIgnoreCase) >= 0)
+            .ToList();
+    }
+
+    private void ShowSearchPanel()
+    {
+        _showSearchPanel = true;
+        SearchMovies().ConfigureAwait(false);
+    }
+
+    private void NavigateToMovie(int movieId)
+    {
+        _showSearchPanel = false;
+        NavigationManager.NavigateTo($"/movie/{movieId}");
+    }
+
+    private void NavigateToSearch()
+    {
+        _showSearchPanel = false;
+        NavigationManager.NavigateTo($"/movies?search={Uri.EscapeDataString(_searchText)}");
+    }
+}

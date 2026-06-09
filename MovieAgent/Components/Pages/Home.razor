@@ -57,7 +57,7 @@
                 Color="Color.Primary" 
                 Value="_scanProgressPercent" 
                 Style="flex: 1;"
-                ShowProgressValue="true" />
+                showProgressValue="true" />
         </div>
         
         <MudGrid>
@@ -91,8 +91,8 @@
     {
         <MudItem xs="6" sm="4" md="3" lg="2">
             <MudCard Elevation="4" Class="movie-card" Style="cursor: pointer; transition: transform 0.2s;">
-                <MudCardMedia Image="@GetPosterUrl(movie)" Height="280" />
-                <MudCardContent>
+                    <MudCardMedia Image="@GetPosterUrl(movie)" Height="330" Style="object-fit: cover;" />
+                    <MudCardContent Style="padding: 10px;">
                     <MudText Typo="Typo.body2" Style="font-weight: bold; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: #E0E0E0;">
                         @movie.Title
                     </MudText>
@@ -115,17 +115,17 @@
                             }
                         </div>
                     }
-                </MudCardContent>
-                <MudCardActions>
-                    <MudIconButton Icon="@Icons.Material.Filled.PlayArrow" Color="Color.Primary"
-                                   OnClick="() => PlayMovie(movie)" Size="Size.Small" />
-                    <MudIconButton Icon="@Icons.Material.Filled.Info" Color="Color.Secondary"
-                                   OnClick="() => NavigateToDetail(movie.Id)" Size="Size.Small" />
-                    @if (movie.IsWatched)
-                    {
-                        <MudChip T="string" Size="Size.Small" Color="Color.Success">已看</MudChip>
-                    }
-                </MudCardActions>
+                    </MudCardContent>
+                    <MudCardActions>
+                        <MudIconButton Icon="@Icons.Material.Filled.PlayArrow" Color="Color.Primary"
+                                       OnClick="() => PlayMovie(movie)" Size="Size.Small" />
+                        <MudIconButton Icon="@Icons.Material.Filled.Info" Color="Color.Secondary"
+                                       OnClick="() => NavigateToDetail(movie.Id)" Size="Size.Small" />
+                        @if (movie.IsWatched)
+                        {
+                            <MudChip T="string" Size="Size.Small" Color="Color.Success">已看</MudChip>
+                        }
+                    </MudCardActions>
             </MudCard>
         </MudItem>
     }

@@ -1,6 +1,8 @@
 using System;
+using System.Collections.Generic;
 using System.Diagnostics;
 using System.IO;
+using System.Linq;
 using System.Runtime.InteropServices;
 using System.Threading;
 using System.Threading.Tasks;
@@ -10,8 +12,35 @@ using NAudio.Wave;
 
 namespace MovieAgent.Infrastructure.Services;
 
+/// <summary>
+/// 音频流信息
+/// </summary>
+public class AudioStreamInfo
+{
+    public int Index { get; set; }
+    public string CodecName { get; set; } = string.Empty;
+    public string Language { get; set; } = string.Empty;
+    public string DisplayName { get; set; } = string.Empty;
+    public int Channels { get; set; }
+    public int SampleRate { get; set; }
+    public string FormatType { get; set; } = string.Empty;
+}
+
+/// <summary>
+/// 字幕流信息
+/// </summary>
+public class SubtitleStreamInfo
+{
+    public int Index { get; set; }
+    public string CodecName { get; set; } = string.Empty;
+    public string Language { get; set; } = string.Empty;
+    public string DisplayName { get; set; } = string.Empty;
+}
+
 public class FFmpegPlayerService : IPlayerService, IDisposable
 {
+    private readonly ILoggerService _logger;
+    
     private IntPtr _formatContext;
     private IntPtr _videoCodecContext;
     private IntPtr _audioCodecContext;
@@ -62,16 +91,48 @@ public class FFmpegPlayerService : IPlayerService, IDisposable
     private double _pendingSeekTime;
     private volatile bool _isSeeking;
 
+    // 音频流和字幕流信息
+    private readonly List<AudioStreamInfo> _audioStreams = new();
+    private readonly List<SubtitleStreamInfo> _subtitleStreams = new();
+    private string? _externalSubtitlePath;
+    private string? _currentSubtitleEncoding;
+    
+    // 外部字幕解析结果
+    private List<SubtitleItem>? _externalSubtitles;
+    private readonly object _subtitleLock = new();
+    
+    // 内嵌字幕相关
+    private IntPtr _subtitleCodecContext;
+    private IntPtr _subtitleFrame;
+    private int _subtitleStreamIndex = -1;
+    private string? _currentEmbeddedSubtitle;
+    
+    public FFmpegPlayerService(ILoggerService logger)
+    {
+        _logger = logger;
+        InitializeFFmpeg();
+    }
+    
+    [Obsolete("Use constructor with ILoggerService parameter")]
+    public FFmpegPlayerService() : this(new LoggerService())
+    {
+    }
+
     public bool IsPlaying => _isPlaying;
     public bool IsPaused => _isPaused;
     public TimeSpan Duration => TimeSpan.FromMilliseconds(_durationMs);
     public TimeSpan Position => TimeSpan.FromMilliseconds(_currentTimeMs);
     public float Volume => _volume;
 
-    public int AudioTrackCount => 0;
-    public int CurrentAudioTrack => -1;
-    public int SpuTrackCount => 0;
-    public int CurrentSpuTrack => -1;
+    public int AudioTrackCount => _audioStreams.Count;
+    public int CurrentAudioTrack { get; private set; } = -1;
+    public int SpuTrackCount => _subtitleStreams.Count;
+    public int CurrentSpuTrack { get; private set; } = -1;
+    public IReadOnlyList<AudioStreamInfo> AudioStreams => _audioStreams.AsReadOnly();
+    public IReadOnlyList<SubtitleStreamInfo> SubtitleStreams => _subtitleStreams.AsReadOnly();
+    public string? ExternalSubtitlePath => _externalSubtitlePath;
+
+    public bool HasExternalSubtitle => _externalSubtitles != null && _externalSubtitles.Count > 0;
 
     public bool IsAvailable => _isInitialized;
 
@@ -86,11 +147,6 @@ public class FFmpegPlayerService : IPlayerService, IDisposable
     public event EventHandler<byte[]>? FrameUpdated;
     public event EventHandler? PlaybackEnded;
 
-    public FFmpegPlayerService()
-    {
-        InitializeFFmpeg();
-    }
-
     private void InitializeFFmpeg()
     {
         try
@@ -98,7 +154,7 @@ public class FFmpegPlayerService : IPlayerService, IDisposable
             if (!RuntimeInformation.IsOSPlatform(OSPlatform.Windows) &&
                 !RuntimeInformation.IsOSPlatform(OSPlatform.Linux))
             {
-                Debug.WriteLine("[FFmpeg] Platform not supported");
+                _logger.Debug("[FFmpeg] Platform not supported");
                 _isInitialized = false;
                 return;
             }
@@ -108,29 +164,29 @@ public class FFmpegPlayerService : IPlayerService, IDisposable
             if (Directory.Exists(baseDir))
             {
                 ffmpeg.RootPath = baseDir;
-                Debug.WriteLine($"[FFmpeg] Using FFmpeg from: {baseDir}");
+                _logger.Debug($"[FFmpeg] Using FFmpeg from: {baseDir}");
             }
             else
             {
                 ffmpeg.RootPath = baseDir;
-                Debug.WriteLine($"[FFmpeg] Using FFmpeg from app directory: {baseDir}");
+                _logger.Debug($"[FFmpeg] Using FFmpeg from app directory: {baseDir}");
             }
 
             try
             {
                 var version = ffmpeg.av_version_info();
-                Debug.WriteLine($"[FFmpeg] Version: {version}");
+                _logger.Debug($"[FFmpeg] Version: {version}");
                 _isInitialized = true;
             }
             catch (Exception ex)
             {
-                Debug.WriteLine($"[FFmpeg] Initialization failed: {ex.Message}");
+                _logger.Debug($"[FFmpeg] Initialization failed: {ex.Message}");
                 _isInitialized = false;
             }
         }
         catch (Exception ex)
         {
-            Debug.WriteLine($"[FFmpeg] Initialization error: {ex.Message}");
+            _logger.Debug($"[FFmpeg] Initialization error: {ex.Message}");
             _isInitialized = false;
         }
     }
@@ -139,7 +195,7 @@ public class FFmpegPlayerService : IPlayerService, IDisposable
     {
         if (!File.Exists(filePath))
         {
-            Debug.WriteLine($"[FFmpeg] File not found: {filePath}");
+            _logger.Debug($"[FFmpeg] File not found: {filePath}");
             return false;
         }
 
@@ -154,7 +210,7 @@ public class FFmpegPlayerService : IPlayerService, IDisposable
             _formatContext = (IntPtr)fmtCtx;
             if (fmtCtx == null)
             {
-                Debug.WriteLine("[FFmpeg] Failed to allocate format context");
+                _logger.Debug("[FFmpeg] Failed to allocate format context");
                 return false;
             }
 
@@ -165,18 +221,24 @@ public class FFmpegPlayerService : IPlayerService, IDisposable
 
             if (ffmpeg.avformat_open_input(&fmtCtx, filePath, null, &options) != 0)
             {
-                Debug.WriteLine("[FFmpeg] Failed to open file");
+                _logger.Debug("[FFmpeg] Failed to open file");
                 return false;
             }
             _formatContext = (IntPtr)fmtCtx;
 
             if (ffmpeg.avformat_find_stream_info(fmtCtx, null) < 0)
             {
-                Debug.WriteLine("[FFmpeg] Failed to find stream info");
+                _logger.Debug("[FFmpeg] Failed to find stream info");
                 return false;
             }
 
             _durationMs = (long)(fmtCtx->duration / (double)ffmpeg.AV_TIME_BASE * 1000);
+
+            // 清空之前的流列表
+            _audioStreams.Clear();
+            _subtitleStreams.Clear();
+            _audioStreamIndex = -1;
+            _videoStreamIndex = -1;
 
             for (int i = 0; i < (int)fmtCtx->nb_streams; i++)
             {
@@ -189,35 +251,185 @@ public class FFmpegPlayerService : IPlayerService, IDisposable
                     _videoTimeBase = ffmpeg.av_q2d(stream->time_base);
                     InitializeVideoDecoder(stream);
                 }
-                else if (codecParams->codec_type == AVMediaType.AVMEDIA_TYPE_AUDIO && _audioStreamIndex < 0)
+                else if (codecParams->codec_type == AVMediaType.AVMEDIA_TYPE_AUDIO)
                 {
-                    _audioStreamIndex = i;
-                    InitializeAudioDecoder(stream);
+                    var audioInfo = CollectAudioStreamInfo(stream, i);
+                    _audioStreams.Add(audioInfo);
+                    
+                    // 只初始化第一个音频流
+                    if (_audioStreamIndex < 0)
+                    {
+                        _audioStreamIndex = i;
+                        CurrentAudioTrack = 0;
+                        InitializeAudioDecoder(stream);
+                    }
+                }
+                else if (codecParams->codec_type == AVMediaType.AVMEDIA_TYPE_SUBTITLE)
+                {
+                    var subtitleInfo = CollectSubtitleStreamInfo(stream, i);
+                    _subtitleStreams.Add(subtitleInfo);
+                    
+                    // 初始化第一个字幕流
+                    if (_subtitleStreamIndex < 0)
+                    {
+                        _subtitleStreamIndex = i;
+                        CurrentSpuTrack = 0;
+                    }
                 }
             }
 
             _videoFrame = (IntPtr)ffmpeg.av_frame_alloc();
+            _audioFrame = (IntPtr)ffmpeg.av_frame_alloc();
+            _subtitleFrame = (IntPtr)ffmpeg.av_frame_alloc();
             _packet = (IntPtr)ffmpeg.av_packet_alloc();
 
             if (_videoStreamIndex >= 0)
             {
-                Debug.WriteLine($"[FFmpeg] Video opened: {_videoWidth}x{_videoHeight}, {_fps:F2}fps");
-                Debug.WriteLine($"[FFmpeg] Duration: {TimeSpan.FromMilliseconds(_durationMs):hh\\:mm\\:ss}");
-                if (_audioStreamIndex >= 0)
+                _logger.Debug($"[FFmpeg] Video opened: {_videoWidth}x{_videoHeight}, {_fps:F2}fps");
+                _logger.Debug($"[FFmpeg] Duration: {TimeSpan.FromMilliseconds(_durationMs):hh\\:mm\\:ss}");
+                _logger.Debug($"[FFmpeg] Found {_audioStreams.Count} audio stream(s)");
+                _logger.Debug($"[FFmpeg] Found {_subtitleStreams.Count} subtitle stream(s)");
+                
+                // 输出所有音频流信息
+                for (int i = 0; i < _audioStreams.Count; i++)
                 {
-                    Debug.WriteLine("[FFmpeg] Audio stream found");
+                    var audio = _audioStreams[i];
+                    _logger.Debug($"[FFmpeg] Audio[{i}]: {audio.DisplayName} ({audio.FormatType}, {audio.Channels}ch, {audio.SampleRate}Hz)");
                 }
                 return true;
             }
 
-            Debug.WriteLine("[FFmpeg] No video stream found");
+            _logger.Debug("[FFmpeg] No video stream found");
             return false;
         }
         catch (Exception ex)
         {
-            Debug.WriteLine($"[FFmpeg] Open file error: {ex.Message}");
+            _logger.Debug($"[FFmpeg] Open file error: {ex.Message}");
             return false;
         }
+    }
+
+    private unsafe AudioStreamInfo CollectAudioStreamInfo(AVStream* stream, int index)
+    {
+        var codecParams = stream->codecpar;
+        var codec = ffmpeg.avcodec_find_decoder(codecParams->codec_id);
+        var codecName = codec != null ? Marshal.PtrToStringAnsi((IntPtr)codec->name) ?? "unknown" : "unknown";
+        
+        // 获取语言信息
+        string language = "unknown";
+        var tags = stream->metadata;
+        if (tags != null)
+        {
+            var lang = ffmpeg.av_dict_get(tags, "language", null, 0);
+            if (lang != null && lang->value != null)
+            {
+                language = Marshal.PtrToStringAnsi((IntPtr)lang->value) ?? "unknown";
+            }
+        }
+
+        // 检测音频格式类型
+        var formatType = DetectAudioFormat(codecName, codecParams->codec_id);
+        
+        // 格式化语言名称
+        string displayLang = language.ToUpper();
+        if (language == "und" || string.IsNullOrEmpty(language))
+            displayLang = "未知";
+        else if (language == "chi" || language == "zho")
+            displayLang = "中文";
+        else if (language == "eng")
+            displayLang = "英语";
+        else if (language == "jpn")
+            displayLang = "日语";
+        else if (language == "kor")
+            displayLang = "韩语";
+        else if (language == "fre" || language == "fra")
+            displayLang = "法语";
+        else if (language == "ger" || language == "deu")
+            displayLang = "德语";
+
+        var audioInfo = new AudioStreamInfo
+        {
+            Index = index,
+            CodecName = codecName,
+            Language = language,
+            Channels = codecParams->ch_layout.nb_channels,
+            SampleRate = codecParams->sample_rate,
+            FormatType = formatType,
+            DisplayName = $"{displayLang} - {formatType}"
+        };
+
+        return audioInfo;
+    }
+
+    private unsafe SubtitleStreamInfo CollectSubtitleStreamInfo(AVStream* stream, int index)
+    {
+        var codecParams = stream->codecpar;
+        var codec = ffmpeg.avcodec_find_decoder(codecParams->codec_id);
+        var codecName = codec != null ? Marshal.PtrToStringAnsi((IntPtr)codec->name) ?? "unknown" : "unknown";
+        
+        // 获取语言信息
+        string language = "unknown";
+        var tags = stream->metadata;
+        if (tags != null)
+        {
+            var lang = ffmpeg.av_dict_get(tags, "language", null, 0);
+            if (lang != null && lang->value != null)
+            {
+                language = Marshal.PtrToStringAnsi((IntPtr)lang->value) ?? "unknown";
+            }
+        }
+
+        // 格式化语言名称
+        string displayLang = language.ToUpper();
+        if (language == "und" || string.IsNullOrEmpty(language))
+            displayLang = "未知";
+        else if (language == "chi" || language == "zho")
+            displayLang = "中文";
+        else if (language == "eng")
+            displayLang = "英语";
+        else if (language == "jpn")
+            displayLang = "日语";
+        else if (language == "kor")
+            displayLang = "韩语";
+
+        var subtitleInfo = new SubtitleStreamInfo
+        {
+            Index = index,
+            CodecName = codecName,
+            Language = language,
+            DisplayName = displayLang
+        };
+
+        return subtitleInfo;
+    }
+
+    private string DetectAudioFormat(string codecName, AVCodecID codecId)
+    {
+        // 根据编解码器名称或ID检测音频格式
+        var upperCodec = codecName.ToUpper();
+        
+        if (upperCodec.Contains("DTS") || codecId == AVCodecID.AV_CODEC_ID_DTS)
+            return "DTS";
+        if (upperCodec.Contains("EAC3") || upperCodec.Contains("E-AC-3") || upperCodec.Contains("DOLBY") || codecId == AVCodecID.AV_CODEC_ID_EAC3)
+            return "Dolby Digital+";
+        if (upperCodec.Contains("AC3") || upperCodec.Contains("Dolby") || codecId == AVCodecID.AV_CODEC_ID_AC3)
+            return "Dolby Digital";
+        if (upperCodec.Contains("TRUEHD") || upperCodec.Contains("MLP") || codecId == AVCodecID.AV_CODEC_ID_TRUEHD)
+            return "Dolby TrueHD";
+        if (upperCodec.Contains("ATMOS") || upperCodec.Contains("AAC"))
+            return "AAC";
+        if (upperCodec.Contains("FLAC") || codecId == AVCodecID.AV_CODEC_ID_FLAC)
+            return "FLAC";
+        if (upperCodec.Contains("MP3") || upperCodec.Contains("MP2") || codecId == AVCodecID.AV_CODEC_ID_MP3)
+            return "MP3";
+        if (upperCodec.Contains("OPUS") || codecId == AVCodecID.AV_CODEC_ID_OPUS)
+            return "Opus";
+        if (upperCodec.Contains("VORBIS") || codecId == AVCodecID.AV_CODEC_ID_VORBIS)
+            return "Vorbis";
+        if (upperCodec.Contains("PCM") || upperCodec.Contains("WAV"))
+            return "PCM/WAV";
+        
+        return codecName.ToUpper();
     }
 
     private unsafe void InitializeVideoDecoder(AVStream* stream)
@@ -226,7 +438,7 @@ public class FFmpegPlayerService : IPlayerService, IDisposable
         var codec = ffmpeg.avcodec_find_decoder(codecParams->codec_id);
         if (codec == null)
         {
-            Debug.WriteLine("[FFmpeg] Video codec not found");
+            _logger.Debug("[FFmpeg] Video codec not found");
             return;
         }
 
@@ -234,7 +446,7 @@ public class FFmpegPlayerService : IPlayerService, IDisposable
         _videoCodecContext = (IntPtr)vCodecCtx;
         if (vCodecCtx == null)
         {
-            Debug.WriteLine("[FFmpeg] Failed to allocate video codec context");
+            _logger.Debug("[FFmpeg] Failed to allocate video codec context");
             return;
         }
 
@@ -244,17 +456,17 @@ public class FFmpegPlayerService : IPlayerService, IDisposable
         int ret = TryOpenDecoderWithHardware(codec, codecParams->codec_id, vCodecCtx);
         if (ret < 0)
         {
-            Debug.WriteLine("[FFmpeg] Hardware decoding not available, using software decoding");
+            _logger.Debug("[FFmpeg] Hardware decoding not available, using software decoding");
             ret = ffmpeg.avcodec_open2(vCodecCtx, codec, null);
             if (ret < 0)
             {
-                Debug.WriteLine("[FFmpeg] Failed to open video codec");
+                _logger.Debug("[FFmpeg] Failed to open video codec");
                 return;
             }
         }
         else
         {
-            Debug.WriteLine("[FFmpeg] Hardware decoding enabled");
+            _logger.Debug("[FFmpeg] Hardware decoding enabled");
         }
 
         _videoWidth = vCodecCtx->width;
@@ -288,7 +500,7 @@ public class FFmpegPlayerService : IPlayerService, IDisposable
     {
         // 禁用硬件加速 - ExecutionEngineException 在某些环境下会发生
         // 软件解码更稳定，对于大多数视频性能足够
-        Debug.WriteLine("[FFmpeg] Hardware acceleration disabled, using software decoding");
+        _logger.Debug("[FFmpeg] Hardware acceleration disabled, using software decoding");
         return -1;
     }
 
@@ -298,7 +510,7 @@ public class FFmpegPlayerService : IPlayerService, IDisposable
         var codec = ffmpeg.avcodec_find_decoder(codecParams->codec_id);
         if (codec == null)
         {
-            Debug.WriteLine("[FFmpeg] Audio codec not found");
+            _logger.Debug("[FFmpeg] Audio codec not found");
             return;
         }
 
@@ -306,7 +518,7 @@ public class FFmpegPlayerService : IPlayerService, IDisposable
         _audioCodecContext = (IntPtr)aCodecCtx;
         if (aCodecCtx == null)
         {
-            Debug.WriteLine("[FFmpeg] Failed to allocate audio codec context");
+            _logger.Debug("[FFmpeg] Failed to allocate audio codec context");
             return;
         }
 
@@ -314,7 +526,7 @@ public class FFmpegPlayerService : IPlayerService, IDisposable
 
         if (ffmpeg.avcodec_open2(aCodecCtx, codec, null) < 0)
         {
-            Debug.WriteLine("[FFmpeg] Failed to open audio codec");
+            _logger.Debug("[FFmpeg] Failed to open audio codec");
             return;
         }
 
@@ -361,11 +573,11 @@ public class FFmpegPlayerService : IPlayerService, IDisposable
             _waveOut.NumberOfBuffers = 4;
             _waveOut.Init(_audioProvider);
 
-            Debug.WriteLine("[FFmpeg] Audio initialized");
+            _logger.Debug("[FFmpeg] Audio initialized");
         }
         catch (Exception ex)
         {
-            Debug.WriteLine($"[FFmpeg] Audio initialization failed: {ex.Message}");
+            _logger.Debug($"[FFmpeg] Audio initialization failed: {ex.Message}");
         }
     }
 
@@ -419,6 +631,8 @@ public class FFmpegPlayerService : IPlayerService, IDisposable
             _isSeeking = false;
             _clockBase = 0;
             _clockStartTicks = Stopwatch.GetTimestamp();
+
+            InitializeSubtitleDecoderIfNeeded();
 
             var ct = _playCts.Token;
             _playTask = Task.Run(() => DecodeLoopUnsafeAsync(ct), ct);
@@ -517,13 +731,13 @@ public class FFmpegPlayerService : IPlayerService, IDisposable
         catch (OperationCanceledException) { }
         catch (Exception ex)
         {
-            Debug.WriteLine($"[FFmpeg] Decode error: {ex.Message}");
+            _logger.Debug($"[FFmpeg] Decode error: {ex.Message}");
         }
         finally
         {
             _isPlaying = false;
             try { _waveOut?.Stop(); } catch { }
-            Debug.WriteLine("[FFmpeg] DecodeLoop finished");
+            _logger.Debug("[FFmpeg] DecodeLoop finished");
         }
     }
 
@@ -560,6 +774,10 @@ public class FFmpegPlayerService : IPlayerService, IDisposable
         {
             DecodeAudioPacketUnsafe();
         }
+        else if (pkt->stream_index == _subtitleStreamIndex)
+        {
+            DecodeSubtitlePacketUnsafe();
+        }
 
         ffmpeg.av_packet_unref(pkt);
         return false;
@@ -592,7 +810,7 @@ public class FFmpegPlayerService : IPlayerService, IDisposable
                 int ret = ffmpeg.av_seek_frame(fmtCtx, -1, targetPts, ffmpeg.AVSEEK_FLAG_BACKWARD);
                 if (ret < 0)
                 {
-                    Debug.WriteLine($"[FFmpeg] av_seek_frame failed: {ret}");
+                    _logger.Debug($"[FFmpeg] av_seek_frame failed: {ret}");
                     return;
                 }
 
@@ -618,12 +836,12 @@ public class FFmpegPlayerService : IPlayerService, IDisposable
                 _currentTimeMs = (long)(position * 1000);
                 _clockBase = position;
                 _clockStartTicks = Stopwatch.GetTimestamp();
-                Debug.WriteLine($"[FFmpeg] Seek to: {position}s");
+                _logger.Debug($"[FFmpeg] Seek to: {position}s");
             }
         }
         catch (Exception ex)
         {
-            Debug.WriteLine($"[FFmpeg] ExecuteSeekNow exception: {ex.Message}");
+            _logger.Debug($"[FFmpeg] ExecuteSeekNow exception: {ex.Message}");
         }
         finally
         {
@@ -659,7 +877,7 @@ public class FFmpegPlayerService : IPlayerService, IDisposable
                 var transferRet = ffmpeg.av_hwframe_transfer_data(transferFrm, frm, 0);
                 if (transferRet < 0)
                 {
-                    Debug.WriteLine($"[FFmpeg] HW frame transfer failed");
+                    _logger.Debug($"[FFmpeg] HW frame transfer failed");
                     break;
                 }
                 transferFrm->pts = frm->pts;
@@ -782,6 +1000,95 @@ public class FFmpegPlayerService : IPlayerService, IDisposable
             }
         }
     }
+    
+    private unsafe void DecodeSubtitlePacketUnsafe()
+    {
+        if (_subtitleCodecContext == IntPtr.Zero || _subtitleFrame == IntPtr.Zero)
+            return;
+
+        var sCodecCtx = (AVCodecContext*)_subtitleCodecContext;
+        var pkt = (AVPacket*)_packet;
+        var sFrm = (AVFrame*)_subtitleFrame;
+
+        int ret = ffmpeg.avcodec_send_packet(sCodecCtx, pkt);
+        if (ret < 0)
+        {
+            _logger.Debug($"[FFmpeg] Subtitle send_packet failed: {ret}");
+            return;
+        }
+
+        while (true)
+        {
+            ret = ffmpeg.avcodec_receive_frame(sCodecCtx, sFrm);
+            if (ret == ffmpeg.AVERROR(ffmpeg.EAGAIN))
+            {
+                break;
+            }
+            if (ret == ffmpeg.AVERROR_EOF)
+            {
+                break;
+            }
+            if (ret < 0)
+            {
+                _logger.Debug($"[FFmpeg] Subtitle receive_frame failed: {ret}");
+                break;
+            }
+
+            if (sFrm->data[0] != null)
+            {
+                string subtitleText = Marshal.PtrToStringAnsi((IntPtr)sFrm->data[0]) ?? string.Empty;
+                
+                if (!string.IsNullOrEmpty(subtitleText))
+                {
+                    subtitleText = CleanSubtitleText(subtitleText);
+                    
+                    if (!string.Equals(_currentEmbeddedSubtitle, subtitleText))
+                    {
+                        _currentEmbeddedSubtitle = subtitleText;
+                        _logger.Debug($"[FFmpeg] Subtitle decoded: {subtitleText.Substring(0, Math.Min(subtitleText.Length, 50))}...");
+                    }
+                }
+            }
+            else if (sFrm->data[1] != null)
+            {
+                string subtitleText = Marshal.PtrToStringAnsi((IntPtr)sFrm->data[1]) ?? string.Empty;
+                
+                if (!string.IsNullOrEmpty(subtitleText))
+                {
+                    subtitleText = CleanSubtitleText(subtitleText);
+                    
+                    if (!string.Equals(_currentEmbeddedSubtitle, subtitleText))
+                    {
+                        _currentEmbeddedSubtitle = subtitleText;
+                        _logger.Debug($"[FFmpeg] Subtitle decoded from data[1]: {subtitleText.Substring(0, Math.Min(subtitleText.Length, 50))}...");
+                    }
+                }
+            }
+            else if (sFrm->pts != ffmpeg.AV_NOPTS_VALUE)
+            {
+                _logger.Debug($"[FFmpeg] Subtitle frame has PTS but no text data: pts={sFrm->pts}");
+            }
+            
+            ffmpeg.av_frame_unref(sFrm);
+        }
+    }
+    
+    private string CleanSubtitleText(string text)
+    {
+        if (string.IsNullOrEmpty(text))
+            return string.Empty;
+            
+        text = text.Replace("\r\n", "\n").Replace("\r", "\n");
+        
+        text = text.Trim();
+        
+        while (text.Contains("\n\n"))
+        {
+            text = text.Replace("\n\n", "\n");
+        }
+        
+        return text;
+    }
 
     public void Pause()
     {
@@ -790,7 +1097,7 @@ public class FFmpegPlayerService : IPlayerService, IDisposable
             _isPaused = true;
             _clockBase = GetPlaybackClock();
             _waveOut?.Pause();
-            Debug.WriteLine("[FFmpeg] Paused");
+            _logger.Debug("[FFmpeg] Paused");
         }
     }
 
@@ -801,7 +1108,7 @@ public class FFmpegPlayerService : IPlayerService, IDisposable
             _isPaused = false;
             _clockStartTicks = Stopwatch.GetTimestamp();
             _waveOut?.Play();
-            Debug.WriteLine("[FFmpeg] Resumed");
+            _logger.Debug("[FFmpeg] Resumed");
         }
     }
 
@@ -812,7 +1119,7 @@ public class FFmpegPlayerService : IPlayerService, IDisposable
         {
             _waveOut.Volume = _volume / 100f;
         }
-        Debug.WriteLine($"[FFmpeg] Volume set to: {_volume}");
+        _logger.Debug($"[FFmpeg] Volume set to: {_volume}");
     }
 
     public void Seek(int position)
@@ -820,7 +1127,7 @@ public class FFmpegPlayerService : IPlayerService, IDisposable
         if (position < 0) return;
         _pendingSeekTime = position;
         _pendingSeek = true;
-        Debug.WriteLine($"[FFmpeg] Seek requested to: {position}s");
+        _logger.Debug($"[FFmpeg] Seek requested to: {position}s");
     }
 
     public void SeekSync(int position)
@@ -831,13 +1138,13 @@ public class FFmpegPlayerService : IPlayerService, IDisposable
             {
                 if (!_isPlaying && !_isPaused)
                 {
-                    Debug.WriteLine("[FFmpeg] SeekSync ignored - not playing");
+                    _logger.Debug("[FFmpeg] SeekSync ignored - not playing");
                     return;
                 }
 
                 if (_formatContext == IntPtr.Zero || _videoStreamIndex < 0)
                 {
-                    Debug.WriteLine("[FFmpeg] SeekSync ignored - invalid state");
+                    _logger.Debug("[FFmpeg] SeekSync ignored - invalid state");
                     return;
                 }
 
@@ -848,7 +1155,7 @@ public class FFmpegPlayerService : IPlayerService, IDisposable
                         var fmtCtx = (AVFormatContext*)_formatContext;
                         if (fmtCtx == null)
                         {
-                            Debug.WriteLine("[FFmpeg] SeekSync ignored - fmtCtx is null");
+                            _logger.Debug("[FFmpeg] SeekSync ignored - fmtCtx is null");
                             return;
                         }
 
@@ -856,7 +1163,7 @@ public class FFmpegPlayerService : IPlayerService, IDisposable
                         int ret = ffmpeg.av_seek_frame(fmtCtx, -1, targetPts, ffmpeg.AVSEEK_FLAG_BACKWARD);
                         if (ret < 0)
                         {
-                            Debug.WriteLine($"[FFmpeg] av_seek_frame failed: {ret}");
+                            _logger.Debug($"[FFmpeg] av_seek_frame failed: {ret}");
                             return;
                         }
 
@@ -887,45 +1194,404 @@ public class FFmpegPlayerService : IPlayerService, IDisposable
                     _currentTimeMs = position * 1000L;
                     _clockBase = position;
                     _clockStartTicks = Stopwatch.GetTimestamp();
-                    Debug.WriteLine($"[FFmpeg] SeekSync to: {position}s");
+                    _logger.Debug($"[FFmpeg] SeekSync to: {position}s");
                 }
                 catch (System.AccessViolationException ex)
                 {
-                    Debug.WriteLine($"[FFmpeg] SeekSync access violation: {ex.Message}");
+                    _logger.Debug($"[FFmpeg] SeekSync access violation: {ex.Message}");
                 }
                 catch (System.NullReferenceException ex)
                 {
-                    Debug.WriteLine($"[FFmpeg] SeekSync null reference: {ex.Message}");
+                    _logger.Debug($"[FFmpeg] SeekSync null reference: {ex.Message}");
                 }
             }
         }
         catch (Exception ex)
         {
-            Debug.WriteLine($"[FFmpeg] SeekSync exception: {ex.Message}");
+            _logger.Debug($"[FFmpeg] SeekSync exception: {ex.Message}");
         }
     }
 
     public void Next()
     {
-        Debug.WriteLine("[FFmpeg] Next not supported");
+        _logger.Debug("[FFmpeg] Next not supported");
     }
 
     public void Previous()
     {
-        Debug.WriteLine("[FFmpeg] Previous not supported");
+        _logger.Debug("[FFmpeg] Previous not supported");
     }
 
     public void ToggleFullscreen()
     {
-        Debug.WriteLine("[FFmpeg] Toggle fullscreen (handled by UI)");
+        _logger.Debug("[FFmpeg] Toggle fullscreen (handled by UI)");
     }
 
     public void SetAudioTrack(int trackIndex)
+        {
+            if (trackIndex < 0 || trackIndex >= _audioStreams.Count)
+            {
+                _logger.Debug($"[FFmpeg] Invalid audio track index: {trackIndex}");
+                return;
+            }
+
+            var newAudioInfo = _audioStreams[trackIndex];
+            _logger.Debug($"[FFmpeg] Switching to audio track {trackIndex}: {newAudioInfo.DisplayName}");
+            
+            if (trackIndex == CurrentAudioTrack)
+                return;
+
+            if (_isPlaying)
+            {
+                try
+                {
+                    CleanupAudioDecoder();
+                    
+                    _audioStreamIndex = _audioStreams[trackIndex].Index;
+                    CurrentAudioTrack = trackIndex;
+                    
+                    unsafe
+                    {
+                        var fmtCtx = (AVFormatContext*)_formatContext;
+                        if (fmtCtx != null)
+                        {
+                            var stream = fmtCtx->streams[_audioStreamIndex];
+                            InitializeAudioDecoder(stream);
+                            
+                            lock (_audioLock)
+                            {
+                                _audioProvider?.ClearBuffer();
+                            }
+                            
+                            _waveOut?.Play();
+                        }
+                    }
+                }
+                catch (Exception ex)
+                {
+                    _logger.Debug($"[FFmpeg] Failed to switch audio track: {ex.Message}");
+                }
+            }
+            else
+            {
+                _audioStreamIndex = _audioStreams[trackIndex].Index;
+                CurrentAudioTrack = trackIndex;
+            }
+            
+            _audioCodecName = newAudioInfo.CodecName;
+            _audioFormat = newAudioInfo.FormatType;
+            _audioChannels = newAudioInfo.Channels;
+            _audioSampleRate = newAudioInfo.SampleRate;
+            
+            _logger.Debug($"[FFmpeg] Audio track switched to: {newAudioInfo.DisplayName}");
+        }
+    
+    private unsafe void CleanupAudioDecoder()
     {
+        try
+        {
+            _waveOut?.Stop();
+            _waveOut?.Dispose();
+            _waveOut = null;
+            _audioProvider = null;
+            
+            if (_audioFrame != IntPtr.Zero)
+            {
+                var frame = (AVFrame*)_audioFrame;
+                ffmpeg.av_frame_free(&frame);
+                _audioFrame = IntPtr.Zero;
+            }
+            
+            if (_swrContext != IntPtr.Zero)
+            {
+                var ctx = (SwrContext*)_swrContext;
+                ffmpeg.swr_free(&ctx);
+                _swrContext = IntPtr.Zero;
+            }
+            
+            if (_audioCodecContext != IntPtr.Zero)
+            {
+                var ctx = (AVCodecContext*)_audioCodecContext;
+                ffmpeg.avcodec_free_context(&ctx);
+                _audioCodecContext = IntPtr.Zero;
+            }
+        }
+        catch { }
     }
 
     public void SetSpuTrack(int trackIndex)
+        {
+            if (trackIndex < 0 || trackIndex >= _subtitleStreams.Count)
+            {
+                _logger.Debug($"[FFmpeg] Invalid subtitle track index: {trackIndex}");
+                return;
+            }
+
+            var newSubtitleInfo = _subtitleStreams[trackIndex];
+            _logger.Debug($"[FFmpeg] Switching to subtitle track {trackIndex}: {newSubtitleInfo.DisplayName}");
+            
+            if (trackIndex == CurrentSpuTrack)
+                return;
+
+            CurrentSpuTrack = trackIndex;
+            _subtitleStreamIndex = _subtitleStreams[trackIndex].Index;
+            _currentEmbeddedSubtitle = null;
+            
+            if (_isPlaying)
+            {
+                try
+                {
+                    CleanupSubtitleDecoder();
+                    
+                    unsafe
+                    {
+                        if (_formatContext == IntPtr.Zero)
+                        {
+                            _logger.Debug("[FFmpeg] Format context is null, cannot switch subtitle");
+                            return;
+                        }
+                        
+                        var fmtCtx = (AVFormatContext*)_formatContext;
+                        if (fmtCtx != null && _subtitleStreamIndex >= 0 && _subtitleStreamIndex < (int)fmtCtx->nb_streams)
+                        {
+                            var stream = fmtCtx->streams[_subtitleStreamIndex];
+                            if (stream != null)
+                            {
+                                InitializeSubtitleDecoder(stream);
+                            }
+                        }
+                    }
+                }
+                catch (Exception ex)
+                {
+                    _logger.Debug($"[FFmpeg] Failed to switch subtitle track: {ex.Message}");
+                }
+            }
+            
+            _logger.Debug($"[FFmpeg] Subtitle track switched to: {newSubtitleInfo.DisplayName}");
+        }
+    
+    /// <summary>
+    /// 获取当前时间对应的字幕文本（支持外部字幕和内嵌字幕）
+    /// </summary>
+    /// <param name="currentTime">当前播放时间</param>
+    /// <returns>字幕文本，如果没有则返回null</returns>
+    public string? GetCurrentSubtitle(TimeSpan currentTime)
     {
+        // 优先使用外部字幕
+        if (HasExternalSubtitle)
+        {
+            return GetExternalSubtitle(currentTime);
+        }
+        
+        // 尝试获取内嵌字幕
+        return GetEmbeddedSubtitle(currentTime);
+    }
+    
+    private string? GetExternalSubtitle(TimeSpan currentTime)
+    {
+        lock (_subtitleLock)
+        {
+            if (_externalSubtitles == null || _externalSubtitles.Count == 0)
+                return null;
+
+            var subtitle = _externalSubtitles.FirstOrDefault(s => s.IsActive(currentTime));
+            return subtitle?.Text;
+        }
+    }
+    
+    private string? GetEmbeddedSubtitle(TimeSpan currentTime)
+    {
+        return _currentEmbeddedSubtitle;
+    }
+    
+    private void InitializeSubtitleDecoderIfNeeded()
+    {
+        if (_subtitleStreamIndex >= 0 && _subtitleCodecContext == IntPtr.Zero)
+        {
+            try
+            {
+                unsafe
+                {
+                    var fmtCtx = (AVFormatContext*)_formatContext;
+                    if (fmtCtx != null)
+                    {
+                        var stream = fmtCtx->streams[_subtitleStreamIndex];
+                        InitializeSubtitleDecoder(stream);
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                _logger.Debug($"[FFmpeg] Failed to initialize subtitle decoder: {ex.Message}");
+            }
+        }
+    }
+    
+    private unsafe void InitializeSubtitleDecoder(AVStream* stream)
+    {
+        var codecParams = stream->codecpar;
+        var codec = ffmpeg.avcodec_find_decoder(codecParams->codec_id);
+        if (codec == null)
+        {
+            _logger.Debug("[FFmpeg] Subtitle codec not found");
+            return;
+        }
+
+        var sCodecCtx = ffmpeg.avcodec_alloc_context3(codec);
+        _subtitleCodecContext = (IntPtr)sCodecCtx;
+        if (sCodecCtx == null)
+        {
+            _logger.Debug("[FFmpeg] Failed to allocate subtitle codec context");
+            return;
+        }
+
+        ffmpeg.avcodec_parameters_to_context(sCodecCtx, codecParams);
+
+        if (ffmpeg.avcodec_open2(sCodecCtx, codec, null) < 0)
+        {
+            _logger.Debug("[FFmpeg] Failed to open subtitle codec");
+            return;
+        }
+
+        if (_subtitleFrame == IntPtr.Zero)
+        {
+            _subtitleFrame = (IntPtr)ffmpeg.av_frame_alloc();
+        }
+        _logger.Debug("[FFmpeg] Subtitle decoder initialized");
+    }
+    
+    private unsafe void CleanupSubtitleDecoder()
+    {
+        try
+        {
+            if (_subtitleFrame != IntPtr.Zero)
+            {
+                var frame = (AVFrame*)_subtitleFrame;
+                ffmpeg.av_frame_free(&frame);
+                _subtitleFrame = IntPtr.Zero;
+            }
+            
+            if (_subtitleCodecContext != IntPtr.Zero)
+            {
+                var ctx = (AVCodecContext*)_subtitleCodecContext;
+                ffmpeg.avcodec_free_context(&ctx);
+                _subtitleCodecContext = IntPtr.Zero;
+            }
+            
+            _currentEmbeddedSubtitle = null;
+        }
+        catch { }
+    }
+
+    /// <summary>
+    /// 加载外部字幕文件
+    /// </summary>
+    /// <param name="subtitlePath">字幕文件路径（支持 SRT, ASS, SSA, SUB 格式）</param>
+    /// <param name="encoding">字幕文件编码，默认自动检测</param>
+    /// <returns>是否成功加载</returns>
+    public bool LoadExternalSubtitle(string subtitlePath, string? encoding = null)
+    {
+        if (string.IsNullOrEmpty(subtitlePath) || !File.Exists(subtitlePath))
+        {
+            _logger.Debug($"[FFmpeg] Subtitle file not found: {subtitlePath}");
+            return false;
+        }
+
+        var extension = Path.GetExtension(subtitlePath).ToLowerInvariant();
+        var supportedExtensions = new[] { ".srt", ".ass", ".ssa", ".sub", ".txt" };
+        if (!supportedExtensions.Contains(extension))
+        {
+            _logger.Debug($"[FFmpeg] Unsupported subtitle format: {extension}");
+            return false;
+        }
+
+        try
+        {
+            _currentSubtitleEncoding = encoding ?? DetectSubtitleEncoding(subtitlePath);
+            
+            lock (_subtitleLock)
+            {
+                _externalSubtitles = SubtitleParser.Parse(subtitlePath, _currentSubtitleEncoding);
+            }
+            
+            _externalSubtitlePath = subtitlePath;
+            
+            _logger.Debug($"[FFmpeg] External subtitle loaded: {subtitlePath}");
+            _logger.Debug($"[FFmpeg] Subtitle encoding: {_currentSubtitleEncoding}");
+            _logger.Debug($"[FFmpeg] Subtitle count: {_externalSubtitles?.Count ?? 0}");
+            return _externalSubtitles != null && _externalSubtitles.Count > 0;
+        }
+        catch (Exception ex)
+        {
+            _logger.Debug($"[FFmpeg] Failed to load subtitle: {ex.Message}");
+            return false;
+        }
+    }
+
+    /// <summary>
+    /// 卸载外部字幕
+    /// </summary>
+    public void UnloadExternalSubtitle()
+    {
+        lock (_subtitleLock)
+        {
+            _externalSubtitles = null;
+        }
+        _externalSubtitlePath = null;
+        _currentSubtitleEncoding = null;
+        _logger.Debug("[FFmpeg] External subtitle unloaded");
+    }
+
+    /// <summary>
+    /// 检测字幕文件编码
+    /// </summary>
+    private string DetectSubtitleEncoding(string filePath)
+    {
+        try
+        {
+            // 尝试检测 BOM
+            var bom = new byte[4];
+            using (var fs = File.OpenRead(filePath))
+            {
+                fs.Read(bom, 0, 4);
+            }
+
+            // 检测 UTF-8 BOM
+            if (bom[0] == 0xEF && bom[1] == 0xBB && bom[2] == 0xBF)
+                return "UTF-8";
+            
+            // 检测 UTF-16 LE BOM
+            if (bom[0] == 0xFF && bom[1] == 0xFE)
+                return "UTF-16";
+            
+            // 检测 UTF-16 BE BOM
+            if (bom[0] == 0xFE && bom[1] == 0xFF)
+                return "UTF-16BE";
+            
+            // 尝试用默认编码读取前几行来检测
+            try
+            {
+                var lines = File.ReadLines(filePath, System.Text.Encoding.Default).Take(10).ToList();
+                // 如果能读到非 ASCII 内容，可能是 GB 编码（中文环境常见）
+                if (lines.Any(l => l.Any(c => c > 127)))
+                {
+                    // 简单检测：常见中文字符范围
+                    if (lines.Any(l => l.Any(c => c >= 0x4E00 && c <= 0x9FFF)))
+                    {
+                        // 尝试 GB2312 或 GBK
+                        return "GB2312";
+                    }
+                }
+            }
+            catch { }
+
+            return "UTF-8";
+        }
+        catch
+        {
+            return "UTF-8";
+        }
     }
 
     private unsafe void CleanupFFmpeg()
@@ -987,6 +1653,17 @@ public class FFmpegPlayerService : IPlayerService, IDisposable
 
         try
         {
+            if (_subtitleFrame != IntPtr.Zero)
+            {
+                var frame = (AVFrame*)_subtitleFrame;
+                ffmpeg.av_frame_free(&frame);
+                _subtitleFrame = IntPtr.Zero;
+            }
+        }
+        catch { }
+
+        try
+        {
             if (_swsContext != IntPtr.Zero)
             {
                 ffmpeg.sws_freeContext((SwsContext*)_swsContext);
@@ -1030,6 +1707,17 @@ public class FFmpegPlayerService : IPlayerService, IDisposable
 
         try
         {
+            if (_subtitleCodecContext != IntPtr.Zero)
+            {
+                var ctx = (AVCodecContext*)_subtitleCodecContext;
+                ffmpeg.avcodec_free_context(&ctx);
+                _subtitleCodecContext = IntPtr.Zero;
+            }
+        }
+        catch { }
+
+        try
+        {
             if (_formatContext != IntPtr.Zero)
             {
                 var ctx = (AVFormatContext*)_formatContext;
@@ -1041,6 +1729,7 @@ public class FFmpegPlayerService : IPlayerService, IDisposable
 
         _videoStreamIndex = -1;
         _audioStreamIndex = -1;
+        _subtitleStreamIndex = -1;
         _useHardwareDecoder = false;
         _currentSourcePixFmt = AVPixelFormat.AV_PIX_FMT_NONE;
     }
@@ -1061,46 +1750,6 @@ public class FFmpegPlayerService : IPlayerService, IDisposable
         finally
         {
             _playLock.Release();
-        }
-    }
-
-    private string DetectAudioFormat(string codecName, AVCodecID codecId)
-    {
-        // 检测常见的音频格式
-        switch (codecId)
-        {
-            case AVCodecID.AV_CODEC_ID_AAC:
-                return "AAC";
-            case AVCodecID.AV_CODEC_ID_AC3:
-                return "Dolby Digital (AC3)";
-            case AVCodecID.AV_CODEC_ID_EAC3:
-                return "Dolby Digital Plus (E-AC3)";
-            case AVCodecID.AV_CODEC_ID_DTS:
-                return "DTS";
-            case AVCodecID.AV_CODEC_ID_FLAC:
-                return "FLAC";
-            case AVCodecID.AV_CODEC_ID_MP3:
-                return "MP3";
-            case AVCodecID.AV_CODEC_ID_VORBIS:
-                return "Vorbis";
-            case AVCodecID.AV_CODEC_ID_OPUS:
-                return "Opus";
-            default:
-                // 处理其他 DTS 变体
-                if (codecName.Contains("dts", StringComparison.OrdinalIgnoreCase))
-                {
-                    if (codecName.Contains("hd", StringComparison.OrdinalIgnoreCase) &&
-                        codecName.Contains("ma", StringComparison.OrdinalIgnoreCase))
-                    {
-                        return "DTS-HD Master Audio";
-                    }
-                    else if (codecName.Contains("hd", StringComparison.OrdinalIgnoreCase))
-                    {
-                        return "DTS-HD";
-                    }
-                    return "DTS";
-                }
-                return codecName.ToUpper();
         }
     }
 }

@@ -1,12 +1,20 @@
 @page "/movies"
 @inject IMovieRepository MovieRepo
+@inject ITagService TagService
 @inject NavigationManager NavigationManager
 @inject IJSRuntime JSRuntime
-@using Microsoft.JSInterop
 
 <PageTitle>电影库</PageTitle>
 
 <MudText Typo="Typo.h4" GutterBottom Style="color: #E94560;">电影库</MudText>
+
+@if (!string.IsNullOrEmpty(_activeTag))
+{
+    <MudAlert Severity="Severity.Info" Style="margin-bottom: 16px;" 
+              ShowCloseIcon="true" CloseIconClicked="ClearTagFilter">
+        <MudText>当前筛选标签: <strong style="color: #E94560;">@_activeTag</strong> (共 @_totalCount 部电影)</MudText>
+    </MudAlert>
+}
 
 <MudGrid>
     <MudItem xs="12" sm="6" md="4">
@@ -16,10 +24,10 @@
     </MudItem>
     <MudItem xs="6" sm="3" md="2">
         <MudSelect @bind-Value="_sortBy" Label="排序" Variant="Variant.Outlined" T="string">
-            <MudSelectItem Value="@("created")">添加时间</MudSelectItem>
-            <MudSelectItem Value="@("title")">标题</MudSelectItem>
-            <MudSelectItem Value="@("year")">年份</MudSelectItem>
-            <MudSelectItem Value="@("rating")">评分</MudSelectItem>
+            <MudSelectItem T="string" Value="@("created")">添加时间</MudSelectItem>
+            <MudSelectItem T="string" Value="@("title")">标题</MudSelectItem>
+            <MudSelectItem T="string" Value="@("year")">年份</MudSelectItem>
+            <MudSelectItem T="string" Value="@("rating")">评分</MudSelectItem>
         </MudSelect>
     </MudItem>
     <MudItem xs="6" sm="3" md="2">
@@ -104,11 +112,56 @@
     private bool _sortDesc = true;
     private int _currentPage = 1;
     private int _pageSize = 20;
+    private int _totalCount = 0;
     private bool _isLoading = false;
     private bool _hasMore = true;
     private ElementReference _scrollContainer;
+    private string? _activeTag;
 
-    protected override async Task OnInitializedAsync() => await LoadMovies(true);
+    protected override void OnInitialized()
+    {
+        var uri = new Uri(NavigationManager.Uri);
+        var query = ParseQueryString(uri.Query);
+        if (query.TryGetValue("tag", out var tag))
+        {
+            _activeTag = tag;
+        }
+        if (query.TryGetValue("search", out var search))
+        {
+            _searchTerm = search;
+        }
+    }
+
+    private static Dictionary<string, string> ParseQueryString(string query)
+    {
+        var result = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        if (string.IsNullOrEmpty(query) || query == "?")
+            return result;
+
+        var queryPart = query.TrimStart('?');
+        foreach (var pair in queryPart.Split('&', StringSplitOptions.RemoveEmptyEntries))
+        {
+            var parts = pair.Split('=');
+            if (parts.Length == 2)
+            {
+                var key = Uri.UnescapeDataString(parts[0]);
+                var value = Uri.UnescapeDataString(parts[1]);
+                result[key] = value;
+            }
+        }
+        return result;
+    }
+
+    protected override async Task OnParametersSetAsync()
+    {
+        await LoadMovies(true);
+    }
+
+    private async Task ClearTagFilter()
+    {
+        _activeTag = null;
+        NavigationManager.NavigateTo("/movies");
+    }
 
     private async Task LoadMovies(bool resetPage = false)
     {
@@ -124,16 +177,40 @@
 
         try
         {
-            var filter = new MovieFilter
+            List<Movie> movies;
+            
+            if (!string.IsNullOrEmpty(_activeTag))
             {
-                SearchKeyword = _searchTerm,
-                SortBy = _sortBy,
-                SortDescending = _sortDesc,
-                Page = _currentPage,
-                PageSize = _pageSize
-            };
-
-            var movies = await MovieRepo.GetAllAsync(filter);
+                // 标签筛选：使用 TagService 获取该标签下的所有电影 ID
+                var allMovies = await MovieRepo.GetAllAsync();
+                var taggedMovieIds = new List<int>();
+                foreach (var m in allMovies)
+                {
+                    var tags = await TagService.GetTagsAsync(m.Id);
+                    if (tags.Any(t => t.Equals(_activeTag, StringComparison.OrdinalIgnoreCase)))
+                    {
+                        taggedMovieIds.Add(m.Id);
+                    }
+                }
+                movies = allMovies.Where(m => taggedMovieIds.Contains(m.Id))
+                                  .Skip((_currentPage - 1) * _pageSize)
+                                  .Take(_pageSize)
+                                  .ToList();
+                _totalCount = taggedMovieIds.Count;
+            }
+            else
+            {
+                var filter = new MovieFilter
+                {
+                    SearchKeyword = _searchTerm,
+                    SortBy = _sortBy,
+                    SortDescending = _sortDesc,
+                    Page = _currentPage,
+                    PageSize = _pageSize
+                };
+                movies = await MovieRepo.GetAllAsync(filter);
+                _totalCount = await MovieRepo.GetCountAsync(new MovieFilter { SearchKeyword = _searchTerm });
+            }
             
             if (movies.Count < _pageSize)
             {

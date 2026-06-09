@@ -1,13 +1,17 @@
 @page "/movie/{Id:int}"
+@using MovieAgent.Components.Controls
 @inject IMovieRepository MovieRepo
-@inject IServiceProvider ServiceProvider
+@inject MovieAgent.Infrastructure.Services.ITagService TagService
 @inject NavigationManager NavigationManager
+@inject ILoggerService Logger
 
 <PageTitle>@(_movie?.Title ?? "电影详情")</PageTitle>
 
-@if (_movie == null)
+@if (_isLoading || _movie == null)
 {
-    <MudProgressCircular Color="Color.Primary" Indeterminate="true" />
+    <div style="display: flex; justify-content: center; align-items: center; min-height: 300px;">
+        <MudProgressCircular Color="Color.Primary" Indeterminate="true" Size="Size.Large" />
+    </div>
 }
 else
 {
@@ -33,38 +37,79 @@ else
                 }
                 @if (_movie.Rating.HasValue)
                 {
-                    <MudChip T="string" Size="Size.Small" Style="background:#FFD700;">
+                    <MudChip T="string" Size="Size.Small" Color="Color.Dark" Style="background:#FFD700;">
                         <MudIcon Icon="@Icons.Material.Filled.Star" Size="Size.Small" />
                         @_movie.Rating.Value.ToString("0.0")
                     </MudChip>
                 }
                 @if (_movie.Runtime.HasValue)
                 {
-                    <MudChip T="string" Size="Size.Small" Style="color:#ffffff;">@(_movie.Runtime)分钟</MudChip>
+                    <MudChip T="string" Size="Size.Small" Color="Color.Dark">@(_movie.Runtime)分钟</MudChip>
                 }
                 @if (!string.IsNullOrEmpty(_movie.VideoCodec))
                 {
-                    <MudChip T="string" Size="Size.Small" Style="color:#ffffff;">@_movie.VideoCodec</MudChip>
+                    <MudChip T="string" Size="Size.Small" Color="Color.Dark">@_movie.VideoCodec</MudChip>
                 }
                 @if (!string.IsNullOrEmpty(_movie.AudioCodec))
                 {
-                    <MudChip T="string" Size="Size.Small" Style="color:#ffffff;">@_movie.AudioCodec</MudChip>
+                    <MudChip T="string" Size="Size.Small" Color="Color.Dark">@_movie.AudioCodec</MudChip>
                 }
             </MudChipSet>
 
             @if (!string.IsNullOrEmpty(_movie.Genres))
-            {
-                <MudChipSet T="string">
-                    @foreach (var genre in GetGenres())
-                    {
-                        <MudChip T="string" Size="Size.Small" Variant="Variant.Outlined" Color="Color.Secondary">@genre</MudChip>
-                    }
-                </MudChipSet>
-            }
+                {
+                    <MudChipSet T="string">
+                        @foreach (var genre in GetGenres())
+                        {
+                            <MudChip T="string" Size="Size.Small" Variant="Variant.Outlined" Color="Color.Secondary">@genre</MudChip>
+                        }
+                    </MudChipSet>
+                }
 
-            <MudText Typo="Typo.body1" Style="margin: 16px 0; line-height: 1.8;">
-                @(_movie.Overview ?? "暂无简介")
-            </MudText>
+                <div style="margin: 16px 0;">
+                    <MudText Typo="Typo.subtitle2" Style="color: #E94560; margin-bottom: 8px;">标签</MudText>
+                <MudStack Row="true" Wrap="Wrap.Wrap" Spacing="1">
+                        @foreach (var tag in _tags)
+                        {
+                            <MudChip T="string" Size="Size.Small" Color="Color.Info" 
+                                     OnClick="() => RemoveTag(tag)">
+                                @tag
+                            </MudChip>
+                        }
+                        @if (_tags.Count == 0)
+                        {
+                            <MudText Typo="Typo.body2" Style="color: gray;">暂无标签（点击标签可删除）</MudText>
+                        }
+                    </MudStack>
+                    
+                    <div style="margin-top: 12px; display: flex; gap: 8px;">
+                        <MudTextField T="string" @bind-Value="_newTag" Placeholder="输入标签" Adornment="Adornment.End" 
+                                     AdornmentIcon="@Icons.Material.Filled.Add" />
+                        <MudButton Size="Size.Small" Variant="Variant.Filled" Color="Color.Primary" 
+                                   OnClick="AddNewTag">
+                            添加
+                        </MudButton>
+                        <div style="min-width: 100px; display: inline-flex; align-items: center; justify-content: center;">
+                            <MudButton Size="Size.Small" Variant="Variant.Outlined" Color="Color.Secondary" 
+                                       OnClick="GenerateTagsWithAI" Disabled="@_isGenerating">
+                                @if (_isGenerating)
+                                {
+                                    <MudProgressCircular Size="Size.Small" Indeterminate="true" />
+                                    <span style="margin-left: 4px;">生成中...</span>
+                                }
+                                else
+                                {
+                                    <MudIcon Icon="@Icons.Material.Filled.Park" Size="Size.Small" />
+                                    <span>AI生成</span>
+                                }
+                            </MudButton>
+                        </div>
+                    </div>
+                </div>
+
+                <MudText Typo="Typo.body1" Style="margin: 16px 0; line-height: 1.8;">
+                    @(_movie.Overview ?? "暂无简介")
+                </MudText>
 
             @if (!string.IsNullOrEmpty(_movie.Director))
             {
@@ -86,21 +131,95 @@ else
                 </MudButton>
                 <MudIconButton Icon="@(_movie.IsFavorite ? Icons.Material.Filled.Favorite : Icons.Material.Filled.FavoriteBorder)"
                                Color="Color.Error" OnClick="ToggleFavorite" />
-                <MudRating @bind-SelectedValue="_userRating" Size="Size.Small" OnSelectedValueChanged="OnRatingChanged" />
+                <MudRating SelectedValue="_userRating" Size="Size.Small" SelectedValueChanged="OnRatingChanged" Color="Color.Warning" />
             </MudStack>
         </MudItem>
     </MudGrid>
+    
+    @* 相似电影推荐 *@
+    <SimilarMoviesPanel MovieId="@Id" TopK="6" />
 }
 
 @code {
     [Parameter] public int Id { get; set; }
     private Movie? _movie;
     private int _userRating;
+    private List<string> _tags = new();
+    private string _newTag = string.Empty;
+    private bool _isGenerating = false;
+    private bool _isLoading = false;
 
     protected override async Task OnInitializedAsync()
     {
-        _movie = await MovieRepo.GetByIdAsync(Id);
-        _userRating = _movie?.UserRating ?? 0;
+        await LoadMovieAndTags();
+    }
+
+    protected override async Task OnParametersSetAsync()
+    {
+        await LoadMovieAndTags();
+    }
+
+    private async Task LoadMovieAndTags()
+    {
+        _isLoading = true;
+        _isGenerating = false;
+        await InvokeAsync(StateHasChanged);
+        
+        try
+        {
+            _movie = await MovieRepo.GetByIdAsync(Id);
+            _userRating = _movie?.UserRating ?? 0;
+            _tags = await TagService.GetTagsAsync(Id);
+            _newTag = string.Empty;
+        }
+        finally
+        {
+            _isLoading = false;
+            await InvokeAsync(StateHasChanged);
+        }
+    }
+
+    private async Task LoadTags()
+    {
+        _tags = await TagService.GetTagsAsync(Id);
+        StateHasChanged();
+    }
+
+    private async void AddNewTag()
+    {
+        if (string.IsNullOrWhiteSpace(_newTag)) return;
+        await TagService.AddTagAsync(Id, _newTag.Trim());
+        _newTag = string.Empty;
+        await LoadTags();
+    }
+
+    private async void RemoveTag(string tag)
+    {
+        await TagService.RemoveTagAsync(Id, tag);
+        await LoadTags();
+    }
+
+    private async Task GenerateTagsWithAI()
+    {
+        if (_isGenerating || _movie == null) return;
+        
+        _isGenerating = true;
+        await InvokeAsync(StateHasChanged);
+        
+        try
+        {
+            await TagService.AddEmotionTagsAsync(Id);
+            await LoadTags();
+        }
+        catch (Exception ex)
+        {
+            Logger.Debug($"[MovieDetail] AI生成标签失败: {ex.Message}");
+        }
+        finally
+        {
+            _isGenerating = false;
+            await InvokeAsync(StateHasChanged);
+        }
     }
 
     private string GetPosterUrl(Movie movie)
@@ -138,11 +257,13 @@ else
         await MovieRepo.UpdateAsync(_movie);
     }
 
-    private async void OnRatingChanged(int rating)
+    private async Task OnRatingChanged(int rating)
     {
         if (_movie == null) return;
+        _userRating = rating;
         _movie.UserRating = rating;
         await MovieRepo.UpdateAsync(_movie);
+        await InvokeAsync(StateHasChanged);
     }
 
     private static string FormatFileSize(long bytes) => bytes switch

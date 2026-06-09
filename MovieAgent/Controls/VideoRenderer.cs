@@ -5,11 +5,15 @@ using System.Windows.Media;
 using System.Windows.Media.Imaging;
 using System.Runtime.InteropServices;
 using System.Threading;
+using MovieAgent.Core.Interfaces;
+using MovieAgent.Infrastructure.Services;
 
 namespace MovieAgent.Controls;
 
 public class VideoRenderer : System.Windows.Controls.Image
 {
+    private static readonly ILoggerService _logger = new LoggerService();
+    
     private WriteableBitmap? _writeableBitmap;
     private int _lastWidth;
     private int _lastHeight;
@@ -19,6 +23,9 @@ public class VideoRenderer : System.Windows.Controls.Image
     private int _pendingHeight;
     private Timer? _renderTimer;
     private bool _isRendering;
+    
+    private string? _currentSubtitle;
+    private readonly object _subtitleLock = new();
 
     public VideoRenderer()
     {
@@ -33,8 +40,7 @@ public class VideoRenderer : System.Windows.Controls.Image
 
     private void OnLoaded(object sender, RoutedEventArgs e)
     {
-        System.Diagnostics.Debug.WriteLine("[VideoRenderer] 控件已加载");
-        // 启动渲染定时器，每 33ms 尝试渲染一帧（约 30fps）
+        _logger.Debug("[VideoRenderer] 控件已加载");
         _renderTimer = new Timer(RenderPendingFrame, null, 33, 33);
     }
 
@@ -51,11 +57,18 @@ public class VideoRenderer : System.Windows.Controls.Image
 
         lock (_lockObj)
         {
-            // 复制数据以避免外部数组被修改
             _pendingFrame = new byte[frameData.Length];
             Buffer.BlockCopy(frameData, 0, _pendingFrame, 0, frameData.Length);
             _pendingWidth = width;
             _pendingHeight = height;
+        }
+    }
+
+    public void SetSubtitle(string? subtitle)
+    {
+        lock (_subtitleLock)
+        {
+            _currentSubtitle = subtitle;
         }
     }
 
@@ -89,7 +102,7 @@ public class VideoRenderer : System.Windows.Controls.Image
         }
         catch (Exception ex)
         {
-            System.Diagnostics.Debug.WriteLine($"[VideoRenderer] RenderPendingFrame 失败: {ex.Message}");
+            _logger.Debug($"[VideoRenderer] RenderPendingFrame 失败: {ex.Message}");
         }
         finally
         {
@@ -114,7 +127,7 @@ public class VideoRenderer : System.Windows.Controls.Image
                 _lastWidth = width;
                 _lastHeight = height;
                 Source = _writeableBitmap;
-                System.Diagnostics.Debug.WriteLine($"[VideoRenderer] 创建 WriteableBitmap: {width}x{height}");
+                _logger.Debug($"[VideoRenderer] 创建 WriteableBitmap: {width}x{height}");
             }
 
             int stride = width * 3; // BGR24
@@ -146,7 +159,7 @@ public class VideoRenderer : System.Windows.Controls.Image
         }
         catch (Exception ex)
         {
-            System.Diagnostics.Debug.WriteLine($"[VideoRenderer] UpdateFrameInternal 失败: {ex.Message}");
+            _logger.Debug($"[VideoRenderer] UpdateFrameInternal 失败: {ex.Message}");
             try { _writeableBitmap?.Unlock(); } catch { }
         }
     }
@@ -158,6 +171,11 @@ public class VideoRenderer : System.Windows.Controls.Image
             lock (_lockObj)
             {
                 _pendingFrame = null;
+            }
+            
+            lock (_subtitleLock)
+            {
+                _currentSubtitle = null;
             }
 
             if (!CheckAccess())
@@ -179,5 +197,13 @@ public class VideoRenderer : System.Windows.Controls.Image
             }
         }
         catch { }
+    }
+
+    public void ClearSubtitle()
+    {
+        lock (_subtitleLock)
+        {
+            _currentSubtitle = null;
+        }
     }
 }

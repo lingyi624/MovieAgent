@@ -1,0 +1,18 @@
+@inject IThemeService ThemeService
+
+<MudIconButton 
+    Icon="@(ThemeService.CurrentTheme == ThemeMode.Dark ? Icons.Material.Filled.LightMode : Icons.Material.Filled.DarkMode)" 
+    Color="Color.Inherit" 
+    OnClick="ToggleTheme"
+    title="@CurrentThemeName"
+    Style="margin-left: 8px;" />
+
+@code {
+    private string CurrentThemeName => ThemeService.CurrentTheme == ThemeMode.Dark ? "切换到亮色模式" : "切换到暗色模式";
+
+    private async void ToggleTheme()
+    {
+        var newTheme = ThemeService.CurrentTheme == ThemeMode.Dark ? ThemeMode.Light : ThemeMode.Dark;
+        await ThemeService.SetThemeAsync(newTheme);
+    }
+}

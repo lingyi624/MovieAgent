@@ -23,16 +23,17 @@ public class LanceDbVectorDatabaseService : IVectorDatabaseService, IAsyncDispos
     private Connection? _connection;
     private lancedb.Table? _moviesTable;
     private bool _initialized;
-    private  static int VectorDimension = 768; // Óë embedding Ä£ĞÍÆ¥Åä£¨nomic-embed-text£© Ô­À´ÊÇ768
+    private static int VectorDimension = 768;
+    private static readonly ILoggerService _logger = new LoggerService();
 
-    public LanceDbVectorDatabaseService()
+    public LanceDbVectorDatabaseService(string? embeddingEndpoint = null)
     {
         _dbPath = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "data", "lancedb");
-        _httpClient = new HttpClient { BaseAddress = new Uri("http://localhost:11434") };
-       
+        var endpoint = embeddingEndpoint ?? "http://localhost:11434";
+        _httpClient = new HttpClient { BaseAddress = new Uri(endpoint) };
     }
 
-    // ³õÊ¼»¯£ºÁ¬½ÓÊı¾İ¿â£¬´ò¿ª»ò´´½¨±í
+    // åˆå§‹åŒ–æ•°æ®åº“è¿æ¥ï¼Œæ‰“å¼€æˆ–åˆ›å»ºè¡¨
     public async Task EnsureDatabaseAsync()
     {
         if (_initialized) return;
@@ -43,42 +44,42 @@ public class LanceDbVectorDatabaseService : IVectorDatabaseService, IAsyncDispos
             _connection = new Connection();
             await _connection.Connect(_dbPath);
 
-            // ¼ì²é±íÊÇ·ñ´æÔÚ
+            // æ£€æŸ¥è¡¨æ˜¯å¦å­˜åœ¨
             var tableNames = await _connection.TableNames();
             if (tableNames.Contains("movies"))
             {
                  _moviesTable =await _connection.OpenTable("movies");
-                Log($"[LanceDB] ´ò¿ªÒÑÓĞ±í£¬¼ÇÂ¼Êı: {await _moviesTable.CountRows()}");
+                Log($"[LanceDB] å·²åŠ è½½ç”µå½±è¡¨ï¼Œå…±è®°å½•æ•°: {await _moviesTable.CountRows()}");
             }
             else
             {
-                // ´´½¨±í£¬ĞèÒªÏÈ¶¨Òå schema
+                // åˆ›å»ºè¡¨éœ€è¦å…ˆå®šä¹‰ schema
                 var vectorField = new Field("item", FloatType.Default, nullable: false);
                 var vectorType = new FixedSizeListType(vectorField, VectorDimension);
 
                 var schema = CreateTableSchema();
                 var options = new CreateTableOptions { Mode = "create", Schema = schema };
                 _moviesTable = await _connection.CreateTable("movies", options);
-                Log($"[LanceDB] ´´½¨ĞÂ±í£¬ÏòÁ¿Î¬¶È {VectorDimension}");
+                Log($"[LanceDB] å·²åˆ›å»ºæ–°è¡¨ï¼Œç»´åº¦ {VectorDimension}");
             }
 
             _initialized = true;
-            Log("[LanceDB] ³õÊ¼»¯³É¹¦");
+            Log("[LanceDB] åˆå§‹åŒ–æˆåŠŸ");
         }
         catch (Exception ex)
         {
-            Log($"[LanceDB] ³õÊ¼»¯Ê§°Ü: {ex.Message}");
+            Log($"[LanceDB] åˆå§‹åŒ–å¤±è´¥: {ex.Message}");
             throw;
         }
     }
 
-    // ¶¨Òå Arrow Schema£¬°üÀ¨ vector ÁĞ£¨¹Ì¶¨´óĞ¡ÁĞ±í£©
+    // åˆ›å»º Arrow Schemaï¼Œå®šä¹‰ vector åˆ—ï¼Œå›ºå®šå¤§å°åˆ—è¡¨ç±»å‹
     private static Schema CreateTableSchema()
     {
         var schema = new Schema.Builder()
       .Field(f => f.Name("movie_id").DataType(Int32Type.Default).Nullable(false))
       .Field(f => f.Name("title").DataType(StringType.Default).Nullable(false))
-      .Field(f => f.Name("overview").DataType(StringType.Default).Nullable(true))  // ¡û Ìí¼ÓÕâ¸ö
+      .Field(f => f.Name("overview").DataType(StringType.Default).Nullable(true))  // ç®€ä»‹å¯é€‰
       .Field(f => f.Name("vector").DataType(new FixedSizeListType(new Field("item", new FloatType(), false), VectorDimension)).Nullable(false))
       .Field(f => f.Name("created_at").DataType(new TimestampType(TimeUnit.Microsecond, "UTC")).Nullable(false))
       .Field(f => f.Name("updated_at").DataType(new TimestampType(TimeUnit.Microsecond, "UTC")).Nullable(false))
@@ -86,7 +87,7 @@ public class LanceDbVectorDatabaseService : IVectorDatabaseService, IAsyncDispos
         return schema;
     }
 
-    // Éú³ÉÇ¶ÈëÏòÁ¿£¨µ÷ÓÃ Ollama£©
+    // ä½¿ç”¨ Ollama ç”ŸæˆåµŒå…¥å‘é‡
     public async Task<float[]> GenerateEmbeddingAsync(string text)
     {
         if (string.IsNullOrWhiteSpace(text))
@@ -102,19 +103,19 @@ public class LanceDbVectorDatabaseService : IVectorDatabaseService, IAsyncDispos
         }
         catch (Exception ex)
         {
-            Log($"[LanceDB] Éú³ÉÏòÁ¿Ê§°Ü: {ex.Message}");
+            Log($"[LanceDB] å‘é‡ç”Ÿæˆå¤±è´¥: {ex.Message}");
             return Array.Empty<float>();
         }
     }
  
 
-    // Ìí¼Ó»ò¸üĞÂ£¨ÏÈÉ¾ºó¼Ó£©
+    // æ·»åŠ æˆ–æ›´æ–°ç”µå½±è®°å½•
     public async Task AddMovieAsync(int movieId, float[] vector, string title, string? overview = null)
     {
         await EnsureDatabaseAsync();
-        if (_moviesTable == null) throw new InvalidOperationException("±íÎ´³õÊ¼»¯");
+        if (_moviesTable == null) throw new InvalidOperationException("è¡¨æœªåˆå§‹åŒ–");
 
-        // È·±£ÏòÁ¿³¤¶ÈÕıÈ·
+        // ç¡®ä¿å‘é‡ç»´åº¦æ­£ç¡®
         if (vector.Length != VectorDimension)
             vector = vector.Take(VectorDimension).ToArray();
 
@@ -129,108 +130,122 @@ public class LanceDbVectorDatabaseService : IVectorDatabaseService, IAsyncDispos
             UpdatedAt = now
         };
 
-        // É¾³ı¾É¼ÇÂ¼
+        // åˆ é™¤æ—§è®°å½•
         await _moviesTable.Delete($"movie_id = {movieId}");
-        // Ìí¼ÓĞÂ¼ÇÂ¼
+        // æ·»åŠ æ–°è®°å½•
         var batch = ConvertToRecordBatch(record);
         await _moviesTable.Add(batch);
-        Log($"[LanceDB] Ìí¼Ó/¸üĞÂ³É¹¦: {title} (id={movieId})");
+        Log($"[LanceDB] æ·»åŠ /æ›´æ–°æˆåŠŸ: {title} (id={movieId})");
     }
 
     public async Task UpdateMovieAsync(int movieId, float[] vector, string title, string? overview = null)
         => await AddMovieAsync(movieId, vector, title, overview);
 
-    // É¾³ı
+    // åˆ é™¤è®°å½•
     public async Task RemoveMovieAsync(int movieId)
     {
         await EnsureDatabaseAsync();
         if (_moviesTable == null) return;
         await _moviesTable.Delete($"movie_id = {movieId}");
-        Log($"[LanceDB] É¾³ı³É¹¦: movie_id = {movieId}");
+        Log($"[LanceDB] åˆ é™¤æˆåŠŸ: movie_id = {movieId}");
     }
 
-    // ÏòÁ¿¼ìË÷£¨ºËĞÄ£©
+    // å‘é‡ç›¸ä¼¼åº¦æœç´¢æ¨¡å‹
     public async Task<List<VectorSearchResult>> SearchByVectorAsync(float[] queryVector, int topK = 10)
-    {
-        await EnsureDatabaseAsync();
-        if (_moviesTable == null) return new List<VectorSearchResult>();
-
-        try
         {
-            var batches = await _moviesTable.Query()
-                .NearestTo(queryVector)
-                .Limit(topK)
-                .ToList();
+            await EnsureDatabaseAsync();
+            if (_moviesTable == null) return new List<VectorSearchResult>();
 
-            var results = new List<VectorSearchResult>();
-            foreach (var row in batches)  // row ÊÇ Dictionary<string, object>
+            try
             {
-                results.Add(new VectorSearchResult
+                if (queryVector == null || queryVector.Length == 0)
                 {
-                    MovieId = Convert.ToInt32(row["movie_id"]),
-                    Title = row["title"]?.ToString() ?? "",
-                    Overview = row["overview"]?.ToString(),
-                    Similarity = 1 - Convert.ToSingle(row["_distance"]),
-                    Vector = row["vector"] as float[]  // ÏòÁ¿¿ÉÄÜÒÑ¾­ÊÇ float[]
-                });
-            }
-            //foreach (var batch in batches)
-            //{
-            //    var movieIds = batch["movie_id"] as Int32Array;
-            //    var titles = batch["title"] as StringArray;
-            //    var overviews = batch["overview"] as StringArray;
-            //    var vectors = batch["vector"] as FixedSizeListArray;
-            //    var distances = batch["_distance"] as FloatArray;
+                    Log("[LanceDB] æŸ¥è¯¢å‘é‡ä¸ºç©º");
+                    return new List<VectorSearchResult>();
+                }
 
-            //    for (int i = 0; i < batch.Count; i++)
-            //    {
-            //        // ÕıÈ·ÌáÈ¡ FixedSizeListArray ÖĞµÄÏòÁ¿
-            //        float[] vector = null;
-            //        if (vectors != null)
-            //        {
-            //            // »ñÈ¡µÚ i ¸öÁĞ±íÇĞÆ¬
-            //            var slice = vectors.GetSlicedValues(i);
-            //            var floatArray = slice as FloatArray;
-            //            if (floatArray != null)
-            //            {
-            //                vector = new float[floatArray.Length];
-            //                for (int j = 0; j < floatArray.Length; j++)
-            //                {
-            //                    vector[j] = floatArray.GetValue(j).Value;
-            //                }
-            //            }
-            //        }
+                var batches = await _moviesTable.Query()
+                    .NearestTo(queryVector)
+                    .Limit(topK)
+                    .ToList();
 
-            //        results.Add(new VectorSearchResult
-            //        {
-            //            MovieId = movieIds?.GetValue(i) ?? 0,
-            //            Title = titles?.GetString(i) ?? "",
-            //            Overview = overviews?.GetString(i),
-            //            Similarity = distances != null ? 1 - distances.GetValue(i).Value : 0,
-            //            Vector = vector
-            //        });
-            //    }
-            //}
+                var results = new List<VectorSearchResult>();
+                Log($"[LanceDB] æœç´¢ç»“æœæ•°é‡: {batches.Count}");
+                
+                if (batches.Count == 0)
+                    return results;
 
-            // ×¢Òâ£ºLanceDB ÒÑ¾­°´¾àÀëÅÅĞò·µ»ØÁË£¬ÕâÀïÔÙÅÅĞòÆäÊµ¶àÓà
-            // Ö±½Ó·µ»Ø results ¼´¿É£¬²»ĞèÒªÔÙ´Î OrderByDescending
+                var distances = new List<float>();
+                foreach (var row in batches)
+                {
+                    if (row.TryGetValue("_distance", out var distanceObj))
+                    {
+                        float distance = 1f;
+                        if (distanceObj is float f)
+                            distance = f;
+                        else if (distanceObj is double d)
+                            distance = (float)d;
+                        else if (float.TryParse(distanceObj.ToString(), out float parsed))
+                            distance = parsed;
+                        distances.Add(distance);
+                    }
+                }
+
+                float maxDistance = distances.Any() ? distances.Max() : 1f;
+                float minDistance = distances.Any() ? distances.Min() : 0f;
+                float distanceRange = maxDistance - minDistance;
+                if (distanceRange < 0.0001f) distanceRange = 1f;
+
+                foreach (var row in batches)
+                {
+                    float distance = 1f;
+                    if (row.TryGetValue("_distance", out var distanceObj))
+                    {
+                        if (distanceObj is float f)
+                            distance = f;
+                        else if (distanceObj is double d)
+                            distance = (float)d;
+                        else if (float.TryParse(distanceObj.ToString(), out float parsed))
+                            distance = parsed;
+                        
+                        Log($"[LanceDB] è·ç¦»å€¼ç±»å‹: {distanceObj.GetType().Name}, å€¼: {distanceObj}");
+                    }
+                    else
+                    {
+                        Log("[LanceDB] æœªæ‰¾åˆ° _distance å­—æ®µ");
+                    }
+                    
+                    float similarity = 1.0f - ((distance - minDistance) / distanceRange);
+                    similarity = Math.Max(0.01f, Math.Min(1f, similarity));
+                    Log($"[LanceDB] movie_id={row["movie_id"]}, distance={distance}, similarity={similarity:F4}");
+                    
+                    results.Add(new VectorSearchResult
+                    {
+                        MovieId = Convert.ToInt32(row["movie_id"]),
+                        Title = row["title"]?.ToString() ?? "",
+                        Overview = row["overview"]?.ToString(),
+                        Similarity = similarity,
+                        Vector = row["vector"] as float[]
+                    });
+                }
+
             return results;
         }
         catch (Exception ex)
         {
-            Log($"[LanceDB] ÏòÁ¿ËÑË÷Ê§°Ü: {ex.Message}");
+            Log($"[LanceDB] æœç´¢æ‰§è¡Œå¤±è´¥: {ex.Message}");
             return new List<VectorSearchResult>();
         }
     }
 
-    // ÎÄ±¾ËÑË÷£¨ÏÈ×ªÎªÏòÁ¿ÔÙ¼ìË÷£©
+    // æ–‡æœ¬æœç´¢è½¬æ¢ä¸ºå‘é‡æœç´¢
     public async Task<List<VectorSearchResult>> SearchAsync(string queryText, int topK = 10)
     {
         var vec = await GenerateEmbeddingAsync(queryText);
         return await SearchByVectorAsync(vec, topK);
     }
 
-    // ¸¨Öú·½·¨£º»ñÈ¡¼ÇÂ¼Êı
+    // è·å–æ•°æ®åº“è®°å½•æ•°
     public async Task<int> GetRecordCountAsync()
     {
         await EnsureDatabaseAsync();
@@ -238,7 +253,6 @@ public class LanceDbVectorDatabaseService : IVectorDatabaseService, IAsyncDispos
     }
 
 
- 
 
     private static RecordBatch ConvertToRecordBatch(MovieRecord movie)
 {
@@ -255,17 +269,17 @@ public class LanceDbVectorDatabaseService : IVectorDatabaseService, IAsyncDispos
         overviewBuilder.Append(movie.Overview ?? "");
         var valueBuilder = vectorBuilder.ValueBuilder as FloatArray.Builder;
 
-        // 1. ÏÈµ÷ÓÃ Append() ¿ªÊ¼Ò»¸öĞÂµÄÁĞ±í
+        // 1. å…ˆè°ƒç”¨ Append() å¼€å§‹ä¸€ä¸ªæ–°çš„åˆ—è¡¨
         vectorBuilder.Append();
 
-        // 2. È»ºóÌí¼ÓÕâ¸öÁĞ±íµÄÔªËØ
+        // 2. ç„¶åæ·»åŠ å‘é‡åˆ—è¡¨å…ƒç´ 
         foreach (var value in movie.Vector)
         {
             valueBuilder.Append(value);
         }
 
-        // 3. Èç¹ûÓĞ¶à¸öÏòÁ¿£¬ÖØ¸´ 1-2 ²½Öè
-        // 4. ×îºó Build
+        // 3. ä¼šæœ‰å¤šä½™çš„å¡«å…… 1-2 æ¬¡
+        // 4. æœ€å Build
         var vectorsArray = vectorBuilder.Build();
 
         createdAtBuilder.Append(movie.CreatedAt);
@@ -295,9 +309,9 @@ private static long ToArrowTimestamp(DateTimeOffset dateTime)
     var unixEpoch = new DateTimeOffset(1970, 1, 1, 0, 0, 0, TimeSpan.Zero);
     return (long)(dateTime - unixEpoch).TotalMicroseconds;
 }
-// Ë½ÓĞ×ª»»·½·¨£º½«µ¥¸ö MovieRecord ×ªÎª RecordBatch
+// ç§æœ‰è½¬æ¢æ–¹æ³•ï¼Œå°†å†…å­˜å¯¹è±¡ MovieRecord è½¬æ¢ä¸º RecordBatch
  
-    // ¸¨ÖúÄÚ²¿Àà
+    // ç§æœ‰å†…éƒ¨ç±»
     private class MovieRecord
     {
         public int MovieId { get; set; }
@@ -314,7 +328,7 @@ private static long ToArrowTimestamp(DateTimeOffset dateTime)
     }
 
     private static void Log(string message)
-        => System.Diagnostics.Debug.WriteLine($"[{DateTime.Now:HH:mm:ss.fff}] {message}");
+        => _logger.Debug($"[{DateTime.Now:HH:mm:ss.fff}] {message}");
 
     public async ValueTask DisposeAsync()
     {
@@ -324,14 +338,14 @@ private static long ToArrowTimestamp(DateTimeOffset dateTime)
         await Task.CompletedTask;
     }
 
-    public async  Task<bool> HasMovieAsync(int movieId)
+    public async Task<bool> HasMovieAsync(int movieId)
     {
         await EnsureDatabaseAsync();
         if (_moviesTable == null) return false;
 
         try
         {
-            // Ê¹ÓÃ Where ½øĞĞ¹ıÂË£¬Ö±½ÓĞ´×Ö¶ÎÌõ¼ş
+            // ä½¿ç”¨ Where è¿‡æ»¤è®°å½•ï¼Œç›´æ¥å†™å­—æ®µæ¡ä»¶
             var results = await _moviesTable.Query()
                 .Where($"movie_id = {movieId}")
                 .Limit(1)
@@ -341,7 +355,7 @@ private static long ToArrowTimestamp(DateTimeOffset dateTime)
         }
         catch (Exception ex)
         {
-            Log($"[LanceDB] ¼ì²éµçÓ°´æÔÚĞÔÊ§°Ü: {ex.Message}");
+            Log($"[LanceDB] ç”µå½±å½±å“æŸ¥è¯¢å¤±è´¥: {ex.Message}");
             return false;
         }
     }

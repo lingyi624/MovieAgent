@@ -16,7 +16,7 @@
                     @for (int i = DateTime.Now.Year; i >= 2020; i--)
                     {
                         int year = i;
-                        <MudSelectItem Value="@year">@year 年</MudSelectItem>
+                        <MudSelectItem T="int" Value="@year">@year 年</MudSelectItem>
                     }
                 </MudSelect>
             </MudItem>
@@ -25,12 +25,12 @@
                     @for (int i = 1; i <= 12; i++)
                     {
                         int month = i;
-                        <MudSelectItem Value="@month">@month 月</MudSelectItem>
+                        <MudSelectItem T="int" Value="@month">@month 月</MudSelectItem>
                     }
                 </MudSelect>
             </MudItem>
             <MudItem xs="12" sm="6" md="4" Style="display: flex; align-items: flex-end;">
-                <MudButton Color="Color.Primary" OnClick="GenerateMonthlyReport" Style="background:#E94560; margin-right: 8px;">
+                <MudButton Color="Color.Dark" OnClick="GenerateMonthlyReport" Style="background:#E94560; margin-right: 8px;">
                     月度报告
                 </MudButton>
                 <MudButton Color="Color.Secondary" OnClick="GenerateYearlyReport">
@@ -41,9 +41,23 @@
     </MudPaper>
 
     <MudPaper Elevation="0" Style="background: #1A1A2E; padding: 24px; border-radius: 12px; margin-bottom: 16px;">
-        <MudButton Color="Color.Info" OnClick="GenerateAiInsights">
-            🤖 生成AI洞察
+        <MudButton Color="Color.Info" OnClick="GenerateAiInsights" Disabled="_isGeneratingInsights">
+            @if (_isGeneratingInsights)
+            {
+                <MudProgressCircular Size="Size.Small" Indeterminate="true" />
+                <span style="margin-left: 8px;">正在生成洞察...</span>
+            }
+            else
+            {
+                <span>🤖 生成AI洞察</span>
+            }
         </MudButton>
+        @if (_isGeneratingInsights)
+        {
+            <MudText Typo="Typo.body2" Style="color: #9E9E9E; margin-top: 12px; display: block;">
+                🧠 AI正在分析您的观影数据，请稍候...
+            </MudText>
+        }
     </MudPaper>
 
     @if (!string.IsNullOrEmpty(_reportContent))
@@ -60,6 +74,7 @@
     private int _selectedMonth = DateTime.Now.Month;
     private string _reportContent = "";
     private string _reportTitle = "";
+    private bool _isGeneratingInsights = false;
 
     private async Task GenerateMonthlyReport()
     {
@@ -75,7 +90,15 @@
 
     private async Task GenerateAiInsights()
     {
-        _reportContent = await ReportService.GenerateAiInsightsAsync();
-        _reportTitle = "AI观影洞察";
+        _isGeneratingInsights = true;
+        try
+        {
+            _reportContent = await ReportService.GenerateAiInsightsAsync();
+            _reportTitle = "AI观影洞察";
+        }
+        finally
+        {
+            _isGeneratingInsights = false;
+        }
     }
 }

@@ -10,6 +10,7 @@ public interface ITagService
     Task RemoveTagAsync(int movieId, string tag);
     Task<List<string>> GetTagsAsync(int movieId);
     Task<List<(string Tag, int Count)>> GetTagStatisticsAsync();
+    Task<int> GetTotalTaggedMoviesCountAsync();
     Task AddEmotionTagsAsync(int movieId);
 }
 
@@ -74,6 +75,12 @@ public class TagService : ITagService
                         .ToList();
     }
 
+    public async Task<int> GetTotalTaggedMoviesCountAsync()
+    {
+        var movies = await _movieRepo.GetAllAsync();
+        return movies.Count(m => !string.IsNullOrEmpty(m.Tags));
+    }
+
     public async Task AddEmotionTagsAsync(int movieId)
     {
         var movie = await _movieRepo.GetByIdAsync(movieId);
@@ -81,12 +88,22 @@ public class TagService : ITagService
 
         try
         {
-            var prompt = $"根据电影简介生成情感标签，只返回标签列表，用中文逗号分隔：{movie.Overview}";
+            var prompt = $"""
+                请根据以下电影简介生成8-12个中文标签，涵盖情感、氛围、风格、主题等方面。
+                要求：
+                1. 标签简洁，2-4个字为宜
+                2. 使用中文逗号分隔
+                3. 不要解释，只输出标签列表
+                
+                电影简介：{movie.Overview}
+                """;
+            
             var response = await _agentService.ChatAsync(prompt);
             
-            var tags = response.Split('，', '，', ',', '、')
+            var tags = response.Split(new[] { '，', ',', '、', '\n', '\r' }, StringSplitOptions.RemoveEmptyEntries)
                               .Select(t => t.Trim())
-                              .Where(t => !string.IsNullOrWhiteSpace(t))
+                              .Where(t => !string.IsNullOrWhiteSpace(t) && t.Length <= 10)
+                              .Distinct(StringComparer.OrdinalIgnoreCase)
                               .ToList();
 
             foreach (var tag in tags)

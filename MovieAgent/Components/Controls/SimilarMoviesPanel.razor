@@ -1,0 +1,104 @@
+@inject IMovieRecommendationService RecommendationService
+@inject NavigationManager NavigationManager
+
+@if (_loading)
+{
+    <div style="text-align: center; padding: 20px;">
+        <MudProgressCircular Color="Color.Primary" Indeterminate="true" Size="Size.Small" />
+        <MudText Typo="Typo.body2" Style="color: gray; margin-top: 8px;">正在分析相似电影...</MudText>
+    </div>
+}
+else if (_recommendations?.Any() == true)
+{
+    <div style="margin: 16px 0;">
+        <MudText Typo="Typo.h6" Style="color: #E94560; margin-bottom: 12px;">
+            <MudIcon Icon="@Icons.Material.Filled.AutoAwesome" Size="Size.Small" Style="vertical-align: middle;" />
+            相似电影推荐
+        </MudText>
+        
+        <MudGrid>
+            @foreach (var movie in _recommendations)
+            {
+                <MudItem xs="6" sm="4" md="2">
+                    <MudCard Elevation="2" Class="movie-card" Style="cursor: pointer; background: #2D2D44; height: 100%;">
+                        <MudCardMedia Image="@GetPosterUrl(movie.PosterPath)" Height="330" Style="object-fit: cover;" />
+                        <MudCardContent Style="padding: 8px;">
+                            <div style="display: flex; align-items: center; margin-bottom: 4px;">
+                                <MudText Typo="Typo.body2" 
+                                         Style="font-weight: bold; overflow: hidden; text-overflow: ellipsis; 
+                                                white-space: nowrap; color: #E0E0E0; font-size: 12px; flex: 1;">
+                                    @movie.Title
+                                </MudText>
+                            </div>
+                            <div style="display: flex; align-items: center; gap: 4px;">
+                                <MudChip T="string" Size="Size.Small" Color="Color.Success" 
+                                         Style="font-size: 9px; height: 16px; background: rgba(76, 175, 80, 0.2);">
+                                    <MudIcon Icon="@Icons.Material.Filled.TrendingUp" Size="Size.Small" />
+                                    @(Math.Max(0, Math.Min(100, movie.Similarity * 100)).ToString("0") + "%")
+                                </MudChip>
+                                <MudText Typo="Typo.caption" Style="color: #888; font-size: 11px; flex: 1;">
+                                    @(movie.ReleaseYear?.ToString() ?? "")
+                                    @if (movie.Rating.HasValue)
+                                    {
+                                        <span> · <MudIcon Icon="@Icons.Material.Filled.Star" Size="Size.Small" 
+                                                         Style="color: #FFD700; font-size: 10px;" />@movie.Rating.Value.ToString("0.0")</span>
+                                    }
+                                </MudText>
+                            </div>
+                            @if (!string.IsNullOrEmpty(movie.Reason))
+                            {
+                                <MudChip T="string" Size="Size.Small" Color="Color.Info" 
+                                         Style="margin-top: 4px; font-size: 9px; height: 18px;">
+                                    @movie.Reason
+                                </MudChip>
+                            }
+                        </MudCardContent>
+                        <MudCardActions Style="padding: 0 8px 8px;">
+                            <MudButton Size="Size.Small" Variant="Variant.Text" Color="Color.Primary"
+                                       OnClick="() => NavigateToDetail(movie.MovieId)" Style="font-size: 11px;">
+                                查看详情
+                            </MudButton>
+                        </MudCardActions>
+                    </MudCard>
+                </MudItem>
+            }
+        </MudGrid>
+    </div>
+}
+
+@code {
+    [Parameter] public int MovieId { get; set; }
+    [Parameter] public int TopK { get; set; } = 6;
+
+    private List<MovieRecommendation>? _recommendations;
+    private bool _loading = true;
+
+    protected override async Task OnParametersSetAsync()
+    {
+        _loading = true;
+        try
+        {
+            _recommendations = await RecommendationService.GetSimilarMoviesAsync(MovieId, TopK);
+        }
+        catch
+        {
+            _recommendations = new List<MovieRecommendation>();
+        }
+        finally
+        {
+            _loading = false;
+        }
+    }
+
+    private string GetPosterUrl(string? posterPath)
+    {
+        if (!string.IsNullOrWhiteSpace(posterPath))
+            return $"https://image.tmdb.org/t/p/w342{posterPath}";
+        return "images/placeholder-poster.png";
+    }
+
+    private void NavigateToDetail(int id)
+    {
+        NavigationManager.NavigateTo($"/movie/{id}");
+    }
+}

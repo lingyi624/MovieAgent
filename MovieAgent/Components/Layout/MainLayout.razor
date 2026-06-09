@@ -1,33 +1,37 @@
+@using MovieAgent.Components.Controls
+@using MovieAgent.Core.Interfaces
 @inherits LayoutComponentBase
 @inject IMovieRepository MovieRepo
 @inject IAgentService AgentService
 @inject IMovieScannerService ScannerService
+@inject IThemeService ThemeService
 
-<MudThemeProvider />
+<MudThemeProvider Theme="_currentTheme" />
 <MudDialogProvider />
 <MudSnackbarProvider />
 <MudPopoverProvider />
 
 <MudLayout>
-        <MudAppBar Elevation="2" Style="background: linear-gradient(135deg, #1A1A2E 0%, #16213E 100%);">
+        <MudAppBar Elevation="2" Style="@AppBarStyle">
             <MudIconButton Icon="@Icons.Material.Filled.Menu" Color="Color.Inherit" OnClick="ToggleDrawer" />
             <img src="logo.svg" alt="MovieAgent Logo" style="width: 36px; height: 36px; margin-left: 8px;" />
             <MudText Typo="Typo.h6" Style="color: #E94560; font-weight: bold; margin-left: 8px;">
                 Movie Agent
             </MudText>
             <MudSpacer />
-        <MudButton Style="margin-right: 8px; color: white;" Href="/chat" StartIcon="@Icons.Material.Filled.Message">
-            AI 对话
-        </MudButton>
-        <MudIconButton Icon="@Icons.Material.Filled.Search" Color="Color.Inherit" Href="/" />
-        <MudIconButton Icon="@Icons.Material.Filled.Settings" Color="Color.Inherit" Href="/settings" />
-    </MudAppBar>
+            <SearchBar />
+            <MudButton Style="margin-right: 8px; color: white;" Href="/chat" StartIcon="@Icons.Material.Filled.Message">
+                AI 对话
+            </MudButton>
+            <ThemeToggle />
+            <MudIconButton Icon="@Icons.Material.Filled.Settings" Color="Color.Inherit" Href="/settings" />
+        </MudAppBar>
 
     <MudDrawer @bind-Open="_drawerOpen" Anchor="Anchor.Left" Variant="DrawerVariant.Temporary" Style="background: #1A1A2E; color: white;">
         <MudNavMenu>
             <MudText Typo="Typo.h6" Style="padding: 16px; color: #E94560;">菜单</MudText>
             <MudDivider Style="background: #E94560;" />
-            <MudNavLink Href="/" Icon="@Icons.Material.Filled.Home" Match="NavLinkMatch.All">首页</MudNavLink>
+            <MudNavLink Href="/" Icon="@Icons.Material.Filled.Home" Match="NavLinkMatch.All">首页(海报墙)</MudNavLink>
             <MudNavLink Href="/dashboard" Icon="@Icons.Material.Filled.BarChart">观影统计</MudNavLink>
             <MudNavLink Href="/movies" Icon="@Icons.Material.Filled.Movie">电影库</MudNavLink>
             <MudNavLink Href="/semantic-search" Icon="@Icons.Material.Filled.AutoAwesome">语义搜索</MudNavLink>
@@ -46,6 +50,74 @@
 
 @code {
     private bool _drawerOpen;
+    private MudTheme _currentTheme = new MudTheme();
+    private bool _isDark = true;
+
+    protected override async Task OnInitializedAsync()
+    {
+        await ThemeService.LoadThemeAsync();
+        _isDark = ThemeService.CurrentTheme == ThemeMode.Dark;
+        UpdateTheme();
+        ThemeService.ThemeChanged += OnThemeChanged;
+    }
+
+    private void OnThemeChanged(ThemeMode theme)
+    {
+        _isDark = theme == ThemeMode.Dark;
+        UpdateTheme();
+        StateHasChanged();
+    }
+
+    private void UpdateTheme()
+    {
+        _currentTheme = _isDark ? CreateDarkTheme() : CreateLightTheme();
+    }
+
+    private MudTheme CreateDarkTheme() => new MudTheme
+    {
+        PaletteLight = new PaletteLight
+        {
+            Primary = Colors.Red.Accent3,
+            Secondary = Colors.Green.Accent3,
+            Background = "#0F0F1A",
+            Surface = "#1A1A2E",
+            DrawerBackground = "#1A1A2E",
+            DrawerText = "#E0E0E0",
+            AppbarBackground = "#1A1A2E",
+            AppbarText = "#E0E0E0",
+            TextPrimary = "#E0E0E0",
+            TextSecondary = "#888888",
+            Error = Colors.Red.Accent3,
+            Success = Colors.Green.Accent3,
+            Info = Colors.Blue.Accent3,
+            Warning = Colors.Orange.Accent3
+        }
+    };
+
+    private MudTheme CreateLightTheme() => new MudTheme
+    {
+        PaletteLight = new PaletteLight
+        {
+            Primary = Colors.Red.Accent3,
+            Secondary = Colors.Green.Accent3,
+            Background = "#FFFFFF",
+            Surface = "#F5F5F5",
+            DrawerBackground = "#FFFFFF",
+            DrawerText = "#333333",
+            AppbarBackground = "#FFFFFF",
+            AppbarText = "#333333",
+            TextPrimary = "#333333",
+            TextSecondary = "#666666",
+            Error = Colors.Red.Accent3,
+            Success = Colors.Green.Accent3,
+            Info = Colors.Blue.Accent3,
+            Warning = Colors.Orange.Accent3
+        }
+    };
+
+    private string AppBarStyle => _isDark 
+        ? "background: linear-gradient(135deg, #1A1A2E 0%, #16213E 100%);" 
+        : "background: white;";
 
     private void ToggleDrawer() => _drawerOpen = !_drawerOpen;
 }

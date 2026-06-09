@@ -8,65 +8,73 @@
         MinWidth="1024" MinHeight="700" 
         WindowStartupLocation="CenterScreen"
         WindowState="Maximized"
-        KeyDown="Window_KeyDown">
+        KeyDown="Window_KeyDown"
+        Background="#1A1A2E">
     <Window.Resources>
         <!-- 圆角按钮样式 -->
         <Style x:Key="RoundedButtonStyle" TargetType="Button">
             <Setter Property="Template">
                 <Setter.Value>
                     <ControlTemplate TargetType="Button">
-                        <Border Background="{TemplateBinding Background}"
-                            BorderBrush="{TemplateBinding BorderBrush}"
-                            BorderThickness="{TemplateBinding BorderThickness}"
-                            CornerRadius="6"
-                            Padding="{TemplateBinding Padding}">
-                            <ContentPresenter HorizontalAlignment="Center" 
-                                          VerticalAlignment="Center"/>
+                        <Border x:Name="border"
+                                Background="{TemplateBinding Background}"
+                                BorderBrush="{TemplateBinding BorderBrush}"
+                                BorderThickness="{TemplateBinding BorderThickness}"
+                                CornerRadius="6"
+                                Padding="{TemplateBinding Padding}">
+                            <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"/>
                         </Border>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsMouseOver" Value="True">
+                                <Setter TargetName="border" Property="Background" Value="#555"/>
+                            </Trigger>
+                            <Trigger Property="IsPressed" Value="True">
+                                <Setter TargetName="border" Property="Background" Value="#666"/>
+                            </Trigger>
+                        </ControlTemplate.Triggers>
                     </ControlTemplate>
                 </Setter.Value>
             </Setter>
         </Style>
-        <!-- Slider 圆角样式（自动应用到所有 Slider） -->
-        <Style TargetType="Slider">
-            <Setter Property="Template">
-                <Setter.Value>
-                    <ControlTemplate TargetType="Slider">
-                        <Grid>
-                            <!-- 轨道背景 -->
-                            <Border x:Name="TrackBackground" 
-                                Background="{TemplateBinding Background}"
-                                Height="6" 
-                                CornerRadius="3"
-                                VerticalAlignment="Center"/>
-
-                            <!-- 轨道前景（已滑动部分） -->
-                            <Border x:Name="TrackForeground" 
-                                Background="{TemplateBinding Foreground}"
-                                Height="6" 
-                                CornerRadius="3"
-                                VerticalAlignment="Center"
-                                HorizontalAlignment="Left"/>
-
-                            <!-- 滑块 Thumb -->
-                            <Thumb x:Name="Thumb" 
-                               Width="12" Height="12" 
-                               Cursor="Hand"
-                               VerticalAlignment="Center">
-                                <Thumb.Template>
-                                    <ControlTemplate TargetType="Thumb">
-                                        <Border Background="{TemplateBinding Background}"
-                                            CornerRadius="6"
-                                            Width="12" Height="12"
-                                            BorderBrush="{TemplateBinding BorderBrush}"
-                                            BorderThickness="1"/>
-                                    </ControlTemplate>
-                                </Thumb.Template>
-                            </Thumb>
-                        </Grid>
-                    </ControlTemplate>
-                </Setter.Value>
-            </Setter>
+        
+        <!-- 播放按钮样式 -->
+        <Style x:Key="PlayButtonStyle" TargetType="Button" BasedOn="{StaticResource RoundedButtonStyle}">
+            <Setter Property="Width" Value="70"/>
+            <Setter Property="Height" Value="40"/>
+            <Setter Property="FontSize" Value="20"/>
+            <Setter Property="Background" Value="#E94560"/>
+            <Setter Property="Foreground" Value="White"/>
+            <Setter Property="BorderThickness" Value="0"/>
+        </Style>
+        
+        <!-- 控制按钮样式 -->
+        <Style x:Key="ControlButtonStyle" TargetType="Button" BasedOn="{StaticResource RoundedButtonStyle}">
+            <Setter Property="Width" Value="100"/>
+            <Setter Property="Height" Value="36"/>
+            <Setter Property="FontSize" Value="14"/>
+            <Setter Property="Background" Value="#3D3D5C"/>
+            <Setter Property="Foreground" Value="White"/>
+            <Setter Property="BorderThickness" Value="0"/>
+            <Setter Property="Margin" Value="2"/>
+        </Style>
+        
+        <!-- 列表项按钮样式 -->
+        <Style x:Key="ListButtonStyle" TargetType="Button" BasedOn="{StaticResource RoundedButtonStyle}">
+            <Setter Property="Background" Value="Transparent"/>
+            <Setter Property="Foreground" Value="White"/>
+            <Setter Property="BorderThickness" Value="0"/>
+            <Setter Property="Padding" Value="12,8"/>
+            <Setter Property="HorizontalContentAlignment" Value="Left"/>
+        </Style>
+        
+        <!-- 当前选中项按钮样式 -->
+        <Style x:Key="SelectedListButtonStyle" TargetType="Button" BasedOn="{StaticResource RoundedButtonStyle}">
+            <Setter Property="Background" Value="#E94560"/>
+            <Setter Property="Foreground" Value="White"/>
+            <Setter Property="BorderThickness" Value="0"/>
+            <Setter Property="Padding" Value="12,8"/>
+            <Setter Property="HorizontalContentAlignment" Value="Left"/>
+            <Setter Property="FontWeight" Value="Bold"/>
         </Style>
     </Window.Resources>
     <Grid x:Name="MainGrid">
@@ -83,49 +91,173 @@
                                     VerticalAlignment="Stretch"
                                     Stretch="Uniform" />
 
+            <!-- 字幕显示控件 -->
+            <TextBlock x:Name="SubtitleTextBlock" 
+                       HorizontalAlignment="Center"
+                       VerticalAlignment="Bottom"
+                       Margin="40,20"
+                       Foreground="White"
+                       FontSize="24"
+                       FontFamily="Microsoft YaHei"
+                       TextWrapping="Wrap"
+                       TextAlignment="Center"
+                       Padding="15,10"
+                       Background="Transparent"
+                        
+                       Visibility="Collapsed"
+                       MaxWidth="800" />
+
             <!-- 顶部信息栏 - 显示音频格式信息 -->
-            <StackPanel x:Name="TopBar" Orientation="Horizontal" 
-                        HorizontalAlignment="Left" VerticalAlignment="Top" 
-                        Margin="20" Background="#99000000" Visibility="Collapsed">
-                <TextBlock x:Name="AudioInfo" Foreground="White" FontSize="14" 
-                           Margin="15,10" VerticalAlignment="Center" />
-                <TextBlock x:Name="VideoInfo" Foreground="#FFD0D0D0" FontSize="12" 
-                           Margin="15,10" VerticalAlignment="Center" />
-            </StackPanel>
+            <Border x:Name="TopBar" Background="#CC000000" Visibility="Collapsed"
+                    CornerRadius="8" Margin="20" HorizontalAlignment="Left" VerticalAlignment="Top">
+                <StackPanel Orientation="Horizontal">
+                    <TextBlock x:Name="AudioInfo" Foreground="White" FontSize="14" 
+                               Margin="15,10" VerticalAlignment="Center" />
+                    <TextBlock x:Name="VideoInfo" Foreground="#FFD0D0D0" FontSize="12" 
+                               Margin="15,10" VerticalAlignment="Center" />
+                </StackPanel>
+            </Border>
 
             <!-- 底部控制栏 -->
-            <Grid x:Name="BottomBar" HorizontalAlignment="Stretch" VerticalAlignment="Bottom" 
-                  Background="#99000000" Visibility="Collapsed" Height="Auto">
-                <StackPanel Orientation="Horizontal" HorizontalAlignment="Center" VerticalAlignment="Center" Margin="15">
-                    <Button x:Name="PlayButton" Content="播放" Click="PlayButton_Click"  Style="{StaticResource RoundedButtonStyle}"
-                            Width="70" Height="32" Foreground="White" Background="#333" 
-                            BorderBrush="Transparent" Margin="5" />
-                    <Button x:Name="PauseButton" Content="暂停" Click="PauseButton_Click" 
-                            Width="70" Height="32" Foreground="White" Background="#333"  Style="{StaticResource RoundedButtonStyle}"
-                            BorderBrush="Transparent" Margin="5" />
-                    <Slider x:Name="ProgressSlider" Width="500" Height="20" Margin="10,0"   
-                            Foreground="#FF6B6B" Background="#555" BorderBrush="Transparent"
-                            ValueChanged="ProgressSlider_ValueChanged"
-                            PreviewMouseLeftButtonUp="ProgressSlider_MouseUp"
-                            IsMoveToPointEnabled="True"
-                            VerticalAlignment="Center" />
-                    <TextBlock x:Name="TimeDisplay" Foreground="White" FontSize="14"  
-                               Width="160" TextAlignment="Center" VerticalAlignment="Center" />
-                    <Slider x:Name="VolumeSlider" Width="80" Height="20" Margin="10,0" 
-                            Foreground="#FF6B6B" Background="#555" BorderBrush="Transparent"
-                            Minimum="0" Maximum="100" Value="100"
-                            ValueChanged="VolumeSlider_ValueChanged"
-                            VerticalAlignment="Center" />
-                    <TextBlock x:Name="VolumeLabel" Foreground="White" FontSize="14" 
-                               Width="40" VerticalAlignment="Center" Text="100" />
-                    <Button x:Name="FullscreenButton" Content="退出全屏" Click="FullscreenButton_Click" 
-                            Width="90" Height="32" Foreground="White" Background="#333"  Style="{StaticResource RoundedButtonStyle}"
-                            BorderBrush="Transparent" Margin="5" />
-                    <Button x:Name="StopButton" Content="关闭" Click="StopButton_Click" 
-                            Width="70" Height="32" Foreground="White" Background="#CC3333" Style="{StaticResource RoundedButtonStyle}"
-                            BorderBrush="Transparent" Margin="5" />
-                </StackPanel>
-            </Grid>
+            <Border x:Name="BottomBar" HorizontalAlignment="Stretch" VerticalAlignment="Bottom" 
+                    Background="#E6000000" Visibility="Collapsed">
+                <Grid>
+                    <Grid.RowDefinitions>
+                        <RowDefinition Height="Auto"/>
+                        <RowDefinition Height="Auto"/>
+                    </Grid.RowDefinitions>
+                    
+                    <!-- 进度条区域 -->
+                    <Grid Grid.Row="0" Margin="20,10,20,0">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="Auto"/>
+                            <ColumnDefinition Width="*"/>
+                            <ColumnDefinition Width="Auto"/>
+                        </Grid.ColumnDefinitions>
+                        
+                        <TextBlock x:Name="CurrentTimeText" Grid.Column="0" Foreground="White" FontSize="13" 
+                                   VerticalAlignment="Center" Width="55" Text="00:00"/>
+                        
+                        <Slider x:Name="ProgressSlider" Grid.Column="1" Height="24" Margin="15,0"   
+                                Foreground="#E94560" Background="Transparent" BorderBrush="Transparent"
+                                ValueChanged="ProgressSlider_ValueChanged"
+                                PreviewMouseLeftButtonUp="ProgressSlider_MouseUp"
+                                IsMoveToPointEnabled="True"
+                                LargeChange="5000" SmallChange="1000"
+                                TickPlacement="None"
+                                VerticalAlignment="Center"/>
+                        
+                        <TextBlock x:Name="TotalTimeText" Grid.Column="2" Foreground="White" FontSize="13" 
+                                   VerticalAlignment="Center" Width="55" TextAlignment="Right" Text="00:00"/>
+                    </Grid>
+                    
+                    <!-- 控制按钮区域 -->
+                    <StackPanel Grid.Row="1" Orientation="Horizontal" HorizontalAlignment="Center" 
+                                VerticalAlignment="Center" Margin="0,8,0,15">
+                        
+                        <!-- 停止按钮 -->
+                        <Button x:Name="StopButton" Content="停止" Click="StopButton_Click" 
+                                Style="{StaticResource ControlButtonStyle}" ToolTip="停止播放"/>
+                        
+                        <!-- 分隔线 -->
+                        <Border Width="1" Background="#555" Margin="10,5"/>
+                        
+                        <!-- 播放/暂停按钮 -->
+                        <Button x:Name="PlayPauseButton" Content="▶" Click="PlayPauseButton_Click" 
+                                Style="{StaticResource PlayButtonStyle}" FontFamily="Segoe UI Symbol"
+                                ToolTip="播放/暂停"/>
+                        
+                        <!-- 分隔线 -->
+                        <Border Width="1" Background="#555" Margin="10,5"/>
+                        
+                        <!-- 音量控制 -->
+                        <TextBlock Text="🔊" FontSize="16" VerticalAlignment="Center" Foreground="White"/>
+                        <Slider x:Name="VolumeSlider" Width="80" Height="24" Margin="8,0" 
+                                Foreground="#E94560" Background="Transparent" BorderBrush="Transparent"
+                                Minimum="0" Maximum="100" Value="100"
+                                ValueChanged="VolumeSlider_ValueChanged"
+                                IsMoveToPointEnabled="True"
+                                LargeChange="10" SmallChange="5"
+                                TickPlacement="None"
+                                VerticalAlignment="Center"/>
+                        <TextBlock x:Name="VolumeLabel" Foreground="White" FontSize="13" 
+                                   Width="30" VerticalAlignment="Center" Text="100"/>
+                        
+                        <!-- 分隔线 -->
+                        <Border Width="1" Background="#555" Margin="15,5"/>
+                        
+                        <!-- 音效切换按钮 -->
+                        <Button x:Name="AudioButton" Content="🎵 音效" Click="AudioButton_Click" 
+                                Style="{StaticResource ControlButtonStyle}" ToolTip="切换音频轨道"/>
+                        
+                        <!-- 字幕按钮 -->
+                        <Button x:Name="SubtitleButton" Content="📝 字幕" Click="SubtitleButton_Click" 
+                                Style="{StaticResource ControlButtonStyle}" ToolTip="字幕选项"/>
+                        
+                        <!-- 分隔线 -->
+                        <Border Width="1" Background="#555" Margin="15,5"/>
+                        
+                        <!-- 全屏按钮 -->
+                        <Button x:Name="FullscreenButton" Content="⛶" Click="FullscreenButton_Click" 
+                                Style="{StaticResource ControlButtonStyle}" FontFamily="Segoe UI Symbol"
+                                ToolTip="全屏/退出全屏" Width="65"/>
+                    </StackPanel>
+                </Grid>
+            </Border>
+            
+            <!-- 音频流选择弹窗 -->
+            <Popup x:Name="AudioPopup" StaysOpen="False" Placement="Top" 
+                   PlacementTarget="{Binding ElementName=AudioButton}"
+                   AllowsTransparency="True" PopupAnimation="Fade">
+                <Border Background="#E6000000" BorderBrush="#555" BorderThickness="1" 
+                        CornerRadius="8" Padding="5" MinWidth="250">
+                    <StackPanel>
+                        <TextBlock Text="选择音频轨道" Foreground="White" FontSize="14" 
+                                   FontWeight="Bold" Margin="10,8"/>
+                        <Separator Background="#555" Margin="5,0"/>
+                        <StackPanel x:Name="AudioTrackListPanel"/>
+                        <TextBlock x:Name="NoAudioTracksText" Text="未检测到音频轨道" 
+                                   Foreground="Gray" FontSize="12" Margin="10,8" 
+                                   Visibility="Collapsed"/>
+                    </StackPanel>
+                </Border>
+            </Popup>
+            
+            <!-- 字幕选项弹窗 -->
+            <Popup x:Name="SubtitlePopup" StaysOpen="False" Placement="Top"
+                   PlacementTarget="{Binding ElementName=SubtitleButton}"
+                   AllowsTransparency="True" PopupAnimation="Fade">
+                <Border Background="#E6000000" BorderBrush="#555" BorderThickness="1" 
+                        CornerRadius="8" Padding="5" MinWidth="250">
+                    <StackPanel>
+                        <TextBlock Text="字幕选项" Foreground="White" FontSize="14" 
+                                   FontWeight="Bold" Margin="10,8"/>
+                        <Separator Background="#555" Margin="5,0"/>
+                        
+                        <!-- 内嵌字幕 -->
+                        <TextBlock Text="内嵌字幕" Foreground="#AAA" FontSize="12" Margin="10,8,10,4"/>
+                        <StackPanel x:Name="SubtitleTrackListPanel"/>
+                        <TextBlock x:Name="NoSubtitleTracksText" Text="无内嵌字幕" 
+                                   Foreground="Gray" FontSize="12" Margin="10,8" 
+                                   Visibility="Collapsed"/>
+                        
+                        <Separator Background="#555" Margin="5,8"/>
+                        
+                        <!-- 外部字幕 -->
+                        <TextBlock Text="外部字幕" Foreground="#AAA" FontSize="12" Margin="10,4,10,8"/>
+                        <Button x:Name="LoadSubtitleButton" Content="📂 加载字幕文件..." 
+                                Style="{StaticResource ListButtonStyle}"
+                                Click="LoadSubtitleButton_Click"/>
+                        <Button x:Name="UnloadSubtitleButton" Content="❌ 卸载字幕" 
+                                Style="{StaticResource ListButtonStyle}"
+                                Click="UnloadSubtitleButton_Click"
+                                Visibility="Collapsed"/>
+                        <TextBlock x:Name="CurrentSubtitleText" Text="" 
+                                   Foreground="#888" FontSize="11" Margin="12,4,10,8"
+                                   TextWrapping="Wrap"/>
+                    </StackPanel>
+                </Border>
+            </Popup>
         </Grid>
     </Grid>
 </Window>

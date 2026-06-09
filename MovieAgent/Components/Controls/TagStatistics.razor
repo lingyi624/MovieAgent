@@ -1,0 +1,175 @@
+@inject ITagService TagService
+
+<MudCard Elevation="4" Style="background: #1A1A2E; color: white; margin-bottom: 16px;">
+    <MudCardHeader>
+        <CardHeaderContent>
+            <MudText Typo="Typo.h6" Style="color: #E94560;">
+                <MudIcon Icon="@Icons.Material.Filled.LocalOffer" Style="vertical-align: middle;" />
+                标签统计
+            </MudText>
+        </CardHeaderContent>
+    </MudCardHeader>
+    <MudCardContent>
+        @if (_loading)
+        {
+            <div style="display: flex; justify-content: center; padding: 20px;">
+                <MudProgressCircular Color="Color.Primary" Indeterminate="true" Size="Size.Small" />
+            </div>
+        }
+        else if (_hasError)
+        {
+            <div style="text-align: center; padding: 20px;">
+                <MudIcon Icon="@Icons.Material.Filled.Error" Size="Size.Large" Style="color: #E94560; margin-bottom: 8px;" />
+                <MudText Typo="Typo.body2" Style="color: #E94560;">加载标签数据失败</MudText>
+            </div>
+        }
+        else if (_tagStats?.Any() == true)
+        {
+            <MudGrid Style="margin-bottom: 16px;">
+                <MudItem xs="3" Style="text-align: center;">
+                    <MudText Typo="Typo.h4" Style="color: #E94560; font-weight: bold;">@_tagStats.Count</MudText>
+                    <MudText Typo="Typo.caption" Style="color: gray;">标签总数</MudText>
+                </MudItem>
+                <MudItem xs="3" Style="text-align: center;">
+                    <MudText Typo="Typo.h4" Style="color: #4CAF50; font-weight: bold;">@_totalTaggedMovies</MudText>
+                    <MudText Typo="Typo.caption" Style="color: gray;">已标记电影</MudText>
+                </MudItem>
+                <MudItem xs="3" Style="text-align: center;">
+                    <MudText Typo="Typo.h4" Style="color: #2196F3; font-weight: bold;">@_avgTagsPerMovie</MudText>
+                    <MudText Typo="Typo.caption" Style="color: gray;">平均每部标签数</MudText>
+                </MudItem>
+                <MudItem xs="3" Style="text-align: center;">
+                    <MudText Typo="Typo.h4" Style="color: #FF9800; font-weight: bold;">@_maxTagCount</MudText>
+                    <MudText Typo="Typo.caption" Style="color: gray;">最高标签数</MudText>
+                </MudItem>
+            </MudGrid>
+
+            <div style="margin-bottom: 16px;">
+                <MudText Typo="Typo.subtitle2" Style="color: #E0E0E0; margin-bottom: 8px;">热门标签 TOP 5</MudText>
+                <MudList T="string">
+                    @foreach (var (tagStat, index) in _tagStats.Take(5).Select((item, i) => (item, i)))
+                    {
+                        <MudListItem>
+                            <div style="display: flex; align-items: center; width: 100%;">
+                                <MudChip T="string" Size="Size.Small" Color="Color.Primary" 
+                                         Style="margin-right: 8px; font-size: 12px;">
+                                    @(index + 1)
+                                </MudChip>
+                                <span style="flex: 1;">@tagStat.Tag</span>
+                                <MudProgressLinear Value="@((tagStat.Count * 100) / _maxTagCount)" 
+                                                   Color="Color.Primary" 
+                                                   Style="width: 100px; margin-right: 8px;" />
+                                <MudText Typo="Typo.caption" Style="color: gray; width: 30px; text-align: right;">
+                                    @tagStat.Count
+                                </MudText>
+                            </div>
+                        </MudListItem>
+                    }
+                </MudList>
+            </div>
+
+            <div>
+                <MudText Typo="Typo.subtitle2" Style="color: #E0E0E0; margin-bottom: 8px;">标签云</MudText>
+                <div style="display: flex; flex-wrap: wrap; gap: 10px; align-items: center;">
+                    @foreach (var tagStat in _tagStats.Take(25))
+                    {
+                        var size = GetTagSize(tagStat.Count);
+                        var color = GetTagColor(tagStat.Count);
+                        <div style="display: inline-flex; align-items: center; gap: 6px;">
+                            <MudChip T="string" Size="@size" Color="@color" 
+                                     OnClick="() => OnTagClick(tagStat.Tag)"
+                                     Style="cursor: pointer; margin: 0;">
+                                @tagStat.Tag
+                            </MudChip>
+                            <span style="background: #333; color: #888; font-size: 11px; padding: 2px 8px; border-radius: 10px; white-space: nowrap;">
+                                @tagStat.Count
+                            </span>
+                        </div>
+                    }
+                </div>
+                
+                @if (_tagStats.Count > 25)
+                {
+                    <MudText Typo="Typo.caption" Style="color: gray; margin-top: 8px; display: block;">
+                        还有 @(_tagStats.Count - 25) 个标签...
+                    </MudText>
+                }
+            </div>
+        }
+        else
+        {
+            <MudText Typo="Typo.body2" Style="color: gray;">暂无标签数据</MudText>
+        }
+    </MudCardContent>
+</MudCard>
+
+@code {
+    [Parameter] public EventCallback<string> OnTagSelected { get; set; }
+
+    private List<TagStatItem>? _tagStats;
+    private bool _loading = true;
+    private bool _hasError = false;
+    private int _totalTaggedMovies;
+    private string _avgTagsPerMovie = "0";
+    private int _maxTagCount;
+
+    protected override async Task OnInitializedAsync()
+    {
+        try
+        {
+            var stats = await TagService.GetTagStatisticsAsync();
+            _tagStats = stats.Select(s => new TagStatItem { Tag = s.Tag, Count = s.Count })
+                            .OrderByDescending(s => s.Count)
+                            .ToList();
+            
+            if (_tagStats.Any())
+            {
+                _maxTagCount = _tagStats.Max(s => s.Count);
+                _totalTaggedMovies = await TagService.GetTotalTaggedMoviesCountAsync();
+                
+                if (_totalTaggedMovies > 0)
+                {
+                    var totalTags = _tagStats.Sum(s => s.Count);
+                    _avgTagsPerMovie = (totalTags / (double)_totalTaggedMovies).ToString("0.1");
+                }
+            }
+        }
+        catch
+        {
+            _hasError = true;
+            _tagStats = new List<TagStatItem>();
+        }
+        finally
+        {
+            _loading = false;
+        }
+    }
+
+    private Size GetTagSize(int count)
+    {
+        if (count >= 15) return Size.Large;
+        if (count >= 8) return Size.Medium;
+        if (count >= 4) return Size.Small;
+        return Size.Small;
+    }
+
+    private Color GetTagColor(int count)
+    {
+        if (count >= 15) return Color.Primary;
+        if (count >= 10) return Color.Secondary;
+        if (count >= 5) return Color.Info;
+        if (count >= 2) return Color.Warning;
+        return Color.Default;
+    }
+
+    private async Task OnTagClick(string tag)
+    {
+        await OnTagSelected.InvokeAsync(tag);
+    }
+
+    private class TagStatItem
+    {
+        public string Tag { get; set; } = string.Empty;
+        public int Count { get; set; }
+    }
+}

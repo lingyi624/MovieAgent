@@ -1,12 +1,35 @@
 @page "/settings"
 @inject IConfiguration Config
 @inject ISnackbar Snackbar
+@inject ILocalizationService LocalizationService
 
-<PageTitle>设置</PageTitle>
+<PageTitle>@LocalizationService.Translate("Settings")</PageTitle>
 
-<MudText Typo="Typo.h4" GutterBottom Style="color: #E94560;">设置</MudText>
+<MudText Typo="Typo.h4" GutterBottom Style="color: #E94560;">@LocalizationService.Translate("Settings")</MudText>
 
 <MudTabs Elevation="2" Rounded="true" Style="background: linear-gradient(135deg, #2D2D44 0%, #1A1A2E 100%); color: #E0E0E0;" >
+    <MudTabPanel Text="@LocalizationService.Translate("Language")" Style="background: #1A1A2E; color: #E0E0E0;">
+        <MudText Typo="Typo.h6" Style="margin: 16px 0;">@LocalizationService.Translate("Language")</MudText>
+        <MudPaper Elevation="1" Style="padding: 16px; background: #2D2D44;">
+            <MudText Typo="Typo.body1" Style="margin-bottom: 16px;">@LocalizationService.Translate("CurrentLanguage"): @CurrentLanguageText</MudText>
+            <MudGrid>
+                <MudItem xs="6">
+                    <MudButton Variant="Variant.Filled" Color="Color.Primary" OnClick="() => SetLanguage(Language.Chinese)" 
+                               Style="@(LocalizationService.CurrentLanguage == Language.Chinese ? "background: #E94560;" : "background: #3D3D5C;")">
+                        🇨🇳 中文
+                    </MudButton>
+                </MudItem>
+                <MudItem xs="6">
+                    <MudButton Variant="Variant.Filled" Color="Color.Primary" OnClick="() => SetLanguage(Language.English)"
+                               Style="@(LocalizationService.CurrentLanguage == Language.English ? "background: #E94560;" : "background: #3D3D5C;")">
+                        🇬🇧 English
+                    </MudButton>
+                </MudItem>
+            </MudGrid>
+            <MudText Typo="Typo.caption" Style="color: #888; margin-top: 16px;">@LocalizationService.Translate("LanguageRestartHint")</MudText>
+        </MudPaper>
+    </MudTabPanel>
+
     <MudTabPanel Text="NAS 共享" Style="background: #1A1A2E; color: #E0E0E0;">
         <MudText Typo="Typo.h6" Style="margin: 16px 0;">NAS 共享路径配置</MudText>
         <MudPaper Elevation="1" Style="padding: 16px; background: #1A1A2E;">
@@ -71,6 +94,8 @@
     private string _modelUrl = "http://localhost:11434";
     private string _modelName = "llama3:latest";
 
+    private string CurrentLanguageText => LocalizationService.CurrentLanguage == Language.Chinese ? "中文" : "English";
+
     protected override void OnInitialized()
     {
         LoadShares();
@@ -78,6 +103,15 @@
         _tmdbApiKey = Config["TMDB:ApiKey"] ?? "";
         _modelUrl = Config["AI:ModelUrl"] ?? "http://localhost:11434";
         _modelName = Config["AI:ModelName"] ?? "llama3:latest";
+    }
+
+    private async void SetLanguage(Language language)
+    {
+        if (LocalizationService.CurrentLanguage == language)
+            return;
+        
+        await LocalizationService.SetLanguageAsync(language);
+        Snackbar.Add(language == Language.Chinese ? "已切换到中文" : "Switched to English", Severity.Success);
     }
 
     private void LoadShares()

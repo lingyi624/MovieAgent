@@ -4,8 +4,8 @@
 @inject IPlayHistoryService PlayHistoryService
 @inject NavigationManager NavigationManager
 @inject IServiceProvider ServiceProvider
+@inject ILoggerService Logger
 @implements IDisposable
-@using System.Diagnostics
 
 <PageTitle>@(_movie?.Title ?? "播放")</PageTitle>
 
@@ -161,13 +161,13 @@
                 completed: false
             );
             
-            Debug.WriteLine($"[Player] 播放历史已记录: {_movie.Title}");
+            Logger.Debug($"[Player] 播放历史已记录: {_movie.Title}");
         }
         catch (Exception ex)
         {
-            Debug.WriteLine($"[Player] Play failed: {ex.Message}");
+            Logger.Debug($"[Player] Play failed: {ex.Message}");
             var dialog = ServiceProvider.GetRequiredService<IDialogService>();
-            await dialog.ShowAsync<ErrorDialog>($"播放失败: {ex.Message}\n\n文件路径: {_movie.FilePath}");
+            await dialog.ShowMessageBoxAsync("播放失败", $"播放失败: {ex.Message}\n\n文件路径: {_movie.FilePath}", yesText: "确定");
             _playStatus = "播放失败";
             _isPlaying = false;
             _isPaused = false;
@@ -194,11 +194,11 @@
                     duration: _movie.Runtime,
                     completed: _movie.Runtime.HasValue && currentProgress > (_movie.Runtime.Value * 60 * 0.9)
                 );
-                Debug.WriteLine($"[Player] 停止历史已记录，进度: {currentProgress}秒");
+                Logger.Debug($"[Player] 停止历史已记录，进度: {currentProgress}秒");
             }
             catch (Exception ex)
             {
-                Debug.WriteLine($"[Player] 记录停止历史失败: {ex.Message}");
+                Logger.Debug($"[Player] 记录停止历史失败: {ex.Message}");
             }
         }
     }
@@ -214,7 +214,7 @@
         catch (Exception ex)
         {
             var dialog = ServiceProvider.GetRequiredService<IDialogService>();
-            await dialog.ShowAsync<ErrorDialog>($"启动失败: {ex.Message}");
+            await dialog.ShowMessageBoxAsync("启动失败", $"启动失败: {ex.Message}", yesText: "确定");
         }
     }
 

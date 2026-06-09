@@ -1,4 +1,5 @@
 @page "/dashboard"
+@using MovieAgent.Components.Controls
 @inject IMovieRepository MovieRepo
 @inject NavigationManager NavigationManager
 
@@ -38,7 +39,7 @@
                 <MudCard Style="background: linear-gradient(135deg, #4facfe 0%, #00f2fe 100%); border-radius: 12px;">
                     <MudCardContent Style="padding: 20px;">
                         <MudIcon Icon="@Icons.Material.Filled.Star" Size="Size.Large" Style="color: white; margin-bottom: 12px;" />
-                        <MudText Typo="Typo.h2" Style="color: white; font-weight: bold;">@_stats.AverageRating?.ToString("0.0") ?? "-"</MudText>
+                        <MudText Typo="Typo.h2" Style="color: white; font-weight: bold;">@GetAverageRatingDisplay()</MudText>
                         <MudText Typo="Typo.body2" Style="color: rgba(255,255,255,0.8);">平均评分</MudText>
                     </MudCardContent>
                 </MudCard>
@@ -48,7 +49,7 @@
                 <MudCard Style="background: linear-gradient(135deg, #43e97b 0%, #38f9d7 100%); border-radius: 12px;">
                     <MudCardContent Style="padding: 20px;">
                         <MudIcon Icon="@Icons.Material.Filled.Timer" Size="Size.Large" Style="color: white; margin-bottom: 12px;" />
-                        <MudText Typo="Typo.h2" Style="color: white; font-weight: bold;">@_stats.WatchedPercentage?.ToString("0") ?? "0"</MudText>
+                        <MudText Typo="Typo.h2" Style="color: white; font-weight: bold;">@GetWatchedPercentageDisplay()</MudText>
                         <MudText Typo="Typo.body2" Style="color: rgba(255,255,255,0.8);">观看完成率</MudText>
                     </MudCardContent>
                 </MudCard>
@@ -63,7 +64,7 @@
                 <div style="height: 200px; display: flex; align-items: center; justify-content: center;">
                     <div style="width: 200px; height: 200px; border-radius: 50%; background: conic-gradient(#E94560 0deg, #E94560 @_watchProgressDegrees deg, #2D2D44 @_watchProgressDegrees deg, #2D2D44 360deg); display: flex; align-items: center; justify-content: center;">
                         <div style="width: 160px; height: 160px; border-radius: 50%; background: #1A1A2E; display: flex; flex-direction: column; align-items: center; justify-content: center;">
-                            <MudText Typo="Typo.h3" Style="color: #E94560; font-weight: bold;">@_stats.WatchedPercentage?.ToString("0") ?? "0"</MudText>
+                            <MudText Typo="Typo.h3" Style="color: #E94560; font-weight: bold;">@GetWatchedPercentageDisplay()</MudText>
                             <MudText Typo="Typo.body2" Style="color: #E0E0E0;">已观看</MudText>
                         </div>
                     </div>
@@ -104,7 +105,7 @@
                         <MudListItem T="string">
                             <MudText Style="color: #E0E0E0; flex: 1;">@item.Resolution</MudText>
                             <MudText Style="color: #E94560; margin-right: 12px;">@item.Count</MudText>
-                            <MudProgressLinear Value="@item.Percentage" Color="Color.Primary" Width="100px" />
+                            <MudProgressLinear Value="@item.Percentage" Color="Color.Primary" style="width: 100px;" />
                         </MudListItem>
                     }
                 </MudList>
@@ -129,6 +130,13 @@
             </MudPaper>
         </MudItem>
     </MudGrid>
+
+    <MudGrid>
+        <MudItem xs="12">
+            @* 标签统计 - 点击标签可筛选电影 *@
+            <TagStatistics OnTagSelected="NavigateToMoviesWithTag" />
+        </MudItem>
+    </MudGrid>
 </MudContainer>
 
 @code {
@@ -143,6 +151,25 @@
         await LoadData();
     }
 
+    private void NavigateToMoviesWithTag(string tag)
+    {
+        NavigationManager.NavigateTo($"/movies?tag={Uri.EscapeDataString(tag)}");
+    }
+
+    private string GetAverageRatingDisplay()
+    {
+        if (_stats.AverageRating.HasValue)
+            return _stats.AverageRating.Value.ToString("0.0");
+        return "-";
+    }
+
+    private string GetWatchedPercentageDisplay()
+    {
+        if (_stats.WatchedPercentage.HasValue)
+            return ((int)_stats.WatchedPercentage.Value).ToString();
+        return "0";
+    }
+
     private async Task LoadData()
     {
         var movies = await MovieRepo.GetAllAsync();
@@ -152,7 +179,7 @@
             TotalMovies = movies.Count,
             WatchedCount = movies.Count(m => m.IsWatched),
             UnwatchedCount = movies.Count(m => !m.IsWatched),
-            AverageRating = movies.Where(m => m.Rating.HasValue).Select(m => m.Rating.Value).DefaultIfEmpty(0).Average()
+            AverageRating = GetAverageRating(movies)
         };
         _stats.WatchedPercentage = _stats.TotalMovies > 0 ? (double)_stats.WatchedCount / _stats.TotalMovies * 100 : 0;
 
@@ -181,6 +208,12 @@
         
         var totalRated = _ratingStats.Sum(r => r.Count);
         _ratingStats.ForEach(r => r.Percentage = totalRated > 0 ? (double)r.Count / totalRated * 100 : 0);
+    }
+
+    private double? GetAverageRating(List<Movie> movies)
+    {
+        var ratedMovies = movies.Where(m => m.Rating.HasValue).Select(m => m.Rating!.Value).ToList();
+        return ratedMovies.Any() ? (double?)ratedMovies.Average() : null;
     }
 
     private List<WeeklyStat> GenerateWeeklyStats()
