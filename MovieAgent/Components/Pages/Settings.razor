@@ -2,6 +2,9 @@
 @inject IConfiguration Config
 @inject ISnackbar Snackbar
 @inject ILocalizationService LocalizationService
+@inject IBackupService BackupService
+@inject IMovieExportService ExportService
+@inject IMovieRepository MovieRepo
 
 <PageTitle>@LocalizationService.Translate("Settings")</PageTitle>
 
@@ -36,22 +39,24 @@
             @foreach (var share in _shares)
             {
                 <MudGrid Style="margin-bottom: 8px;">
-                    <MudItem xs="9">
+                    <MudItem xs="8">
                         <MudTextField @bind-Value="share.Path" Label="共享路径" Variant="Variant.Outlined"
                                       Placeholder="\\192.168.1.11\disk1" Style="background: #2D2D44;" />
                     </MudItem>
-                    <MudItem xs="2">
-                        <MudChip T="string" Color="@(share.IsOnline ? Color.Success : Color.Error)" Size="Size.Small" Style="margin-top: 12px;">
+                    <MudItem xs="1" Style="display: flex; align-items: center; justify-content: center;">
+                        <MudChip T="string" Color="@(share.IsOnline ? Color.Success : Color.Error)" Size="Size.Small">
                             @(share.IsOnline ? "在线" : "离线")
                         </MudChip>
                     </MudItem>
-                    <MudItem xs="1">
-                        <MudIconButton Icon="@Icons.Material.Filled.Delete" Color="Color.Error" OnClick="() => RemoveShare(share)" />
+                    <MudItem xs="2" Style="display: flex; align-items: center; justify-content: center;">
+                        <MudIconButton Icon="@Icons.Material.Filled.Wifi" Color="Color.Info" OnClick="() => TestShareConnection(share)" title="测试连接" />
+                        <MudIconButton Icon="@Icons.Material.Filled.Delete" Color="Color.Error" OnClick="() => RemoveShare(share)" title="删除" />
                     </MudItem>
                 </MudGrid>
             }
             <MudButton Variant="Variant.Outlined" OnClick="AddShare" StartIcon="@Icons.Material.Filled.Add">添加共享路径</MudButton>
             <MudButton Variant="Variant.Filled" Color="Color.Primary" OnClick="SaveShares" Style="margin-left: 8px; background: #E94560;">保存</MudButton>
+            <MudButton Variant="Variant.Outlined" Color="Color.Secondary" OnClick="TestAllConnections" StartIcon="@Icons.Material.Filled.Refresh" Style="margin-left: 8px;">测试所有连接</MudButton>
         </MudPaper>
     </MudTabPanel>
 
@@ -75,6 +80,18 @@
         </MudPaper>
     </MudTabPanel>
 
+    <MudTabPanel Text="字幕下载" Style="background: #1A1A2E; color: #E0E0E0;">
+        <MudText Typo="Typo.h6" Style="margin: 16px 0;">OpenSubtitles API 配置</MudText>
+        <MudPaper Elevation="1" Style="padding: 16px; background: #2D2D44;">
+            <MudTextField @bind-Value="_subtitleApiKey" Label="API Key" Variant="Variant.Outlined" InputType="InputType.Password"
+                          Placeholder="输入你的 OpenSubtitles API Key" Style="margin-bottom: 16px; background: #2D2D44;" />
+            <MudText Typo="Typo.body2" Style="color: #888; margin-bottom: 16px;">
+                你可以在 <a href="https://www.opensubtitles.com/" target="_blank" style="color: #E94560;">OpenSubtitles 官网</a> 申请免费的 API Key。
+            </MudText>
+            <MudButton Variant="Variant.Filled" Color="Color.Primary" OnClick="SaveSubtitleSettings" Style="background: #E94560;">保存</MudButton>
+        </MudPaper>
+    </MudTabPanel>
+
     <MudTabPanel Text="AI 模型" Style="background: #1A1A2E; color: #E0E0E0;">
         <MudText Typo="Typo.h6" Style="margin: 16px 0;">Ollama 配置</MudText>
         <MudPaper Elevation="1" Style="padding: 16px; background: #2D2D44;">
@@ -85,14 +102,99 @@
             <MudButton Variant="Variant.Filled" Color="Color.Primary" OnClick="SaveAiSettings" Style="background: #E94560;">保存</MudButton>
         </MudPaper>
     </MudTabPanel>
+
+    <MudTabPanel Text="数据库备份" Style="background: #1A1A2E; color: #E0E0E0;">
+        <MudText Typo="Typo.h6" Style="margin: 16px 0;">数据库备份策略</MudText>
+        <MudPaper Elevation="1" Style="padding: 16px; background: #2D2D44;">
+            <MudStack Spacing="4" Style="margin-bottom: 16px;">
+                <MudButton Variant="Variant.Filled" Color="Color.Primary" OnClick="CreateBackup" StartIcon="@Icons.Material.Filled.Backup" Style="background: #E94560;">
+                    创建备份
+                </MudButton>
+                <MudButton Variant="Variant.Outlined" Color="Color.Secondary" OnClick="CleanupOldBackups" StartIcon="@Icons.Material.Filled.DeleteSweep">
+                    清理旧备份（保留最近7天）
+                </MudButton>
+            </MudStack>
+
+            <MudText Typo="Typo.body2" Style="color: #888; margin-bottom: 12px;">备份文件列表：</MudText>
+            <div style="max-height: 300px; overflow-y: auto;">
+                @if (_backups.Any())
+                {
+                    <MudList T="BackupInfo">
+                        @foreach (var backup in _backups)
+                        {
+                            <MudListItem T="BackupInfo">
+                                <div class="d-flex justify-between align-items-center flex-wrap" Style="width: 100%;">
+                                    <MudText Style="color: #E0E0E0; flex: 1;">@backup.Name</MudText>
+                                    <MudText Style="color: #888; font-size: 12px; margin-right: 12px;">@backup.Size</MudText>
+                                    <div class="d-flex gap-2">
+                                        <MudIconButton Icon="@Icons.Material.Filled.Restore" Color="Color.Info" OnClick="() => RestoreBackup(backup.Path)" title="恢复备份" />
+                                        <MudIconButton Icon="@Icons.Material.Filled.Delete" Color="Color.Error" OnClick="() => DeleteBackup(backup.Path)" title="删除备份" />
+                                    </div>
+                                </div>
+                            </MudListItem>
+                        }
+                    </MudList>
+                }
+                else
+                {
+                    <MudText Typo="Typo.body2" Style="color: #888; text-align: center; padding: 20px;">暂无备份文件</MudText>
+                }
+            </div>
+            <MudText Typo="Typo.caption" Style="color: #666; margin-top: 12px; display: block;">
+                备份文件存储位置: @_backupDirectory
+            </MudText>
+        </MudPaper>
+    </MudTabPanel>
+    
+    <MudTabPanel Text="数据导出/导入" Style="background: #1A1A2E; color: #E0E0E0;">
+        <MudText Typo="Typo.h6" Style="margin: 16px 0;">电影库数据管理</MudText>
+        <MudPaper Elevation="1" Style="padding: 16px; background: #2D2D44;">
+            <MudStack Spacing="4" Style="margin-bottom: 16px;">
+                <MudText Typo="Typo.body2" Style="color: #888;">导出电影库数据为 JSON 或 CSV 格式，方便备份和迁移。</MudText>
+                <MudStack Row="true" Wrap="Wrap.Wrap" Spacing="2">
+                    <MudButton Variant="Variant.Filled" Color="Color.Primary" OnClick="ExportToJson" StartIcon="@Icons.Material.Filled.TextSnippet" Style="background: #E94560;">
+                        导出为 JSON
+                    </MudButton>
+                    <MudButton Variant="Variant.Filled" Color="Color.Primary" OnClick="ExportToCsv" StartIcon="@Icons.Material.Filled.ViewList" Style="background: #4CAF50;">
+                        导出为 CSV
+                    </MudButton>
+                    <MudButton Variant="Variant.Outlined" Color="Color.Secondary" OnClick="ImportFromFile" StartIcon="@Icons.Material.Filled.Upload">
+                        从文件导入
+                    </MudButton>
+                </MudStack>
+            </MudStack>
+
+            @if (_exporting)
+            {
+                <div style="display: flex; align-items: center; gap: 12px;">
+                    <MudProgressCircular Color="Color.Primary" Indeterminate="true" Size="Size.Small" />
+                    <MudText Typo="Typo.body2" Style="color: #E94560;">@_exportProgress</MudText>
+                </div>
+            }
+
+            @if (!string.IsNullOrEmpty(_exportMessage))
+            {
+                <MudText Typo="Typo.body2" Style="@(_exportSuccess ? "color: #4CAF50;" : "color: #E94560;")">
+                    @_exportMessage
+                </MudText>
+            }
+        </MudPaper>
+    </MudTabPanel>
 </MudTabs>
 
 @code {
     private List<ShareItem> _shares = new();
     private string _playerPath = "";
     private string _tmdbApiKey = "";
+    private string _subtitleApiKey = "";
     private string _modelUrl = "http://localhost:11434";
     private string _modelName = "llama3:latest";
+    private List<BackupInfo> _backups = new();
+    private string _backupDirectory = "";
+    private bool _exporting = false;
+    private string _exportProgress = "";
+    private string _exportMessage = "";
+    private bool _exportSuccess = false;
 
     private string CurrentLanguageText => LocalizationService.CurrentLanguage == Language.Chinese ? "中文" : "English";
 
@@ -101,8 +203,136 @@
         LoadShares();
         _playerPath = Config["Player:Path"] ?? "";
         _tmdbApiKey = Config["TMDB:ApiKey"] ?? "";
+        _subtitleApiKey = Config["Subtitle:ApiKey"] ?? "";
         _modelUrl = Config["AI:ModelUrl"] ?? "http://localhost:11434";
         _modelName = Config["AI:ModelName"] ?? "llama3:latest";
+        LoadBackups();
+    }
+
+    private void LoadBackups()
+    {
+        _backupDirectory = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "backups");
+        _backups.Clear();
+        
+        if (Directory.Exists(_backupDirectory))
+        {
+            var backupDirs = Directory.GetDirectories(_backupDirectory);
+            foreach (var dir in backupDirs)
+            {
+                var name = Path.GetFileName(dir);
+                if (DateTime.TryParseExact(name, "yyyyMMdd_HHmmss", null, System.Globalization.DateTimeStyles.None, out var date))
+                {
+                    var size = GetDirectorySize(dir);
+                    _backups.Add(new BackupInfo
+                    {
+                        Name = date.ToString("yyyy-MM-dd HH:mm:ss"),
+                        Path = dir,
+                        Size = FormatSize(size)
+                    });
+                }
+            }
+            _backups.Sort((a, b) => b.Name.CompareTo(a.Name));
+        }
+    }
+
+    private long GetDirectorySize(string path)
+    {
+        try
+        {
+            return new DirectoryInfo(path).EnumerateFiles("*.*", SearchOption.AllDirectories).Sum(f => f.Length);
+        }
+        catch
+        {
+            return 0;
+        }
+    }
+
+    private string FormatSize(long bytes)
+    {
+        if (bytes < 1024) return $"{bytes} B";
+        if (bytes < 1024 * 1024) return $"{bytes / 1024.0:F1} KB";
+        if (bytes < 1024 * 1024 * 1024) return $"{bytes / (1024.0 * 1024):F1} MB";
+        return $"{bytes / (1024.0 * 1024 * 1024):F1} GB";
+    }
+
+    private async void CreateBackup()
+    {
+        try
+        {
+            await BackupService.CreateBackupAsync();
+            LoadBackups();
+            Snackbar.Add("备份创建成功", Severity.Success);
+        }
+        catch (Exception ex)
+        {
+            Snackbar.Add($"备份创建失败: {ex.Message}", Severity.Error);
+        }
+    }
+
+    private async void RestoreBackup(string backupPath)
+    {
+        try
+        {
+            var dialog = System.Windows.MessageBox.Show(
+                "恢复备份将覆盖当前数据库，此操作不可撤销。确定要继续吗？",
+                "确认恢复",
+                System.Windows.MessageBoxButton.YesNo,
+                System.Windows.MessageBoxImage.Warning);
+            
+            if (dialog == System.Windows.MessageBoxResult.Yes)
+            {
+                await BackupService.RestoreFromBackupAsync(backupPath);
+                Snackbar.Add("备份恢复成功，请重启应用以生效", Severity.Success);
+            }
+        }
+        catch (Exception ex)
+        {
+            Snackbar.Add($"恢复失败: {ex.Message}", Severity.Error);
+        }
+    }
+
+    private void DeleteBackup(string backupPath)
+    {
+        try
+        {
+            var dialog = System.Windows.MessageBox.Show(
+                "确定要删除此备份吗？",
+                "确认删除",
+                System.Windows.MessageBoxButton.YesNo,
+                System.Windows.MessageBoxImage.Question);
+            
+            if (dialog == System.Windows.MessageBoxResult.Yes)
+            {
+                Directory.Delete(backupPath, recursive: true);
+                LoadBackups();
+                Snackbar.Add("备份已删除", Severity.Success);
+            }
+        }
+        catch (Exception ex)
+        {
+            Snackbar.Add($"删除失败: {ex.Message}", Severity.Error);
+        }
+    }
+
+    private async void CleanupOldBackups()
+    {
+        try
+        {
+            await BackupService.CleanupOldBackupsAsync(7);
+            LoadBackups();
+            Snackbar.Add("旧备份清理完成", Severity.Success);
+        }
+        catch (Exception ex)
+        {
+            Snackbar.Add($"清理失败: {ex.Message}", Severity.Error);
+        }
+    }
+
+    private class BackupInfo
+    {
+        public string Name { get; set; } = "";
+        public string Path { get; set; } = "";
+        public string Size { get; set; } = "";
     }
 
     private async void SetLanguage(Language language)
@@ -173,6 +403,20 @@
         }
     }
 
+    private void SaveSubtitleSettings()
+    {
+        try
+        {
+            var config = new Dictionary<string, object> { ["Subtitle:ApiKey"] = _subtitleApiKey };
+            SaveAppSettings(config);
+            Snackbar.Add("字幕下载 API 配置已保存", Severity.Success);
+        }
+        catch (Exception ex)
+        {
+            Snackbar.Add($"保存失败: {ex.Message}", Severity.Error);
+        }
+    }
+
     private void SaveAiSettings()
     {
         try
@@ -206,6 +450,235 @@
         if (dialog.ShowDialog() == true) _playerPath = dialog.FileName;
     }
 
+    private void TestShareConnection(ShareItem share)
+    {
+        try
+        {
+            if (string.IsNullOrWhiteSpace(share.Path))
+            {
+                Snackbar.Add("请先输入共享路径", Severity.Warning);
+                return;
+            }
+            
+            share.IsOnline = Directory.Exists(share.Path);
+            if (share.IsOnline)
+            {
+                Snackbar.Add($"路径 \"{share.Path}\" 连接成功", Severity.Success);
+            }
+            else
+            {
+                Snackbar.Add($"路径 \"{share.Path}\" 无法访问", Severity.Error);
+            }
+            StateHasChanged();
+        }
+        catch (Exception ex)
+        {
+            Snackbar.Add($"测试连接失败: {ex.Message}", Severity.Error);
+        }
+    }
+
+    private void TestAllConnections()
+    {
+        int successCount = 0;
+        int failCount = 0;
+        
+        foreach (var share in _shares)
+        {
+            if (!string.IsNullOrWhiteSpace(share.Path))
+            {
+                share.IsOnline = Directory.Exists(share.Path);
+                if (share.IsOnline)
+                    successCount++;
+                else
+                    failCount++;
+            }
+        }
+        
+        StateHasChanged();
+        
+        if (failCount == 0)
+        {
+            Snackbar.Add($"所有 {successCount} 个共享路径连接成功", Severity.Success);
+        }
+        else if (successCount == 0)
+        {
+            Snackbar.Add($"所有 {failCount} 个共享路径连接失败", Severity.Error);
+        }
+        else
+        {
+            Snackbar.Add($"{successCount} 个成功，{failCount} 个失败", Severity.Warning);
+        }
+    }
+
     public class ShareItem { public string Path { get; set; } = ""; public bool IsOnline { get; set; } }
     public class ShareConfig { public List<string> Shares { get; set; } = new(); }
+
+    private async void ExportToJson()
+    {
+        try
+        {
+            _exporting = true;
+            _exportProgress = "正在获取电影数据...";
+            _exportMessage = "";
+            StateHasChanged();
+
+            var movies = await MovieRepo.GetAllAsync();
+            _exportProgress = "正在生成 JSON 文件...";
+            StateHasChanged();
+
+            var json = await ExportService.ExportToJsonAsync(movies);
+            
+            var saveDialog = new Microsoft.Win32.SaveFileDialog
+            {
+                Filter = "JSON 文件|*.json|所有文件|*.*",
+                FileName = $"movie-library-{DateTime.Now:yyyyMMdd}.json"
+            };
+
+            if (saveDialog.ShowDialog() == true)
+            {
+                await File.WriteAllTextAsync(saveDialog.FileName, json);
+                _exportSuccess = true;
+                _exportMessage = $"成功导出 {movies.Count} 部电影到 {saveDialog.FileName}";
+            }
+            else
+            {
+                _exportSuccess = false;
+                _exportMessage = "导出已取消";
+            }
+        }
+        catch (Exception ex)
+        {
+            _exportSuccess = false;
+            _exportMessage = $"导出失败: {ex.Message}";
+        }
+        finally
+        {
+            _exporting = false;
+            _exportProgress = "";
+            StateHasChanged();
+        }
+    }
+
+    private async void ExportToCsv()
+    {
+        try
+        {
+            _exporting = true;
+            _exportProgress = "正在获取电影数据...";
+            _exportMessage = "";
+            StateHasChanged();
+
+            var movies = await MovieRepo.GetAllAsync();
+            _exportProgress = "正在生成 CSV 文件...";
+            StateHasChanged();
+
+            var csv = await ExportService.ExportToCsvAsync(movies);
+            
+            var saveDialog = new Microsoft.Win32.SaveFileDialog
+            {
+                Filter = "CSV 文件|*.csv|所有文件|*.*",
+                FileName = $"movie-library-{DateTime.Now:yyyyMMdd}.csv"
+            };
+
+            if (saveDialog.ShowDialog() == true)
+            {
+                await File.WriteAllTextAsync(saveDialog.FileName, csv);
+                _exportSuccess = true;
+                _exportMessage = $"成功导出 {movies.Count} 部电影到 {saveDialog.FileName}";
+            }
+            else
+            {
+                _exportSuccess = false;
+                _exportMessage = "导出已取消";
+            }
+        }
+        catch (Exception ex)
+        {
+            _exportSuccess = false;
+            _exportMessage = $"导出失败: {ex.Message}";
+        }
+        finally
+        {
+            _exporting = false;
+            _exportProgress = "";
+            StateHasChanged();
+        }
+    }
+
+    private async void ImportFromFile()
+    {
+        var openDialog = new Microsoft.Win32.OpenFileDialog
+        {
+            Filter = "JSON 文件|*.json|CSV 文件|*.csv|所有文件|*.*"
+        };
+
+        if (openDialog.ShowDialog() != true)
+            return;
+
+        try
+        {
+            _exporting = true;
+            _exportProgress = "正在读取文件...";
+            _exportMessage = "";
+            StateHasChanged();
+
+            var fileInfo = new FileInfo(openDialog.FileName);
+            List<MovieAgent.Core.Entities.Movie> movies;
+
+            if (fileInfo.Extension.Equals(".json", StringComparison.OrdinalIgnoreCase))
+            {
+                var json = await File.ReadAllTextAsync(openDialog.FileName);
+                movies = await ExportService.ImportFromJsonAsync(json);
+            }
+            else if (fileInfo.Extension.Equals(".csv", StringComparison.OrdinalIgnoreCase))
+            {
+                var csv = await File.ReadAllTextAsync(openDialog.FileName);
+                movies = await ExportService.ImportFromCsvAsync(csv);
+            }
+            else
+            {
+                _exportSuccess = false;
+                _exportMessage = "不支持的文件格式";
+                _exporting = false;
+                StateHasChanged();
+                return;
+            }
+
+            _exportProgress = "正在导入数据...";
+            StateHasChanged();
+
+            int imported = 0;
+            int skipped = 0;
+
+            foreach (var movie in movies)
+            {
+                var existing = await MovieRepo.GetByIdAsync(movie.Id);
+                if (existing == null)
+                {
+                    await MovieRepo.AddAsync(movie);
+                    imported++;
+                }
+                else
+                {
+                    skipped++;
+                }
+            }
+
+            _exportSuccess = true;
+            _exportMessage = $"导入完成: 成功 {imported} 部，跳过 {skipped} 部（已存在）";
+            Snackbar.Add(_exportMessage, Severity.Success);
+        }
+        catch (Exception ex)
+        {
+            _exportSuccess = false;
+            _exportMessage = $"导入失败: {ex.Message}";
+            Snackbar.Add(_exportMessage, Severity.Error);
+        }
+        finally
+        {
+            _exporting = false;
+            _exportProgress = "";
+            StateHasChanged();
+        }
+    }
 }

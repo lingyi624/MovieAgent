@@ -1,5 +1,7 @@
 <Solution>
   <Project Path="MovieAgent.Core/MovieAgent.Core.csproj" />
+  <Project Path="MovieAgent.FFmpegDecoder/MovieAgent.FFmpegDecoder.csproj" />
   <Project Path="MovieAgent.Infrastructure/MovieAgent.Infrastructure.csproj" />
+  <Project Path="MovieAgent.Tests/MovieAgent.Tests.csproj" />
   <Project Path="MovieAgent/MovieAgent.csproj" />
 </Solution>

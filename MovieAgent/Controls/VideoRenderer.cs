@@ -13,7 +13,8 @@ namespace MovieAgent.Controls;
 public class VideoRenderer : System.Windows.Controls.Image
 {
     private static readonly ILoggerService _logger = new LoggerService();
-    
+ 
+
     private WriteableBitmap? _writeableBitmap;
     private int _lastWidth;
     private int _lastHeight;
@@ -21,8 +22,7 @@ public class VideoRenderer : System.Windows.Controls.Image
     private byte[]? _pendingFrame;
     private int _pendingWidth;
     private int _pendingHeight;
-    private Timer? _renderTimer;
-    private bool _isRendering;
+     private bool _isRendering;
     
     private string? _currentSubtitle;
     private readonly object _subtitleLock = new();
@@ -41,15 +41,14 @@ public class VideoRenderer : System.Windows.Controls.Image
     private void OnLoaded(object sender, RoutedEventArgs e)
     {
         _logger.Debug("[VideoRenderer] 控件已加载");
-        _renderTimer = new Timer(RenderPendingFrame, null, 33, 33);
+       
     }
 
     private void OnUnloaded(object sender, RoutedEventArgs e)
     {
-        _renderTimer?.Dispose();
-        _renderTimer = null;
+       
     }
-
+     
     public void UpdateFrame(byte[] frameData, int width, int height)
     {
         if (frameData == null || frameData.Length == 0 || width <= 0 || height <= 0)
@@ -61,6 +60,8 @@ public class VideoRenderer : System.Windows.Controls.Image
             Buffer.BlockCopy(frameData, 0, _pendingFrame, 0, frameData.Length);
             _pendingWidth = width;
             _pendingHeight = height;
+
+            RenderPendingFrame(null);
         }
     }
 

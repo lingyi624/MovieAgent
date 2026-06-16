@@ -41,6 +41,8 @@ public class TmdbService : ITmdbService
             var genres = movie.Genres.Select(g => g.Name).ToList();
             var director = movie.Credits?.Crew?.FirstOrDefault(c => c.Job == "Director")?.Name;
             var cast = movie.Credits?.Cast?.Take(5).Select(c => c.Name).ToList();
+            var countries = movie.ProductionCountries?.Select(p => p.Name).ToList() ?? new List<string>();
+            var languages = movie.SpokenLanguages?.Select(l => l.Name).ToList() ?? new List<string>();
 
             return new TmdbSearchResult
             {
@@ -55,7 +57,9 @@ public class TmdbService : ITmdbService
                 Genres = genres,
                 Runtime = movie.Runtime,
                 Director = director,
-                Cast = cast != null ? string.Join(", ", cast) : null
+                Cast = cast != null ? string.Join(", ", cast) : null,
+                Countries = countries,
+                Languages = languages
             };
         }
         catch
@@ -85,6 +89,8 @@ public class TmdbService : ITmdbService
             movie.Genres = JsonSerializer.Serialize(result.Genres);
             movie.Director = result.Director;
             movie.Cast = result.Cast;
+            movie.Country = result.Countries != null && result.Countries.Any() ? string.Join(", ", result.Countries) : null;
+            movie.Language = result.Languages != null && result.Languages.Any() ? string.Join(", ", result.Languages) : null;
             movie.UpdatedAt = DateTime.UtcNow;
 
             return movie;

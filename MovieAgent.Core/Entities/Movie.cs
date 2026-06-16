@@ -105,4 +105,12 @@ public class Movie
     /// <summary>HDR类型：HDR10 / DolbyVision / SDR</summary>
     [MaxLength(50)]
     public string? HdrType { get; set; }
+
+    /// <summary>制片国家/地区（逗号分隔）</summary>
+    [MaxLength(200)]
+    public string? Country { get; set; }
+
+    /// <summary>影片语言（逗号分隔）</summary>
+    [MaxLength(200)]
+    public string? Language { get; set; }
 }

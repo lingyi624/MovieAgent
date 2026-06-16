@@ -59,6 +59,22 @@ body {
     color: white !important;
 }
 
-.mud-tabs .mud-tab.mud-tab-active {
+.mud-tabs .mud-tab-active {
     color: #E94560 !important;
+}
+
+.nav-link-btn {
+    display: flex;
+    align-items: center;
+    width: 100%;
+    padding: 12px 16px;
+    text-align: left;
+    color: #E0E0E0;
+    border-radius: 0;
+    justify-content: flex-start;
+}
+
+.nav-link-btn:hover {
+    background: rgba(233, 69, 96, 0.2);
+    color: #E94560;
 }

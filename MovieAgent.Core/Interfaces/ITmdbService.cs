@@ -80,4 +80,10 @@ public class TmdbSearchResult
 
     /// <summary>主演列表</summary>
     public string? Cast { get; set; }
+
+    /// <summary>制片国家/地区列表</summary>
+    public List<string> Countries { get; set; } = new();
+
+    /// <summary>语言列表</summary>
+    public List<string> Languages { get; set; } = new();
 }

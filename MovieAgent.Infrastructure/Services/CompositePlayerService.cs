@@ -18,11 +18,11 @@ public class CompositePlayerService : IPlayerService
     public TimeSpan Duration => TimeSpan.Zero;
     public TimeSpan Position => TimeSpan.Zero;
     public float Volume => 0;
-
-    public int AudioTrackCount => 0;
-    public int CurrentAudioTrack => -1;
-    public int SpuTrackCount => 0;
-    public int CurrentSpuTrack => -1;
+    public TimeSpan VideoTimestamp { get; private set; }
+    public TimeSpan AudioTimestamp { get; private set; }
+    public long AudioPlayPosition { get; private set; } = 0;
+    public int VideoWidth => 0;
+    public int VideoHeight => 0;
 
     public event EventHandler<byte[]>? FrameUpdated
     {
@@ -30,10 +30,35 @@ public class CompositePlayerService : IPlayerService
         remove { }
     }
 
+    public event EventHandler? PlaybackEnded
+    {
+        add { }
+        remove { }
+    }
+
+    public event EventHandler? PlaybackRequestedByBlazor
+    {
+        add { }
+        remove { }
+    }
+
+    public int AudioTrackCount => 0;
+    public int CurrentAudioTrack => -1;
+    public int SpuTrackCount => 0;
+    public int CurrentSpuTrack => -1;
+
     public CompositePlayerService(string externalPlayerPath)
     {
         _externalPlayerPath = externalPlayerPath;
     }
+
+    public void RequestPlayback(string filePath)
+    {
+        // CompositePlayerService 直接调用 PlayAsync 即可
+        // RequestPlayback 在 ProcessIsolatedPlayerService 中才有意义
+    }
+
+    public string? GetCurrentRequestedFilePath() => null;
 
     public async Task PlayAsync(string filePath)
     {
@@ -168,7 +193,7 @@ public class CompositePlayerService : IPlayerService
         await Task.CompletedTask;
     }
 
-    public void Stop()
+    public async Task StopAsync()
     {
         try
         {
@@ -182,6 +207,7 @@ public class CompositePlayerService : IPlayerService
             Debug.WriteLine($"[CompositePlayer] Stop failed: {ex.Message}");
         }
         _isPlaying = false;
+        await Task.CompletedTask;
     }
 
     public void Pause()

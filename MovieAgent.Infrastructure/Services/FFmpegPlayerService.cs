@@ -123,7 +123,9 @@ public class FFmpegPlayerService : IPlayerService, IDisposable
     public TimeSpan Duration => TimeSpan.FromMilliseconds(_durationMs);
     public TimeSpan Position => TimeSpan.FromMilliseconds(_currentTimeMs);
     public float Volume => _volume;
-
+    public TimeSpan VideoTimestamp { get; private set; }
+    public TimeSpan AudioTimestamp { get; private set; }
+    public long AudioPlayPosition { get; private set; } = 0;
     public int AudioTrackCount => _audioStreams.Count;
     public int CurrentAudioTrack { get; private set; } = -1;
     public int SpuTrackCount => _subtitleStreams.Count;
@@ -146,6 +148,19 @@ public class FFmpegPlayerService : IPlayerService, IDisposable
 
     public event EventHandler<byte[]>? FrameUpdated;
     public event EventHandler? PlaybackEnded;
+
+    public event EventHandler? PlaybackRequestedByBlazor
+    {
+        add { }
+        remove { }
+    }
+
+    public void RequestPlayback(string filePath)
+    {
+        // FFmpegPlayerService 直接调用 PlayAsync 即可
+    }
+
+    public string? GetCurrentRequestedFilePath() => null;
 
     private void InitializeFFmpeg()
     {
@@ -625,6 +640,9 @@ public class FFmpegPlayerService : IPlayerService, IDisposable
             if (!success)
                 throw new InvalidOperationException("Failed to open video file");
 
+            // 自动搜索并加载本地字幕文件
+            await Task.Run(() => AutoLoadLocalSubtitle(filePath));
+
             _playCts = new CancellationTokenSource();
             _isPlaying = true;
             _isPaused = false;
@@ -668,18 +686,18 @@ public class FFmpegPlayerService : IPlayerService, IDisposable
         _currentTimeMs = 0;
     }
 
-    public async void Stop()
-    {
-        await _playLock.WaitAsync();
-        try
+    public async Task StopAsync()
         {
-            await StopInternalAsync();
+            await _playLock.WaitAsync();
+            try
+            {
+                await StopInternalAsync();
+            }
+            finally
+            {
+                _playLock.Release();
+            }
         }
-        finally
-        {
-            _playLock.Release();
-        }
-    }
 
     private async Task DecodeLoopUnsafeAsync(CancellationToken ct)
     {
@@ -1544,6 +1562,92 @@ public class FFmpegPlayerService : IPlayerService, IDisposable
     }
 
     /// <summary>
+    /// 自动搜索并加载本地字幕文件
+    /// 搜索视频文件所在目录下的字幕文件，优先匹配同名字幕
+    /// </summary>
+    /// <param name="videoFilePath">视频文件路径</param>
+    private void AutoLoadLocalSubtitle(string videoFilePath)
+    {
+        try
+        {
+            var directory = Path.GetDirectoryName(videoFilePath);
+            if (string.IsNullOrEmpty(directory))
+            {
+                _logger.Debug("[FFmpeg] Cannot get directory from video path");
+                return;
+            }
+
+            var videoFileName = Path.GetFileNameWithoutExtension(videoFilePath);
+            var subtitleExtensions = new[] { ".srt", ".ass", ".ssa", ".sub", ".txt" };
+            
+            _logger.Debug($"[FFmpeg] Searching for subtitles in: {directory}");
+            _logger.Debug($"[FFmpeg] Video file name: {videoFileName}");
+
+            // 优先查找同名字幕文件
+            foreach (var ext in subtitleExtensions)
+            {
+                var subtitlePath = Path.Combine(directory, videoFileName + ext);
+                if (File.Exists(subtitlePath))
+                {
+                    _logger.Debug($"[FFmpeg] Found matching subtitle: {subtitlePath}");
+                    if (LoadExternalSubtitle(subtitlePath))
+                    {
+                        _logger.Debug($"[FFmpeg] Successfully loaded local subtitle");
+                        return;
+                    }
+                }
+            }
+
+            // 如果没有找到同名字幕，查找目录中任何字幕文件
+            foreach (var ext in subtitleExtensions)
+            {
+                var subtitleFiles = Directory.GetFiles(directory, "*" + ext, SearchOption.TopDirectoryOnly);
+                if (subtitleFiles.Any())
+                {
+                    // 优先选择文件名中包含中文或匹配视频名称的字幕
+                    var matchedFile = subtitleFiles.FirstOrDefault(f => 
+                        Path.GetFileNameWithoutExtension(f).Contains(videoFileName, StringComparison.OrdinalIgnoreCase) ||
+                        ContainsChinese(Path.GetFileName(f)));
+                    
+                    if (matchedFile == null)
+                    {
+                        matchedFile = subtitleFiles.First();
+                    }
+                    
+                    _logger.Debug($"[FFmpeg] Found subtitle file: {matchedFile}");
+                    if (LoadExternalSubtitle(matchedFile))
+                    {
+                        _logger.Debug($"[FFmpeg] Successfully loaded local subtitle");
+                        return;
+                    }
+                }
+            }
+
+            _logger.Debug("[FFmpeg] No local subtitle files found");
+        }
+        catch (Exception ex)
+        {
+            _logger.Debug($"[FFmpeg] Error searching for local subtitles: {ex.Message}");
+        }
+    }
+
+    /// <summary>
+    /// 检查字符串是否包含中文字符
+    /// </summary>
+    private bool ContainsChinese(string text)
+    {
+        if (string.IsNullOrEmpty(text))
+            return false;
+        
+        foreach (char c in text)
+        {
+            if (c >= '\u4e00' && c <= '\u9fff')
+                return true;
+        }
+        return false;
+    }
+
+    /// <summary>
     /// 检测字幕文件编码
     /// </summary>
     private string DetectSubtitleEncoding(string filePath)
@@ -1738,18 +1842,5 @@ public class FFmpegPlayerService : IPlayerService, IDisposable
     {
         _ = StopAsync();
         _isInitialized = false;
-    }
-
-    private async Task StopAsync()
-    {
-        await _playLock.WaitAsync();
-        try
-        {
-            await StopInternalAsync();
-        }
-        finally
-        {
-            _playLock.Release();
-        }
     }
 }

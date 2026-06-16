@@ -2,17 +2,20 @@
 @inject IMovieRepository MovieRepo
 @inject ITagService TagService
 @inject NavigationManager NavigationManager
-@inject IJSRuntime JSRuntime
+@inject MovieAgent.Core.Interfaces.ITmdbService TmdbService
+@inject ILoggerService Logger
 
 <PageTitle>电影库</PageTitle>
 
-<MudText Typo="Typo.h4" GutterBottom Style="color: #E94560;">电影库</MudText>
+<MudStack Row="true" Justify="Justify.SpaceBetween" AlignItems="AlignItems.Center" Style="margin-bottom: 16px;">
+    <MudText Typo="Typo.h4" Style="color: #E94560;">电影库</MudText>
+</MudStack>
 
-@if (!string.IsNullOrEmpty(_activeTag))
+ @if (!string.IsNullOrEmpty(_activeTag))
 {
-    <MudAlert Severity="Severity.Info" Style="margin-bottom: 16px;" 
+    <MudAlert Severity="Severity.Info" Style="margin-bottom: 12px;" 
               ShowCloseIcon="true" CloseIconClicked="ClearTagFilter">
-        <MudText>当前筛选标签: <strong style="color: #E94560;">@_activeTag</strong> (共 @_totalCount 部电影)</MudText>
+        <MudText>当前筛选标签: <strong style="color: #E94560;">@_activeTag</strong></MudText>
     </MudAlert>
 }
 
@@ -20,10 +23,10 @@
     <MudItem xs="12" sm="6" md="4">
         <MudTextField @bind-Value="_searchTerm" @bind-Value:after="OnSearchChanged" Label="搜索" Variant="Variant.Outlined" Immediate="true"
                       Adornment="Adornment.End" AdornmentIcon="@Icons.Material.Filled.Search"
-                      DebounceInterval="300" />
+                      DebounceInterval="300" Style="margin-bottom: 12px;" />
     </MudItem>
     <MudItem xs="6" sm="3" md="2">
-        <MudSelect @bind-Value="_sortBy" Label="排序" Variant="Variant.Outlined" T="string">
+        <MudSelect @bind-Value="_sortBy" Label="排序" Variant="Variant.Outlined" T="string" Margin="Margin.Dense">
             <MudSelectItem T="string" Value="@("created")">添加时间</MudSelectItem>
             <MudSelectItem T="string" Value="@("title")">标题</MudSelectItem>
             <MudSelectItem T="string" Value="@("year")">年份</MudSelectItem>
@@ -33,45 +36,183 @@
     <MudItem xs="6" sm="3" md="2">
         <MudSwitch @bind-Value="_sortDesc" Label="降序" Color="Color.Primary" />
     </MudItem>
-</MudGrid>
+</MudGrid> 
 
-<div @ref="_scrollContainer" id="movie-list-container" style="height: calc(100vh - 250px); overflow-y: auto;" @onscroll="OnScroll">
-    <MudTable Items="_movies" Hover="true" Striped="true" Elevation="2" Style="background: #2D2D44;">
+@if (_availableTags.Any())
+{
+    <div style="margin-bottom: 12px;">
+        <MudText Typo="Typo.body2" Style="color: #888; margin-bottom: 8px;">标签筛选:</MudText>
+        <MudStack Row="true" Wrap="Wrap.Wrap" Spacing="2">
+            @foreach (var tag in _availableTags)
+            {
+                <MudChip T="string" Size="Size.Small" 
+                         Color="@(_selectedTags.Contains(tag) ? Color.Primary : Color.Default)"
+                         OnClick="() => ToggleTag(tag)"
+                         Style="@(_selectedTags.Contains(tag) ? "background: #E94560;" : "")">
+                    @tag
+                </MudChip>
+            }
+            @if (_selectedTags.Any())
+            {
+                <MudButton Size="Size.Small" Variant="Variant.Outlined" Color="Color.Secondary" OnClick="ClearTags">
+                    清除标签筛选
+                </MudButton>
+            }
+        </MudStack>
+    </div>
+}
+
+<!-- 筛选面板 -->
+<MudPaper Style="background: #1A1A2E; padding: 10px 12px; border-radius: 8px; margin-bottom: 16px;">
+    <MudStack Row="true" Justify="Justify.SpaceBetween" AlignItems="AlignItems.Center" Style="margin-bottom: 8px;">
+        <MudStack Row="true" Spacing="1" AlignItems="AlignItems.Center">
+            <MudText Typo="Typo.body2" Style="color: #888; margin-right: 8px;">类型:</MudText>
+            <MudChip T="string" Color="@(_selectedGenres.Count == 0 ? Color.Primary : Color.Default)" Size="Size.Small" OnClick="async () => await ClearGenres()" Class="filter-chip-sm">全部</MudChip>
+            @foreach (var genre in _allGenres.Take(6))
+            {
+                <MudChip T="string" Color="@(_selectedGenres.Contains(genre) ? Color.Primary : Color.Default)" Size="Size.Small" OnClick="async () => await ToggleGenre(genre)" Class="filter-chip-sm">@genre</MudChip>
+            }
+            @if (_allGenres.Count > 6)
+            {
+                <MudMenu Icon="@Icons.Material.Filled.MoreHoriz" Size="Size.Small" Color="Color.Default">
+                    @foreach (var genre in _allGenres.Skip(6))
+                    {
+                        <MudMenuItem OnClick="async () => await ToggleGenre(genre)">@genre</MudMenuItem>
+                    }
+                </MudMenu>
+            }
+        </MudStack>
+        <MudButton Variant="Variant.Text" Color="Color.Default" Size="Size.Small" OnClick="async () => await ResetFilters()" StartIcon="@Icons.Material.Filled.Refresh">重置</MudButton>
+    </MudStack>
+
+    <MudStack Row="true" Spacing="4" AlignItems="AlignItems.Center" Style="margin-bottom: 8px;">
+        <MudStack Row="true" Spacing="1" AlignItems="AlignItems.Center">
+            <MudText Typo="Typo.body2" Style="color: #888; width: 48px;">分辨率</MudText>
+            <MudChip T="string" Color="@(string.IsNullOrEmpty(_selectedResolution) ? Color.Primary : Color.Default)" Size="Size.Small" OnClick="async () => await ClearResolution()" Class="filter-chip-sm">全部</MudChip>
+            @foreach (var resolution in _allResolutions)
+            {
+                <MudChip T="string" Color="@(_selectedResolution == resolution ? Color.Primary : Color.Default)" Size="Size.Small" OnClick="async () => await SelectResolution(resolution)" Class="filter-chip-sm">@resolution</MudChip>
+            }
+        </MudStack>
+        
+        <MudDivider Vertical="true" Style="background: #444; height: 24px;" />
+        
+        <MudStack Row="true" Spacing="1" AlignItems="AlignItems.Center">
+            <MudText Typo="Typo.body2" Style="color: #888; width: 32px;">观看</MudText>
+            <MudChip T="string" Color="@(_selectedWatched == null ? Color.Primary : Color.Default)" Size="Size.Small" OnClick="async () => await ClearWatched()" Class="filter-chip-sm">全部</MudChip>
+            <MudChip T="string" Color="@(_selectedWatched == true ? Color.Primary : Color.Default)" Size="Size.Small" OnClick="async () => await SelectWatched(true)" Class="filter-chip-sm">已看</MudChip>
+            <MudChip T="string" Color="@(_selectedWatched == false ? Color.Primary : Color.Default)" Size="Size.Small" OnClick="async () => await SelectWatched(false)" Class="filter-chip-sm">未看</MudChip>
+        </MudStack>
+        
+        <MudDivider Vertical="true" Style="background: #444; height: 24px;" />
+        
+        <MudStack Row="true" Spacing="1" AlignItems="AlignItems.Center">
+            <MudText Typo="Typo.body2" Style="color: #888; width: 32px;">收藏</MudText>
+            <MudChip T="string" Color="@(_selectedFavorite == null ? Color.Primary : Color.Default)" Size="Size.Small" OnClick="async () => await ClearFavorite()" Class="filter-chip-sm">全部</MudChip>
+            <MudChip T="string" Color="@(_selectedFavorite == true ? Color.Primary : Color.Default)" Size="Size.Small" OnClick="async () => await SelectFavorite(true)" Class="filter-chip-sm">已收藏</MudChip>
+            <MudChip T="string" Color="@(_selectedFavorite == false ? Color.Primary : Color.Default)" Size="Size.Small" OnClick="async () => await SelectFavorite(false)" Class="filter-chip-sm">未收藏</MudChip>
+        </MudStack>
+        
+        <MudDivider Vertical="true" Style="background: #444; height: 24px;" />
+        
+        <MudStack Row="true" Spacing="1" AlignItems="AlignItems.Center">
+            <MudText Typo="Typo.body2" Style="color: #888; width: 32px;">年份</MudText>
+            <MudTextField @bind-Value="_minYear" @bind-Value:after="ApplyFilters" Variant="Variant.Outlined" Margin="Margin.Dense" Style="width: 65px; font-size: 13px;" Placeholder="起始" />
+            <MudText Style="color: #888;">-</MudText>
+            <MudTextField @bind-Value="_maxYear" @bind-Value:after="ApplyFilters" Variant="Variant.Outlined" Margin="Margin.Dense" Style="width: 65px; font-size: 13px;" Placeholder="结束" />
+        </MudStack>
+        
+        <MudDivider Vertical="true" Style="background: #444; height: 24px;" />
+        
+        <MudStack Row="true" Spacing="2" AlignItems="AlignItems.Center">
+            <MudText Typo="Typo.body2" Style="color: #888; width: 32px;">评分</MudText>
+            <MudSlider @bind-Value="_minRating" @bind-Value:after="ApplyFilters" Min="0" Max="10" Step="0.5" Style="width: 80px;" />
+            <MudText Typo="Typo.body2" Style="color: #E0E0E0; font-size: 12px;">@_minRating.ToString("0.0")</MudText>
+            <MudText Style="color: #888;">-</MudText>
+            <MudSlider @bind-Value="_maxRating" @bind-Value:after="ApplyFilters" Min="0" Max="10" Step="0.5" Style="width: 80px;" />
+            <MudText Typo="Typo.body2" Style="color: #E0E0E0; font-size: 12px;">@_maxRating.ToString("0.0")</MudText>
+        </MudStack>
+    </MudStack>
+
+    <MudStack Row="true" Spacing="4" AlignItems="AlignItems.Center" Style="margin-bottom: 4px;">
+        <MudStack Row="true" Spacing="1" AlignItems="AlignItems.Center" Style="flex: 1;">
+            <MudText Typo="Typo.body2" Style="color: #888; width: 32px;">地区</MudText>
+            <MudChip T="string" Color="@(_selectedCountries.Count == 0 ? Color.Primary : Color.Default)" Size="Size.Small" OnClick="ClearCountries" Class="filter-chip-sm">全部</MudChip>
+            @foreach (var country in _allCountries)
+            {
+                <MudChip T="string" Color="@(_selectedCountries.Contains(country) ? Color.Primary : Color.Default)" Size="Size.Small" OnClick="async () => await ToggleCountry(country)" Class="filter-chip-sm">@country</MudChip>
+            }
+        </MudStack>
+    </MudStack>
+
+    <MudStack Row="true" Spacing="1" AlignItems="AlignItems.Center">
+        <MudText Typo="Typo.body2" Style="color: #888; width: 50px;">语言</MudText>
+        <MudChip T="string" Color="@(_selectedLanguages.Count == 0 ? Color.Primary : Color.Default)" Size="Size.Small" OnClick="ClearLanguages" Class="filter-chip-sm">全部</MudChip>
+        @foreach (var language in _allLanguages)
+        {
+            <MudChip T="string" Color="@(_selectedLanguages.Contains(language) ? Color.Primary : Color.Default)" Size="Size.Small" OnClick="async () => await ToggleLanguage(language)" Class="filter-chip-sm">@language</MudChip>
+        }
+    </MudStack>
+</MudPaper>
+
+<MudText Style="color: gray; margin-bottom: 16px;">共 @_totalCount 部电影</MudText>
+
+@if (_loading)
+{
+    <div style="text-align: center; padding: 40px;">
+        <MudProgressCircular Color="Color.Primary" Indeterminate="true" Size="Size.Medium" />
+        <MudText Typo="Typo.body2" Style="color: #888; margin-left: 8px;">加载中...</MudText>
+    </div>
+}
+else
+{
+    
+    <MudTable Items="_movies" Hover="true" Style="background: #1A1A2E;">
         <HeaderContent>
-            <MudTh Style="color: #E94560; font-weight: bold;">海报</MudTh>
-            <MudTh Style="color: #E94560; font-weight: bold;">标题</MudTh>
-            <MudTh Style="color: #E94560; font-weight: bold;">年份</MudTh>
-            <MudTh Style="color: #E94560; font-weight: bold;">分辨率</MudTh>
-            <MudTh Style="color: #E94560; font-weight: bold;">评分</MudTh>
-            <MudTh Style="color: #E94560; font-weight: bold;">状态</MudTh>
-            <MudTh Style="color: #E94560; font-weight: bold;">操作</MudTh>
+            <MudTh>海报</MudTh>
+            <MudTh>标题</MudTh>
+            <MudTh>年份</MudTh>
+            <MudTh>评分</MudTh>
+            <MudTh>类型</MudTh>
+            <MudTh>分辨率</MudTh>
+            <MudTh>状态</MudTh>
+            <MudTh>操作</MudTh>
         </HeaderContent>
         <RowTemplate>
             <MudTd>
-                <MudImage Src="@GetPosterUrl(context)" Height="60" Width="40" ObjectFit="ObjectFit.Cover" />
+                <img src="@GetPosterUrl(context)" style="width: 60px; height: 90px; object-fit: cover; border-radius: 4px;" />
             </MudTd>
-            <MudTd>
-                <MudText Style="font-weight: bold; color: #E0E0E0;">@context.Title</MudText>
-                @if (!string.IsNullOrEmpty(context.OriginalTitle) && context.OriginalTitle != context.Title)
+            <MudTd Style="white-space: nowrap;">
+                <MudText Typo="Typo.body1" Style="font-weight: bold; color: #E0E0E0;">@context.Title</MudText>
+                @if (!string.IsNullOrEmpty(context.OriginalTitle))
                 {
-                    <MudText Typo="Typo.caption" Style="color: #888888;">@context.OriginalTitle</MudText>
+                    <MudText Typo="Typo.caption" Style="color: #888;">@context.OriginalTitle</MudText>
                 }
             </MudTd>
-            <MudTd Style="color: #CCCCCC;">@(context.ReleaseYear?.ToString() ?? "-")</MudTd>
+            <MudTd>@context.ReleaseYear</MudTd>
             <MudTd>
-                @if (!string.IsNullOrEmpty(context.Resolution))
-                {
-                    <MudChip T="string" Size="Size.Small" Color="Color.Primary">@context.Resolution</MudChip>
-                }
-            </MudTd>
-            <MudTd Style="color: #E0E0E0;">
                 @if (context.Rating.HasValue)
                 {
                     <MudIcon Icon="@Icons.Material.Filled.Star" Size="Size.Small" Style="color: #FFD700;" />
-                    @context.Rating.Value.ToString("0.0")
+                    <MudText>@context.Rating.Value.ToString("0.0")</MudText>
+                }
+                else
+                {
+                    <MudText Style="color: #888;">-</MudText>
                 }
             </MudTd>
-            <MudTd Style="color: #E0E0E0;">
+            <MudTd>
+                <div style="display: flex; flex-wrap: wrap; gap: 4px;">
+                    @foreach (var genre in ParseGenres(context.Genres).Take(2))
+                    {
+                        <MudChip T="string" Size="Size.Small" Color="Color.Info" Style="background: rgba(99, 102, 241, 0.3); border-color: rgba(99, 102, 241, 0.5); color: #A5B4FC; font-size: 10px;">
+                            @genre
+                        </MudChip>
+                    }
+                </div>
+            </MudTd>
+            <MudTd>@context.Resolution</MudTd>
+            <MudTd>
                 @if (context.IsWatched)
                 {
                     <MudChip T="string" Size="Size.Small" Color="Color.Success">已看</MudChip>
@@ -82,28 +223,61 @@
                 }
                 @if (context.IsFavorite)
                 {
-                    <MudChip T="string" Size="Size.Small" Color="Color.Info" Style="margin-left: 4px;">收藏</MudChip>
+                    <MudChip T="string" Size="Size.Small" Color="Color.Primary" Style="margin-left: 4px;">收藏</MudChip>
                 }
             </MudTd>
             <MudTd>
-                <MudIconButton Icon="@Icons.Material.Filled.PlayArrow" Size="Size.Small" Color="Color.Primary" OnClick="() => PlayMovie(context)" />
-                <MudIconButton Icon="@Icons.Material.Filled.Info" Size="Size.Small" Color="Color.Secondary" OnClick="() => GoToDetail(context)" />
+                <MudStack Row="true" Spacing="2">
+                    <MudIconButton Icon="@Icons.Material.Filled.PlayArrow" Color="Color.Primary" OnClick="() => PlayMovie(context)" Size="Size.Small" />
+                    <MudIconButton Icon="@Icons.Material.Filled.Info" Color="Color.Secondary" OnClick="() => GoToDetail(context.Id)" Size="Size.Small" />
+                    <MudIconButton Icon="@Icons.Material.Filled.Edit" Color="Color.Warning" OnClick="() => OpenEditDialog(context)" Size="Size.Small" />
+                </MudStack>
             </MudTd>
         </RowTemplate>
+        <PagerContent>
+            <MudTablePager PageSizeOptions="new int[] { 15, 30, 50 }" />
+        </PagerContent>
     </MudTable>
+  
+} 
 
-    <div style="padding: 16px; text-align: center;">
-        @if (_isLoading)
-        {
-            <MudProgressCircular Size="Size.Small" Indeterminate="true" Color="Color.Primary" />
-            <MudText Style="color: #888; margin-left: 8px;">加载中...</MudText>
-        }
-        else if (!_hasMore)
-        {
-            <MudText Style="color: #888;">- 已加载全部 @_movies.Count 部影片 -</MudText>
-        }
-    </div>
-</div>
+@if (!_loading && _movies.Count == 0)
+{
+    <MudAlert Severity="Severity.Info" Style="margin-top: 40px;">
+        暂无电影数据
+    </MudAlert>
+}
+
+<!-- 编辑标题对话框 -->
+<MudDialog @bind-Visible="_editDialogOpen">
+    <DialogContent>
+        <MudTextField @bind-Value="_editTitle" Label="电影标题" Variant="Variant.Outlined" Style="width: 100%;" />
+        <MudText Typo="Typo.body2" Style="color: gray; margin-top: 8px;">
+                    修改标题后将自动从TMDB获取海报和媒体信息
+                </MudText>
+    </DialogContent>
+    <DialogActions>
+        <MudButton OnClick="CloseEditDialog">取消</MudButton>
+        <MudButton Color="Color.Primary" OnClick="SaveTitle" Disabled="@_isSaving">
+            @if (_isSaving)
+            {
+                <MudProgressCircular Size="Size.Small" Indeterminate="true" />
+            }
+            else
+            {
+                <MudText>保存</MudText>
+            }
+        </MudButton>
+    </DialogActions>
+</MudDialog>
+
+<style>
+    .filter-chip-sm {
+        font-size: 12px !important;
+        height: 22px !important;
+        padding: 0 8px !important;
+    }
+</style>
 
 @code {
     private List<Movie> _movies = new();
@@ -111,14 +285,66 @@
     private string _sortBy = "created";
     private bool _sortDesc = true;
     private int _currentPage = 1;
-    private int _pageSize = 20;
-    private int _totalCount = 0;
-    private bool _isLoading = false;
-    private bool _hasMore = true;
-    private ElementReference _scrollContainer;
+    private const int PageSize = 15;
+    private int _totalCount;
     private string? _activeTag;
+    private List<string> _availableTags = new();
+    private List<string> _selectedTags = new();
+    private bool _loading = false;
 
-    protected override void OnInitialized()
+    // 编辑标题相关变量
+    private bool _editDialogOpen = false;
+    private string _editTitle = "";
+    private Movie? _editingMovie = null;
+    private bool _isSaving = false;
+
+    // 筛选相关变量
+    private List<string> _allGenres = new();
+    private List<string> _allResolutions = new();
+    private List<string> _allCountries = new();
+    private List<string> _allLanguages = new();
+    private List<string> _selectedGenres = new();
+    private string _selectedResolution = "";
+    private bool? _selectedWatched;
+    private bool? _selectedFavorite;
+    private string _minYear = "";
+    private string _maxYear = "";
+    private double _minRating = 0;
+    private double _maxRating = 10;
+    private List<string> _selectedCountries = new();
+    private List<string> _selectedLanguages = new();
+
+    protected override async Task OnInitializedAsync()
+    { 
+       ParseQueryParameters();
+       NavigationManager.LocationChanged += OnLocationChanged;
+
+        await LoadTags();
+        await LoadFilterOptions();
+        await LoadMovies();
+    }
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (firstRender)  // 只在第一次渲染完成后执行
+        {
+        }
+    }
+
+    public void Dispose()
+    {
+        NavigationManager.LocationChanged -= OnLocationChanged;
+    }
+
+    private async void OnLocationChanged(object? sender, Microsoft.AspNetCore.Components.Routing.LocationChangedEventArgs e)
+    {
+        ParseQueryParameters();
+        _currentPage = 1;
+        await LoadMovies();
+        StateHasChanged();
+    }
+
+    private void ParseQueryParameters()
     {
         var uri = new Uri(NavigationManager.Uri);
         var query = ParseQueryString(uri.Query);
@@ -126,9 +352,17 @@
         {
             _activeTag = tag;
         }
+        else
+        {
+            _activeTag = null;
+        }
         if (query.TryGetValue("search", out var search))
         {
             _searchTerm = search;
+        }
+        else
+        {
+            _searchTerm = "";
         }
     }
 
@@ -154,7 +388,43 @@
 
     protected override async Task OnParametersSetAsync()
     {
-        await LoadMovies(true);
+        await LoadMovies();
+        await LoadTags();
+    }
+
+    private async Task LoadTags()
+    {
+        var stats = await TagService.GetTagStatisticsAsync();
+        _availableTags = stats.Select(s => s.Tag).ToList();
+    }
+
+    private async Task LoadFilterOptions()
+    {
+        _allGenres = await MovieRepo.GetAllGenresAsync();
+        _allResolutions = await MovieRepo.GetAllResolutionsAsync();
+        _allCountries = await MovieRepo.GetAllCountriesAsync();
+        _allLanguages = await MovieRepo.GetAllLanguagesAsync();
+    }
+
+    private async Task ToggleTag(string tag)
+    {
+        if (_selectedTags.Contains(tag))
+        {
+            _selectedTags.Remove(tag);
+        }
+        else
+        {
+            _selectedTags.Add(tag);
+        }
+        _currentPage = 1;
+        await LoadMovies();
+    }
+
+    private async Task ClearTags()
+    {
+        _selectedTags.Clear();
+        _currentPage = 1;
+        await LoadMovies();
     }
 
     private async Task ClearTagFilter()
@@ -163,111 +433,56 @@
         NavigationManager.NavigateTo("/movies");
     }
 
-    private async Task LoadMovies(bool resetPage = false)
+    private async Task LoadMovies()
     {
-        if (resetPage)
-        {
-            _currentPage = 1;
-            _movies.Clear();
-            _hasMore = true;
-        }
-
-        _isLoading = true;
+        _loading = true;
         StateHasChanged();
 
         try
         {
-            List<Movie> movies;
-            
-            if (!string.IsNullOrEmpty(_activeTag))
-            {
-                // 标签筛选：使用 TagService 获取该标签下的所有电影 ID
-                var allMovies = await MovieRepo.GetAllAsync();
-                var taggedMovieIds = new List<int>();
-                foreach (var m in allMovies)
-                {
-                    var tags = await TagService.GetTagsAsync(m.Id);
-                    if (tags.Any(t => t.Equals(_activeTag, StringComparison.OrdinalIgnoreCase)))
-                    {
-                        taggedMovieIds.Add(m.Id);
-                    }
-                }
-                movies = allMovies.Where(m => taggedMovieIds.Contains(m.Id))
-                                  .Skip((_currentPage - 1) * _pageSize)
-                                  .Take(_pageSize)
-                                  .ToList();
-                _totalCount = taggedMovieIds.Count;
-            }
-            else
-            {
-                var filter = new MovieFilter
-                {
-                    SearchKeyword = _searchTerm,
-                    SortBy = _sortBy,
-                    SortDescending = _sortDesc,
-                    Page = _currentPage,
-                    PageSize = _pageSize
-                };
-                movies = await MovieRepo.GetAllAsync(filter);
-                _totalCount = await MovieRepo.GetCountAsync(new MovieFilter { SearchKeyword = _searchTerm });
-            }
-            
-            if (movies.Count < _pageSize)
-            {
-                _hasMore = false;
-            }
+            int minYearValue;
+            int maxYearValue;
 
-            _movies.AddRange(movies);
+            var filter = new MovieFilter
+            {
+                SearchKeyword = _searchTerm,
+                SortBy = _sortBy,
+                SortDescending = _sortDesc,
+                Page = _currentPage,
+                PageSize = PageSize,
+                Genres = _selectedGenres.Any() ? _selectedGenres : null,
+                Countries = _selectedCountries.Any() ? _selectedCountries : null,
+                Languages = _selectedLanguages.Any() ? _selectedLanguages : null,
+                Resolution = string.IsNullOrEmpty(_selectedResolution) ? null : _selectedResolution,
+                MinYear = int.TryParse(_minYear, out minYearValue) ? minYearValue : null,
+                MaxYear = int.TryParse(_maxYear, out maxYearValue) ? maxYearValue : null,
+                MinRating = _minRating > 0 ? _minRating : null,
+                MaxRating = _maxRating < 10 ? _maxRating : null,
+                IsWatched = _selectedWatched,
+                IsFavorite = _selectedFavorite,
+                Tags = _selectedTags.Any() ? _selectedTags : null
+            };
+
+            _movies = await MovieRepo.GetUniqueMoviesAsync(filter);
+            _totalCount = await MovieRepo.GetUniqueMovieCountAsync(filter);
         }
         finally
         {
-            _isLoading = false;
+            _loading = false;
             StateHasChanged();
-        }
-    }
-
-    private async Task LoadMore()
-    {
-        if (_isLoading || !_hasMore) return;
-        
-        _currentPage++;
-        await LoadMovies();
-    }
-
-    private async Task OnScroll()
-    {
-        if (_isLoading || !_hasMore) return;
-
-        try
-        {
-            var scrollTop = await JSRuntime.InvokeAsync<double>("eval", 
-                "document.getElementById('movie-list-container')?.scrollTop ?? 0");
-            var scrollHeight = await JSRuntime.InvokeAsync<double>("eval", 
-                "document.getElementById('movie-list-container')?.scrollHeight ?? 0");
-            var clientHeight = await JSRuntime.InvokeAsync<double>("eval", 
-                "document.getElementById('movie-list-container')?.clientHeight ?? 0");
-
-            // 当滚动到距离底部 100px 时自动加载
-            if (scrollTop + clientHeight >= scrollHeight - 100)
-            {
-                await LoadMore();
-            }
-        }
-        catch
-        {
-            // 忽略 JS 错误
         }
     }
 
     private async Task OnSearchChanged()
     {
-        await LoadMovies(true);
+        _currentPage = 1;
+        await LoadMovies();
     }
 
     private string GetPosterUrl(Movie movie)
     {
         if (!string.IsNullOrWhiteSpace(movie.PosterPath))
-            return $"https://image.tmdb.org/t/p/w92{movie.PosterPath}";
+            return $"https://image.tmdb.org/t/p/w342{movie.PosterPath}";
         return "images/placeholder-poster.png";
     }
 
@@ -276,5 +491,155 @@
         NavigationManager.NavigateTo($"/play/{movie.Id}");
     }
 
-    private void GoToDetail(Movie movie) => NavigationManager.NavigateTo($"/movie/{movie.Id}");
+    private void GoToDetail(int id) => NavigationManager.NavigateTo($"/movie/{id}");
+
+    private List<string> ParseGenres(string genresJson)
+    {
+        try
+        {
+            if (string.IsNullOrEmpty(genresJson))
+            {
+                return new List<string>();
+            }
+            var genres = System.Text.Json.JsonSerializer.Deserialize<List<string>>(genresJson);
+            return genres?.Take(2).ToList() ?? new List<string>();
+        }
+        catch
+        {
+            return new List<string>();
+        }
+    }
+
+    // 编辑标题相关方法
+    private void OpenEditDialog(Movie movie)
+    {
+        _editingMovie = movie;
+        _editTitle = movie.Title;
+        _editDialogOpen = true;  
+    }
+
+    private void CloseEditDialog()
+    {
+        _editDialogOpen = false;
+        _editingMovie = null;
+        _editTitle = "";
+    }
+
+    private async Task SaveTitle()
+    {
+        if (_editingMovie == null || string.IsNullOrWhiteSpace(_editTitle))
+            return;
+
+        _isSaving = true;
+        StateHasChanged();
+
+        try
+        {
+            _editingMovie.Title = _editTitle;
+            await MovieRepo.UpdateAsync(_editingMovie);
+
+            var tmdbInfo = await TmdbService.SearchMovieAsync(_editTitle, _editingMovie.ReleaseYear);
+            if (tmdbInfo != null)
+            {
+                if (tmdbInfo.Rating.HasValue)
+                    _editingMovie.Rating = tmdbInfo.Rating.Value;
+                if (tmdbInfo.ReleaseYear.HasValue)
+                    _editingMovie.ReleaseYear = tmdbInfo.ReleaseYear.Value;
+                if (!string.IsNullOrEmpty(tmdbInfo.Director))
+                    _editingMovie.Director = tmdbInfo.Director;
+                if (tmdbInfo.Genres.Any())
+                    _editingMovie.Genres = System.Text.Json.JsonSerializer.Serialize(tmdbInfo.Genres);
+                if (tmdbInfo.Countries.Any())
+                    _editingMovie.Country = string.Join(", ", tmdbInfo.Countries);
+                if (tmdbInfo.Languages.Any())
+                    _editingMovie.Language = string.Join(", ", tmdbInfo.Languages);
+                if (!string.IsNullOrEmpty(tmdbInfo.PosterPath))
+                    _editingMovie.PosterPath = tmdbInfo.PosterPath;
+                if (!string.IsNullOrEmpty(tmdbInfo.Overview))
+                    _editingMovie.Overview = tmdbInfo.Overview;
+                if (!string.IsNullOrEmpty(tmdbInfo.OriginalTitle))
+                    _editingMovie.OriginalTitle = tmdbInfo.OriginalTitle;
+                if (tmdbInfo.Runtime.HasValue)
+                    _editingMovie.Runtime = tmdbInfo.Runtime.Value;
+                _editingMovie.TmdbId = tmdbInfo.Id.ToString();
+
+                await MovieRepo.UpdateAsync(_editingMovie);
+            }
+            else
+            {
+                await MovieRepo.UpdatePosterFromDirectoryAsync(_editingMovie);
+                await MovieRepo.UpdateMediaInfoFromDirectoryAsync(_editingMovie);
+            }
+
+            await LoadMovies();
+            CloseEditDialog();
+        }
+        catch (Exception ex)
+        {
+            Logger.Error(ex, "保存标题失败");
+        }
+        finally
+        {
+            _isSaving = false;
+            StateHasChanged();
+        }
+    }
+
+    // 筛选相关方法
+    private async Task ToggleGenre(string genre)
+    {
+        if (_selectedGenres.Contains(genre)) _selectedGenres.Remove(genre);
+        else _selectedGenres.Add(genre);
+        await ApplyFilters();
+    }
+
+    private async Task ClearGenres() { _selectedGenres.Clear(); await ApplyFilters(); }
+
+    private async Task SelectResolution(string resolution) { _selectedResolution = _selectedResolution == resolution ? "" : resolution; await ApplyFilters(); }
+    private async Task ClearResolution() { _selectedResolution = ""; await ApplyFilters(); }
+
+    private async Task SelectWatched(bool? value) { _selectedWatched = _selectedWatched == value ? null : value; await ApplyFilters(); }
+    private async Task ClearWatched() { _selectedWatched = null; await ApplyFilters(); }
+
+    private async Task SelectFavorite(bool? value) { _selectedFavorite = _selectedFavorite == value ? null : value; await ApplyFilters(); }
+    private async Task ClearFavorite() { _selectedFavorite = null; await ApplyFilters(); }
+
+    private async Task ToggleCountry(string country)
+    {
+        if (_selectedCountries.Contains(country)) _selectedCountries.Remove(country);
+        else _selectedCountries.Add(country);
+        await ApplyFilters();
+    }
+
+    private async Task ClearCountries() { _selectedCountries.Clear(); await ApplyFilters(); }
+
+    private async Task ToggleLanguage(string language)
+    {
+        if (_selectedLanguages.Contains(language)) _selectedLanguages.Remove(language);
+        else _selectedLanguages.Add(language);
+        await ApplyFilters();
+    }
+
+    private async Task ClearLanguages() { _selectedLanguages.Clear(); await ApplyFilters(); }
+
+    private async Task ResetFilters()
+    {
+        _selectedGenres.Clear();
+        _selectedResolution = "";
+        _selectedWatched = null;
+        _selectedFavorite = null;
+        _minYear = "";
+        _maxYear = "";
+        _minRating = 0;
+        _maxRating = 10;
+        _selectedCountries.Clear();
+        _selectedLanguages.Clear();
+        await ApplyFilters();
+    }
+
+    private async Task ApplyFilters()
+    {
+        _currentPage = 1;
+        await LoadMovies();
+    }
 }

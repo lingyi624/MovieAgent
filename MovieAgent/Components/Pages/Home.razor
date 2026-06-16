@@ -1,4 +1,5 @@
 @page "/"
+@using MovieAgent.Components.Controls
 @inject IMovieRepository MovieRepo
 @inject IMovieScannerService ScannerService
 @inject IServiceProvider ServiceProvider
@@ -6,46 +7,19 @@
 
 <PageTitle>Movie Agent - 首页</PageTitle>
 
-<MudText Typo="Typo.h4" GutterBottom Style="color: #E94560;">电影海报墙</MudText>
+<MudStack Row="true" Justify="Justify.SpaceBetween" AlignItems="AlignItems.Center" Style="margin-bottom: 16px;">
+    <MudText Typo="Typo.h4" Style="color: #E94560;">电影海报墙</MudText>
+    <MudButton Variant="Variant.Filled" Color="Color.Primary" OnClick="StartScan"
+               StartIcon="@Icons.Material.Filled.Refresh" Style="background:#E94560;">
+        扫描NAS
+    </MudButton>
+</MudStack>
 
-<MudGrid>
-    <MudItem xs="12" sm="6" md="3">
-        <MudTextField @bind-Value="_searchKeyword" @bind-Value:after="OnSearchChanged" Label="搜索电影" Immediate="true"
-                      Adornment="Adornment.End" AdornmentIcon="@Icons.Material.Filled.Search"
-                      Variant="Variant.Outlined" DebounceInterval="300" />
-    </MudItem>
-    <MudItem xs="6" sm="3" md="2">
-        <MudSelect @bind-Value="_selectedGenre" @bind-Value:after="OnGenreChanged" Label="类型" Variant="Variant.Outlined" T="string">
-            <MudSelectItem T="string" Value="@null">全部</MudSelectItem>
-            @foreach (var genre in _genres)
-            {
-                <MudSelectItem T="string" Value="@genre">@genre</MudSelectItem>
-            }
-        </MudSelect>
-    </MudItem>
-    <MudItem xs="6" sm="3" md="2">
-        <MudSelect @bind-Value="_selectedResolution" @bind-Value:after="OnResolutionChanged" Label="分辨率" Variant="Variant.Outlined" T="string">
-            <MudSelectItem T="string" Value="@null">全部</MudSelectItem>
-            @foreach (var resolution in _resolutions)
-            {
-                <MudSelectItem T="string" Value="@resolution">@resolution</MudSelectItem>
-            }
-        </MudSelect>
-    </MudItem>
-    <MudItem xs="12" md="3">
-        <MudButton Variant="Variant.Filled" Color="Color.Primary" OnClick="StartScan"
-                   StartIcon="@Icons.Material.Filled.Refresh" Style="background:#E94560;">
-            扫描NAS
-        </MudButton>
-        <MudButton Variant="Variant.Outlined" Color="Color.Secondary" OnClick="ToggleWatched" Style="margin-left:8px;">
-            @(_showWatched == null ? "全部" : _showWatched == true ? "已看" : "未看")
-        </MudButton>
-    </MudItem>
-</MudGrid>
+<MovieFilterPanel OnFilterChangedCallback="OnFilterChanged" />
 
 @if (_isScanning)
 {
-    <MudCard Elevation="4" Style="margin: 16px 0; padding: 16px; background: #2D2D44;">
+    <MudCard Elevation="4" Style="margin-bottom: 16px; padding: 16px; background: #2D2D44;">
         <MudText Typo="Typo.body1" Style="color: #E94560; font-weight: bold; margin-bottom: 12px;">扫描进度</MudText>
         
         <div style="display: flex; align-items: center; justify-content: center; margin-bottom: 12px;">
@@ -84,7 +58,7 @@
     </MudCard>
 }
 
-<MudText Style="margin-top: 16px; color: gray;">共 @_totalCount 部电影</MudText>
+<MudText Style="color: gray; margin-bottom: 16px;">共 @_totalCount 部电影</MudText>
 
 <MudGrid>
     @foreach (var movie in _movies)
@@ -143,12 +117,7 @@
 
 @code {
     private List<Movie> _movies = new();
-    private List<string> _genres = new();
-    private List<string> _resolutions = new();
-    private string? _searchKeyword;
-    private string? _selectedGenre;
-    private string? _selectedResolution;
-    private bool? _showWatched;
+    private MovieFilter? _currentFilter;
     private bool _isScanning;
     private string _scanStatus = "";
     private int _scanFoundCount = 0;
@@ -163,8 +132,6 @@
 
     protected override async Task OnInitializedAsync()
     {
-        _genres = await MovieRepo.GetAllGenresAsync();
-        _resolutions = await MovieRepo.GetAllResolutionsAsync();
         await LoadMovies();
     }
 
@@ -172,16 +139,27 @@
     {
         var filter = new MovieFilter
         {
-            SearchKeyword = _searchKeyword,
-            Genres = _selectedGenre != null ? new List<string> { _selectedGenre } : null,
-            Resolution = _selectedResolution,
-            IsWatched = _showWatched,
+            Genres = _currentFilter?.Genres,
+            Resolution = _currentFilter?.Resolution,
+            IsWatched = _currentFilter?.IsWatched,
+            IsFavorite = _currentFilter?.IsFavorite,
+            MinYear = _currentFilter?.MinYear,
+            MaxYear = _currentFilter?.MaxYear,
+            MinRating = _currentFilter?.MinRating,
+            MaxRating = _currentFilter?.MaxRating,
             Page = _currentPage,
             PageSize = 24
         };
         _movies = await MovieRepo.GetUniqueMoviesAsync(filter);
         _totalCount = await MovieRepo.GetUniqueMovieCountAsync(filter);
         _totalPages = Math.Max(1, (int)Math.Ceiling(_totalCount / 24.0));
+    }
+
+    private async Task OnFilterChanged(MovieFilter filter)
+    {
+        _currentFilter = filter;
+        _currentPage = 1;
+        await LoadMovies();
     }
 
     private string GetPosterUrl(Movie movie)
@@ -258,8 +236,6 @@
         await Task.Delay(2000);
 
         _isScanning = false;
-        _genres = await MovieRepo.GetAllGenresAsync();
-        _resolutions = await MovieRepo.GetAllResolutionsAsync();
         await LoadMovies();
     }
 
@@ -292,7 +268,7 @@
 
     private void PlayMovie(Movie movie)
     {
-        NavigationManager.NavigateTo($"/play/{movie.Id}");
+        NavigationManager.NavigateTo($"/movie/{movie.Id}/videos");
     }
 
     private void NavigateToDetail(int id) => NavigationManager.NavigateTo($"/movie/{id}");
@@ -308,34 +284,6 @@
         {
             return new List<string>();
         }
-    }
-
-    private async Task ApplyFilter()
-    {
-        _currentPage = 1;
-        await LoadMovies();
-        StateHasChanged();
-    }
-
-    private async Task OnSearchChanged()
-    {
-        await ApplyFilter();
-    }
-
-    private async Task OnGenreChanged()
-    {
-        await ApplyFilter();
-    }
-
-    private async Task OnResolutionChanged()
-    {
-        await ApplyFilter();
-    }
-
-    private async Task ToggleWatched()
-    {
-        _showWatched = _showWatched switch { null => true, true => false, false => null };
-        await ApplyFilter();
     }
 
     private async Task OnPageChanged(int page) { _currentPage = page; await LoadMovies(); }

@@ -70,6 +70,18 @@ public interface IVectorDatabaseService
     /// <param name="movieId">电影ID</param>
     /// <returns>是否存在</returns>
     Task<bool> HasMovieAsync(int movieId);
+
+    /// <summary>
+    /// 创建向量索引（IVF）
+    /// </summary>
+    /// <param name="numPartitions">索引分区数，默认128</param>
+    Task CreateIndexAsync(int numPartitions = 128);
+
+    /// <summary>
+    /// 检查是否已存在向量索引
+    /// </summary>
+    /// <returns>是否存在索引</returns>
+    Task<bool> HasIndexAsync();
 }
 
 /// <summary>

@@ -9,8 +9,9 @@
               Style="width: 350px; background: rgba(255,255,255,0.08); border-radius: 20px; border: 1px solid rgba(255,255,255,0.1);"
               color="Color.Inherit"
               Variant="Variant.Outlined"
-              OnKeyUp="HandleKeyUp"
-              @onfocus="ShowSearchPanel"
+               OnKeyUp="HandleKeyUp"
+               @onfocus="ShowSearchPanel"  
+              
               inputStyle="color: white; font-size: 13px;"
               AdornmentColor="Color.Inherit" />
 
@@ -79,14 +80,14 @@
     private bool _showSearchPanel;
     private List<Movie> _searchResults = new List<Movie>();
 
-    private async void HandleKeyUp(KeyboardEventArgs e)
+    private async Task HandleKeyUp(KeyboardEventArgs e)
     {
         if (e.Key == "Enter" && !string.IsNullOrWhiteSpace(_searchText))
         {
             NavigateToSearch();
             return;
         }
-        
+
         await SearchMovies();
     }
 
@@ -100,16 +101,15 @@
 
         var allMovies = await MovieRepo.GetAllAsync();
         _searchResults = allMovies.Where(m => 
-            m.Title.IndexOf(_searchText, StringComparison.OrdinalIgnoreCase) >= 0 ||
-            m.Overview?.IndexOf(_searchText, StringComparison.OrdinalIgnoreCase) >= 0 ||
-            m.Genres?.IndexOf(_searchText, StringComparison.OrdinalIgnoreCase) >= 0)
+            m.Title.IndexOf(_searchText, StringComparison.OrdinalIgnoreCase) >= 0)
             .ToList();
     }
 
-    private void ShowSearchPanel()
+    private async Task ShowSearchPanel()
     {
         _showSearchPanel = true;
-        SearchMovies().ConfigureAwait(false);
+        // SearchMovies().ConfigureAwait(false);
+        await SearchMovies();
     }
 
     private void NavigateToMovie(int movieId)

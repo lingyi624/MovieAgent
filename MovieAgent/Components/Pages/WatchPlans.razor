@@ -1,0 +1,263 @@
+@page "/watch-plans"
+@inject IMovieRepository MovieRepo
+@inject MovieAgent.Core.Interfaces.IWatchPlanRepository WatchPlanRepo
+@inject NavigationManager NavigationManager
+@inject ILoggerService Logger
+
+<PageTitle>观影计划</PageTitle>
+
+<MudStack Row="true" Justify="Justify.SpaceBetween" AlignItems="AlignItems.Center" Style="margin-bottom: 16px;">
+    <MudText Typo="Typo.h4" Style="color: #E94560;">观影计划</MudText>
+    <MudButton Variant="Variant.Filled" Color="Color.Primary" StartIcon="@Icons.Material.Filled.Add" 
+               OnClick="ShowAddDialog" Style="background:#E94560;">
+        添加计划
+    </MudButton>
+</MudStack>
+
+<MudTabs Elevation="0" Style="background: #1A1A2E; border-radius: 8px;">
+    <MudTabPanel Text="待观看" Icon="@Icons.Material.Filled.Schedule">
+        @if (_pendingPlans.Count == 0)
+        {
+            <MudText Style="color: gray; text-align: center; padding: 40px;">暂无观影计划</MudText>
+        }
+        else
+        {
+            <MudStack Spacing="2" Style="padding: 16px;">
+                @foreach (var plan in _pendingPlans)
+                {
+                    <MudPaper Elevation="2" Style="padding: 16px; background: #2D2D44;">
+                        <MudGrid>
+                            <MudItem xs="12" sm="3">
+                                @if (plan.Movie != null)
+                                {
+                                    <img src="@GetPosterUrl(plan.Movie)" style="width: 80px; height: 120px; object-fit: cover; border-radius: 4px;" />
+                                }
+                            </MudItem>
+                            <MudItem xs="12" sm="6">
+                                <MudText Typo="Typo.h6" Style="color: #E94560;">@(plan.Movie?.Title ?? "未知电影")</MudText>
+                                <MudText Typo="Typo.body2" Style="color: #888;">
+                                    计划日期: @plan.PlannedDate.ToString("yyyy-MM-dd")
+                                </MudText>
+                                @if (!string.IsNullOrEmpty(plan.Note))
+                                {
+                                    <MudText Typo="Typo.body2" Style="color: #E0E0E0; margin-top: 8px;">
+                                        备注: @plan.Note
+                                    </MudText>
+                                }
+                            </MudItem>
+                            <MudItem xs="12" sm="3">
+                                <MudStack Spacing="1" AlignItems="AlignItems.End">
+                                    <MudButton Variant="Variant.Outlined" Color="Color.Primary" Size="Size.Small"
+                                               OnClick="() => GoToMovie(plan)" StartIcon="@Icons.Material.Filled.PlayArrow">
+                                        去观看
+                                    </MudButton>
+                                    <MudButton Variant="Variant.Outlined" Color="Color.Success" Size="Size.Small"
+                                               OnClick="() => MarkAsCompleted(plan)" StartIcon="@Icons.Material.Filled.Check">
+                                        已看完
+                                    </MudButton>
+                                    <MudIconButton Icon="@Icons.Material.Filled.Delete" Color="Color.Error" Size="Size.Small"
+                                                   OnClick="() => DeletePlan(plan)" />
+                                </MudStack>
+                            </MudItem>
+                        </MudGrid>
+                    </MudPaper>
+                }
+            </MudStack>
+        }
+    </MudTabPanel>
+    <MudTabPanel Text="已完成" Icon="@Icons.Material.Filled.CheckCircle">
+        @if (_completedPlans.Count == 0)
+        {
+            <MudText Style="color: gray; text-align: center; padding: 40px;">暂无已完成的观影计划</MudText>
+        }
+        else
+        {
+            <MudStack Spacing="2" Style="padding: 16px;">
+                @foreach (var plan in _completedPlans)
+                {
+                    <MudPaper Elevation="2" Style="padding: 16px; background: #2D2D44; opacity: 0.7;">
+                        <MudGrid>
+                            <MudItem xs="12" sm="3">
+                                @if (plan.Movie != null)
+                                {
+                                    <img src="@GetPosterUrl(plan.Movie)" style="width: 80px; height: 120px; object-fit: cover; border-radius: 4px;" />
+                                }
+                            </MudItem>
+                            <MudItem xs="12" sm="6">
+                                <MudText Typo="Typo.h6" Style="color: #888;">@(plan.Movie?.Title ?? "未知电影")</MudText>
+                                <MudChip T="string" Size="Size.Small" Color="Color.Success">已完成</MudChip>
+                            </MudItem>
+                            <MudItem xs="12" sm="3">
+                                <MudStack Spacing="1" AlignItems="AlignItems.End">
+                                    <MudButton Variant="Variant.Outlined" Color="Color.Secondary" Size="Size.Small"
+                                               OnClick="() => UndoComplete(plan)" StartIcon="@Icons.Material.Filled.Undo">
+                                        撤销
+                                    </MudButton>
+                                    <MudIconButton Icon="@Icons.Material.Filled.Delete" Color="Color.Error" Size="Size.Small"
+                                                   OnClick="() => DeletePlan(plan)" />
+                                </MudStack>
+                            </MudItem>
+                        </MudGrid>
+                    </MudPaper>
+                }
+            </MudStack>
+        }
+    </MudTabPanel>
+</MudTabs>
+
+<MudDialog @bind-Visible="_dialogVisible" Options="_dialogOptions">
+    <DialogContent>
+        <MudSelect T="Movie" @bind-Value="_selectedMovie" Label="选择电影" Variant="Variant.Outlined" Style="margin-bottom: 16px;">
+            @foreach (var movie in _allMovies)
+            {
+                <MudSelectItem T="Movie" Value="@movie">
+                    <MudStack Row="true" Spacing="2" AlignItems="AlignItems.Center">
+                        <img src="@GetPosterUrl(movie)" style="width: 40px; height: 60px; object-fit: cover; border-radius: 2px;" />
+                        <MudText>@movie.Title</MudText>
+                    </MudStack>
+                </MudSelectItem>
+            }
+        </MudSelect>
+        <MudDatePicker @bind-Date="_plannedDate" Label="计划观看日期" Variant="Variant.Outlined" Style="margin-bottom: 16px;" />
+        <MudTextField T="string" @bind-Value="_planNote" Label="备注（可选）" Variant="Variant.Outlined" Lines="2" />
+    </DialogContent>
+    <DialogActions>
+        <MudButton OnClick="CloseDialog">取消</MudButton>
+        <MudButton Color="Color.Primary" Variant="Variant.Filled" OnClick="AddPlan" Style="background:#E94560;">添加</MudButton>
+    </DialogActions>
+</MudDialog>
+
+@code {
+    private List<WatchPlan> _pendingPlans = new();
+    private List<WatchPlan> _completedPlans = new();
+    private List<Movie> _allMovies = new();
+    private bool _dialogVisible = false;
+    private Movie? _selectedMovie;
+    private DateTime? _plannedDate = DateTime.Today.AddDays(1);
+    private string _planNote = string.Empty;
+    
+    private DialogOptions _dialogOptions = new DialogOptions { CloseOnEscapeKey = true };
+
+    protected override async Task OnInitializedAsync()
+    {
+        await LoadData();
+    }
+
+    private async Task LoadData()
+    {
+        _pendingPlans = await WatchPlanRepo.GetPendingPlansAsync();
+        _completedPlans = await WatchPlanRepo.GetCompletedPlansAsync();
+        
+        // 加载电影列表用于添加计划
+        var filter = new MovieAgent.Core.Models.MovieFilter { PageSize = 100 };
+        _allMovies = await MovieRepo.GetUniqueMoviesAsync(filter);
+    }
+
+    private void ShowAddDialog()
+    {
+        _selectedMovie = null;
+        _plannedDate = DateTime.Today.AddDays(1);
+        _planNote = string.Empty;
+        _dialogVisible = true;
+    }
+
+    private void CloseDialog()
+    {
+        _dialogVisible = false;
+    }
+
+    private async Task AddPlan()
+    {
+        if (_selectedMovie == null)
+        {
+            Logger.Debug("[WatchPlans] 请选择电影");
+            return;
+        }
+
+        if (_plannedDate == null)
+        {
+            Logger.Debug("[WatchPlans] 请选择计划日期");
+            return;
+        }
+
+        try
+        {
+            var plan = new WatchPlan
+            {
+                MovieId = _selectedMovie.Id,
+                PlannedDate = _plannedDate.Value,
+                Note = _planNote,
+                IsCompleted = false,
+                CreatedAt = DateTime.UtcNow
+            };
+
+            await WatchPlanRepo.AddAsync(plan);
+            _dialogVisible = false;
+            await LoadData();
+            Logger.Debug($"[WatchPlans] 已添加观影计划: {_selectedMovie.Title}");
+        }
+        catch (Exception ex)
+        {
+            Logger.Error(ex, "[WatchPlans] 添加观影计划失败");
+        }
+    }
+
+    private async Task MarkAsCompleted(WatchPlan plan)
+    {
+        try
+        {
+            await WatchPlanRepo.CompletePlanAsync(plan.Id);
+            await LoadData();
+            Logger.Debug($"[WatchPlans] 已标记为完成: {plan.Movie?.Title}");
+        }
+        catch (Exception ex)
+        {
+            Logger.Error(ex, "[WatchPlans] 标记完成失败");
+        }
+    }
+
+    private async Task UndoComplete(WatchPlan plan)
+    {
+        try
+        {
+            plan.IsCompleted = false;
+            plan.UpdatedAt = DateTime.UtcNow;
+            await WatchPlanRepo.UpdateAsync(plan);
+            await LoadData();
+            Logger.Debug($"[WatchPlans] 已撤销完成状态: {plan.Movie?.Title}");
+        }
+        catch (Exception ex)
+        {
+            Logger.Error(ex, "[WatchPlans] 撤销完成状态失败");
+        }
+    }
+
+    private async Task DeletePlan(WatchPlan plan)
+    {
+        try
+        {
+            await WatchPlanRepo.DeleteAsync(plan.Id);
+            await LoadData();
+            Logger.Debug($"[WatchPlans] 已删除观影计划: {plan.Movie?.Title}");
+        }
+        catch (Exception ex)
+        {
+            Logger.Error(ex, "[WatchPlans] 删除观影计划失败");
+        }
+    }
+
+    private void GoToMovie(WatchPlan plan)
+    {
+        if (plan.MovieId > 0)
+        {
+            NavigationManager.NavigateTo($"/play/{plan.MovieId}");
+        }
+    }
+
+    private string GetPosterUrl(Movie movie)
+    {
+        if (!string.IsNullOrWhiteSpace(movie.PosterPath))
+            return $"https://image.tmdb.org/t/p/w500{movie.PosterPath}";
+        return "images/placeholder-poster.png";
+    }
+}

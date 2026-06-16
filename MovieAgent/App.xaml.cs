@@ -115,9 +115,33 @@ public partial class App : Application
                 services.AddScoped<ITagService, TagService>();
                 services.AddScoped<IReportService, ReportService>();
                 services.AddSingleton<FileWatcherService>();
+                services.AddSingleton<IConversationMemoryService, ConversationMemoryService>();
+                services.AddSingleton<ISearchCacheService, SearchCacheService>();
+                services.AddSingleton<IVideoAnalysisService>(sp => 
+                    new VideoAnalysisService(
+                        Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "MovieAgent", "Analysis"),
+                        sp.GetRequiredService<IAgentService>()));
+                services.AddScoped<IHybridSearchService, HybridSearchService>();
+                services.AddSingleton<ISpeechService, SpeechService>();
+                
+                var configDir = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "MovieAgent", "Config");
+                services.AddSingleton<IConfigStorageService>(new ConfigStorageService(configDir));
+                
+                var backupDir = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "MovieAgent", "Backups");
+                var dataDir = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "data");
+                Directory.CreateDirectory(dataDir);
+                services.AddSingleton<IBackupService>(new BackupService(dbPath, Path.Combine(dataDir, "lancedb"), backupDir));
+                
+                services.AddScoped<ITransactionService, TransactionService>();
+                services.AddScoped<IMovieReviewRepository, MovieReviewRepository>();
+                services.AddScoped<IMovieReviewService, MovieReviewService>();
+                services.AddScoped<IWatchPlanRepository, WatchPlanRepository>();
+                services.AddScoped<IWatchPlanService, WatchPlanService>();
+                services.AddHttpClient<IDoubanService, DoubanService>();
+                services.AddHttpClient<ISubtitleService, SubtitleService>()
+                    .SetHandlerLifetime(TimeSpan.FromMinutes(5));
 
-                var playerPath = config["Player:Path"] ?? "";
-                services.AddSingleton<IPlayerService>(new CompositePlayerService(playerPath));
+                services.AddSingleton<IPlayerService, ProcessIsolatedPlayerService>();
 
                 var modelUrl = config["AI:ModelUrl"] ?? "http://localhost:11434";
                 var modelName = config["AI:ModelName"] ?? "llama3:latest";
@@ -125,10 +149,10 @@ public partial class App : Application
                     new MovieAgentService(
                         sp.GetRequiredService<IMovieRepository>(),
                         sp.GetRequiredService<IPlayerService>(),
+                        sp.GetRequiredService<IConversationMemoryService>(),
+                        sp.GetRequiredService<IHybridSearchService>(),
                         modelUrl, modelName));
 
-                var dataDir = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "data");
-                Directory.CreateDirectory(dataDir);
                 var embeddingEndpoint = config["AI:EmbeddingEndpoint"] ?? "http://localhost:11434";
                 services.AddSingleton<IVectorDatabaseService>(new LanceDbVectorDatabaseService(embeddingEndpoint));
                 services.AddScoped<IMovieRecommendationService, MovieRecommendationService>();

@@ -11,23 +11,35 @@ public class ThemeService : IThemeService
 
     public event Action<ThemeMode>? ThemeChanged;
 
-    public async Task LoadThemeAsync()
+    public ThemeService()
     {
-        await Task.Run(() =>
+        LoadTheme();
+    }
+
+    public void LoadTheme()
+    {
+        try
         {
-            try
+            var saved = Environment.GetEnvironmentVariable(ThemeKey, EnvironmentVariableTarget.User);
+            if (!string.IsNullOrEmpty(saved) && Enum.TryParse<ThemeMode>(saved, out var theme))
             {
-                var saved = Environment.GetEnvironmentVariable(ThemeKey);
-                if (Enum.TryParse<ThemeMode>(saved, out var theme))
-                {
-                    _currentTheme = theme;
-                }
+                _currentTheme = theme;
             }
-            catch
+            else
             {
                 _currentTheme = ThemeMode.Dark;
+                Environment.SetEnvironmentVariable(ThemeKey, ThemeMode.Dark.ToString(), EnvironmentVariableTarget.User);
             }
-        });
+        }
+        catch
+        {
+            _currentTheme = ThemeMode.Dark;
+        }
+    }
+
+    public async Task LoadThemeAsync()
+    {
+        await Task.Run(LoadTheme);
     }
 
     public async Task SetThemeAsync(ThemeMode theme)

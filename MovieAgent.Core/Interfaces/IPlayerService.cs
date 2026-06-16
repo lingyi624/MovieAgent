@@ -15,11 +15,45 @@ public interface IPlayerService
     /// <summary>视频总时长</summary>
     TimeSpan Duration { get; }
 
+    /// <summary>音频时间戳</summary>
+    TimeSpan AudioTimestamp { get; }
     /// <summary>当前播放位置</summary>
     TimeSpan Position { get; }
+    long AudioPlayPosition { get; }
+
+    /// <summary>视频时间戳</summary>
+    TimeSpan VideoTimestamp { get; }
 
     /// <summary>音量（0-1）</summary>
     float Volume { get; }
+
+    /// <summary>视频宽度</summary>
+    int VideoWidth { get; }
+
+    /// <summary>视频高度</summary>
+    int VideoHeight { get; }
+
+    /// <summary>帧更新事件</summary>
+    event EventHandler<byte[]>? FrameUpdated;
+
+    /// <summary>播放结束事件</summary>
+    event EventHandler? PlaybackEnded;
+
+    /// <summary>
+    /// Blazor请求播放事件 - 用于通知WPF显示视频overlay
+    /// </summary>
+    event EventHandler? PlaybackRequestedByBlazor;
+
+    /// <summary>
+    /// 请求播放 - Blazor UI触发，通知MainWindow显示视频overlay
+    /// </summary>
+    /// <param name="filePath">视频文件路径</param>
+    void RequestPlayback(string filePath);
+
+    /// <summary>
+    /// 获取当前请求播放的文件路径
+    /// </summary>
+    string? GetCurrentRequestedFilePath();
 
     /// <summary>
     /// 开始播放
@@ -28,7 +62,7 @@ public interface IPlayerService
     Task PlayAsync(string filePath);
 
     /// <summary>停止播放</summary>
-    void Stop();
+    Task StopAsync();
 
     /// <summary>暂停播放</summary>
     void Pause();

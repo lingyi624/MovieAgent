@@ -1,0 +1,231 @@
+@page "/logs"
+@inject ISnackbar Snackbar
+
+<PageTitle>日志查看</PageTitle>
+
+<MudContainer MaxWidth="MaxWidth.Large" Style="padding: 16px;">
+    <MudPaper Elevation="0" Style="background: #1A1A2E; padding: 24px; border-radius: 12px; margin-bottom: 16px;">
+        <MudStack Row="true" AlignItems="AlignItems.Center" Justify="Justify.SpaceBetween" Style="margin-bottom: 24px;">
+            <MudText Typo="Typo.h4" Style="color: #E94560;">系统日志</MudText>
+            <MudStack Row="true" Spacing="4">
+                <MudButton Variant="Variant.Filled" Color="Color.Error" OnClick="ClearLogs" StartIcon="@Icons.Material.Filled.Delete" Style="background: #E94560;">
+                    清空日志
+                </MudButton>
+                <MudButton Variant="Variant.Outlined" Color="Color.Secondary" OnClick="RefreshLogs" StartIcon="@Icons.Material.Filled.Refresh">
+                    刷新
+                </MudButton>
+            </MudStack>
+        </MudStack>
+
+        <MudGrid>
+            <MudItem xs="12" sm="6" md="4">
+                <MudSelect @bind-Value="_selectedLogLevel" Label="日志级别" Variant="Variant.Outlined" T="string">
+                    <MudSelectItem T="string" Value="@AllLevel">全部</MudSelectItem>
+                    <MudSelectItem T="string" Value="@LogLevelDebug">DEBUG</MudSelectItem>
+                    <MudSelectItem T="string" Value="@LogLevelInfo">INFO</MudSelectItem>
+                    <MudSelectItem T="string" Value="@LogLevelWarn">WARN</MudSelectItem>
+                    <MudSelectItem T="string" Value="@LogLevelError">ERROR</MudSelectItem>
+                    <MudSelectItem T="string" Value="@LogLevelFatal">FATAL</MudSelectItem>
+                </MudSelect>
+            </MudItem>
+            <MudItem xs="12" sm="6" md="4">
+                <MudSelect @bind-Value="_selectedLogFile" Label="日志文件" Variant="Variant.Outlined" T="string">
+                    @foreach (var file in _logFiles)
+                    {
+                        <MudSelectItem T="string" Value="@file">@file</MudSelectItem>
+                    }
+                </MudSelect>
+            </MudItem>
+            <MudItem xs="12" sm="6" md="4">
+                <MudTextField @bind-Value="_searchText" Label="搜索关键词" Variant="Variant.Outlined" Placeholder="输入关键词搜索" Style="background: #2D2D44;" />
+            </MudItem>
+        </MudGrid>
+    </MudPaper>
+
+    <MudPaper Elevation="0" Style="background: #1A1A2E; padding: 16px; border-radius: 12px;">
+        <div style="max-height: 600px; overflow-y: auto; font-family: 'Consolas', 'Monaco', monospace; font-size: 12px;">
+            @if (_logEntries.Any())
+            {
+                <MudList T="LogEntry">
+                    @foreach (var entry in _logEntries)
+                    {
+                        <MudListItem T="LogEntry" Style="border-bottom: 1px solid #2D2D44; padding: 8px 0;">
+                            <div class="d-flex flex-wrap gap-2">
+                                <span style="background: @GetLogLevelColor(entry.Level); color: white; padding: 2px 8px; border-radius: 4px; font-size: 11px;">@entry.Level</span>
+                                <MudText Style="color: #888; font-size: 12px;">@entry.Timestamp</MudText>
+                                <MudText Style="color: #E0E0E0; flex: 1; word-break: break-all;">@entry.Message</MudText>
+                            </div>
+                            @if (!string.IsNullOrEmpty(entry.Exception))
+                            {
+                                <div Style="margin-top: 8px; padding: 8px; background: #2D2D44; border-radius: 4px; color: #ff6b6b; font-size: 11px; word-break: break-all;">
+                                    <MudText Typo="Typo.caption">Exception:</MudText>
+                                    <pre>@entry.Exception</pre>
+                                </div>
+                            }
+                        </MudListItem>
+                    }
+                </MudList>
+            }
+            else
+            {
+                <MudText Typo="Typo.body1" Align="Align.Center" Style="color: #888; padding: 40px;">
+                    暂无日志记录
+                </MudText>
+            }
+        </div>
+    </MudPaper>
+</MudContainer>
+
+@code {
+    private List<LogEntry> _logEntries = new();
+    private List<string> _logFiles = new();
+    private string _selectedLogLevel = "All";
+    private string _selectedLogFile = "";
+    private string _searchText = "";
+
+    private string AllLevel = "All";
+    private string LogLevelDebug = "DEBUG";
+    private string LogLevelInfo = "INFO";
+    private string LogLevelWarn = "WARN";
+    private string LogLevelError = "ERROR";
+    private string LogLevelFatal = "FATAL";
+
+    protected override void OnInitialized()
+    {
+        LoadLogFiles();
+        LoadLogs();
+    }
+
+    private void LoadLogFiles()
+    {
+        var logDir = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "logs");
+        if (Directory.Exists(logDir))
+        {
+            _logFiles = Directory.GetFiles(logDir, "*.log")
+                .Select(Path.GetFileName)
+                .OrderByDescending(f => f)
+                .ToList() ?? new List<string>();
+            if (_logFiles.Any())
+                _selectedLogFile = _logFiles.First();
+        }
+    }
+
+    private void LoadLogs()
+    {
+        try
+        {
+            var logDir = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "logs");
+            var filePath = Path.Combine(logDir, _selectedLogFile);
+            
+            if (File.Exists(filePath))
+            {
+                var lines = File.ReadAllLines(filePath);
+                _logEntries = new List<LogEntry>();
+                foreach (var line in lines)
+                {
+                    var entry = ParseLogLine(line);
+                    if (entry != null)
+                    {
+                        _logEntries.Add(entry);
+                    }
+                }
+                FilterLogs();
+            }
+        }
+        catch (Exception ex)
+        {
+            Snackbar.Add($"加载日志失败: {ex.Message}", Severity.Error);
+        }
+    }
+
+    private LogEntry? ParseLogLine(string line)
+    {
+        try
+        {
+            int firstBracket = line.IndexOf('[');
+            int secondBracket = line.IndexOf('[', firstBracket + 1);
+            
+            if (firstBracket > 0 && secondBracket > firstBracket)
+            {
+                var timestamp = line.Substring(0, firstBracket).Trim();
+                var level = line.Substring(firstBracket + 1, secondBracket - firstBracket - 1).Trim();
+                var message = line.Substring(secondBracket + 1).TrimStart(']').Trim();
+                
+                return new LogEntry
+                {
+                    Timestamp = timestamp,
+                    Level = level,
+                    Message = message
+                };
+            }
+            return new LogEntry { Message = line };
+        }
+        catch
+        {
+            return new LogEntry { Message = line };
+        }
+    }
+
+    private void FilterLogs()
+    {
+        if (_selectedLogLevel != "All")
+        {
+            _logEntries = _logEntries.Where(e => e.Level.Equals(_selectedLogLevel, StringComparison.OrdinalIgnoreCase)).ToList();
+        }
+
+        if (!string.IsNullOrWhiteSpace(_searchText))
+        {
+            var search = _searchText.ToLower();
+            _logEntries = _logEntries.Where(e => 
+                e.Message.ToLower().Contains(search) || 
+                e.Timestamp.ToLower().Contains(search)).ToList();
+        }
+    }
+
+    private void RefreshLogs()
+    {
+        LoadLogs();
+    }
+
+    private void ClearLogs()
+    {
+        try
+        {
+            var logDir = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "logs");
+            if (Directory.Exists(logDir))
+            {
+                foreach (var file in Directory.GetFiles(logDir, "*.log"))
+                {
+                    File.WriteAllText(file, "");
+                }
+            }
+            _logEntries.Clear();
+            Snackbar.Add("日志已清空", Severity.Success);
+        }
+        catch (Exception ex)
+        {
+            Snackbar.Add($"清空日志失败: {ex.Message}", Severity.Error);
+        }
+    }
+
+    private string GetLogLevelColor(string level)
+    {
+        return level switch
+        {
+            "DEBUG" => "#607D8B",
+            "INFO" => "#4CAF50",
+            "WARN" => "#FF9800",
+            "ERROR" => "#F44336",
+            "FATAL" => "#9C27B0",
+            _ => "#777"
+        };
+    }
+
+    public class LogEntry
+    {
+        public string Timestamp { get; set; } = "";
+        public string Level { get; set; } = "";
+        public string Message { get; set; } = "";
+        public string Exception { get; set; } = "";
+    }
+}

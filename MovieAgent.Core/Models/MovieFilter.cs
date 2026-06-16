@@ -15,4 +15,11 @@ public class MovieFilter
     public bool SortDescending { get; set; } = true;
     public int Page { get; set; } = 1;
     public int PageSize { get; set; } = 50;
+    
+    public List<string>? Countries { get; set; }
+    public List<string>? Languages { get; set; }
+    public string? VideoCodec { get; set; }
+    public string? HdrType { get; set; }
+    
+    public List<string>? Tags { get; set; }
 }

@@ -1,0 +1,165 @@
+@page "/tags"
+@inject ITagService TagService
+@inject IMovieRepository MovieRepo
+@inject NavigationManager NavigationManager
+
+<PageTitle>标签管理</PageTitle>
+
+<MudContainer MaxWidth="MaxWidth.Large" Style="padding: 16px;">
+    <MudPaper Elevation="0" Style="background: #1A1A2E; padding: 24px; border-radius: 12px; margin-bottom: 16px;">
+        <MudStack Row="true" AlignItems="AlignItems.Center" Justify="Justify.SpaceBetween" Style="margin-bottom: 16px;">
+            <MudText Typo="Typo.h4" Style="color: #E94560;">标签管理</MudText>
+            <MudChip T="string" Color="Color.Primary">@_totalTaggedMovies 部电影已标记</MudChip>
+        </MudStack>
+
+        <MudStack Row="true" Spacing="3">
+            <MudButton Variant="Variant.Filled" Color="Color.Primary" OnClick="BatchGenerateTags" Disabled="@_isProcessing"
+                       Style="background:#E94560;" StartIcon="@Icons.Material.Filled.AutoAwesome">
+                @(_isProcessing ? "生成中..." : "为所有电影生成标签")
+            </MudButton>
+            <MudButton Variant="Variant.Outlined" Color="Color.Secondary" OnClick="RefreshTags"
+                       StartIcon="@Icons.Material.Filled.Refresh">
+                刷新
+            </MudButton>
+        </MudStack>
+    </MudPaper>
+
+    <MudGrid>
+        <MudItem xs="12" md="4">
+            <MudPaper Elevation="0" Style="background: #1A1A2E; padding: 20px; border-radius: 12px;">
+                <MudText Typo="Typo.h6" Style="color: #E0E0E0; margin-bottom: 16px;">标签统计</MudText>
+                
+                <MudList T="(string Tag, int Count)">
+                    @foreach (var item in _tagStats.Take(15))
+                    {
+                        <MudListItem T="(string Tag, int Count)" @onclick="() => SearchByTag(item.Tag)">
+                            <MudChip T="string" Color="Color.Primary" Size="Size.Small" Style="margin-right: 8px;">@item.Count</MudChip>
+                            <MudText Style="color: #E0E0E0;">@item.Tag</MudText>
+                        </MudListItem>
+                    }
+                </MudList>
+
+                @if (!_tagStats.Any())
+                {
+                    <MudText Style="color: #888; text-align: center; padding: 16px;">暂无标签数据</MudText>
+                }
+            </MudPaper>
+        </MudItem>
+
+        <MudItem xs="12" md="8">
+            <MudPaper Elevation="0" Style="background: #1A1A2E; padding: 20px; border-radius: 12px;">
+                <MudText Typo="Typo.h6" Style="color: #E0E0E0; margin-bottom: 16px;">标签分类</MudText>
+
+                <MudStack Spacing="4">
+                    <MudCard Style="background: #2D2D44;">
+                        <MudCardHeader>
+                            <CardHeaderContent>
+                                <MudText Style="color: #FF6B8A;">情感标签</MudText>
+                            </CardHeaderContent>
+                        </MudCardHeader>
+                        <MudCardContent>
+                            <MudStack Row="true" Wrap="Wrap.Wrap" Spacing="2">
+                                @foreach (var tag in EmotionTags)
+                                {
+                                    <MudChip T="string" Color="Color.Primary" Size="Size.Small" 
+                                               OnClick="() => SearchByTag(tag)">@tag</MudChip>
+                                }
+                            </MudStack>
+                        </MudCardContent>
+                    </MudCard>
+
+                    <MudCard Style="background: #2D2D44;">
+                        <MudCardHeader>
+                            <CardHeaderContent>
+                                <MudText Style="color: #4ECDC4;">场景标签</MudText>
+                            </CardHeaderContent>
+                        </MudCardHeader>
+                        <MudCardContent>
+                            <MudStack Row="true" Wrap="Wrap.Wrap" Spacing="2">
+                                @foreach (var tag in SceneTags)
+                                {
+                                    <MudChip T="string" Color="Color.Secondary" Size="Size.Small" 
+                                               OnClick="() => SearchByTag(tag)">@tag</MudChip>
+                                }
+                            </MudStack>
+                        </MudCardContent>
+                    </MudCard>
+
+                    <MudCard Style="background: #2D2D44;">
+                        <MudCardHeader>
+                            <CardHeaderContent>
+                                <MudText Style="color: #FFE66D;">风格标签</MudText>
+                            </CardHeaderContent>
+                        </MudCardHeader>
+                        <MudCardContent>
+                            <MudStack Row="true" Wrap="Wrap.Wrap" Spacing="2">
+                                @foreach (var tag in StyleTags)
+                                {
+                                    <MudChip T="string" Color="Color.Warning" Size="Size.Small" 
+                                               OnClick="() => SearchByTag(tag)">@tag</MudChip>
+                                }
+                            </MudStack>
+                        </MudCardContent>
+                    </MudCard>
+                </MudStack>
+            </MudPaper>
+        </MudItem>
+    </MudGrid>
+</MudContainer>
+
+@code {
+    private List<(string Tag, int Count)> _tagStats = new();
+    private int _totalTaggedMovies;
+    private bool _isProcessing;
+
+    private readonly List<string> EmotionTags = new List<string>
+    {
+        "感人", "催泪", "温馨", "治愈", "励志", "热血", "震撼", "深刻",
+        "压抑", "惊悚", "紧张", "悬疑", "恐怖", "搞笑", "轻松", "浪漫",
+        "悲伤", "愤怒", "希望", "绝望", "温暖", "伤感", "悲壮", "温情"
+    };
+
+    private readonly List<string> SceneTags = new List<string>
+    {
+        "太空", "海洋", "森林", "城市", "乡村", "沙漠", "雪山", "草原",
+        "战争", "监狱", "校园", "家庭", "职场", "历史", "未来", "古代",
+        "科幻", "奇幻", "魔法", "冒险", "动作", "犯罪", "爱情", "友情"
+    };
+
+    private readonly List<string> StyleTags = new List<string>
+    {
+        "文艺", "商业", "独立", "小众", "经典", "现代", "复古", "先锋",
+        "写实", "夸张", "细腻", "粗犷", "唯美", "暗黑", "清新", "厚重"
+    };
+
+    protected override async Task OnInitializedAsync()
+    {
+        await RefreshTags();
+    }
+
+    private async Task RefreshTags()
+    {
+        _tagStats = await TagService.GetTagStatisticsAsync();
+        _totalTaggedMovies = await TagService.GetTotalTaggedMoviesCountAsync();
+        StateHasChanged();
+    }
+
+    private async Task BatchGenerateTags()
+    {
+        _isProcessing = true;
+        StateHasChanged();
+
+        var movies = await MovieRepo.GetAllAsync();
+        var movieIds = movies.Select(m => m.Id).ToList();
+        
+        await TagService.BatchAddAiTagsAsync(movieIds);
+        
+        _isProcessing = false;
+        await RefreshTags();
+    }
+
+    private void SearchByTag(string tag)
+    {
+        NavigationManager.NavigateTo($"/movies?tag={Uri.EscapeDataString(tag)}");
+    }
+}

@@ -1,10 +1,12 @@
 @using MovieAgent.Components.Controls
 @using MovieAgent.Core.Interfaces
+@using Microsoft.AspNetCore.Components.Routing
 @inherits LayoutComponentBase
 @inject IMovieRepository MovieRepo
 @inject IAgentService AgentService
 @inject IMovieScannerService ScannerService
 @inject IThemeService ThemeService
+@inject NavigationManager NavigationManager
 
 <MudThemeProvider Theme="_currentTheme" />
 <MudDialogProvider />
@@ -24,20 +26,23 @@
                 AI 对话
             </MudButton>
             <ThemeToggle />
-            <MudIconButton Icon="@Icons.Material.Filled.Settings" Color="Color.Inherit" Href="/settings" />
+            <MudIconButton Icon="@Icons.Material.Filled.Settings" Color="Color.Inherit" OnClick="NavigateToSettings" />
         </MudAppBar>
 
     <MudDrawer @bind-Open="_drawerOpen" Anchor="Anchor.Left" Variant="DrawerVariant.Temporary" Style="background: #1A1A2E; color: white;">
         <MudNavMenu>
             <MudText Typo="Typo.h6" Style="padding: 16px; color: #E94560;">菜单</MudText>
             <MudDivider Style="background: #E94560;" />
-            <MudNavLink Href="/" Icon="@Icons.Material.Filled.Home" Match="NavLinkMatch.All">首页(海报墙)</MudNavLink>
-            <MudNavLink Href="/dashboard" Icon="@Icons.Material.Filled.BarChart">观影统计</MudNavLink>
-            <MudNavLink Href="/movies" Icon="@Icons.Material.Filled.Movie">电影库</MudNavLink>
-            <MudNavLink Href="/semantic-search" Icon="@Icons.Material.Filled.AutoAwesome">语义搜索</MudNavLink>
-            <MudNavLink Href="/chat" Icon="@Icons.Material.Filled.Chat">AI 对话</MudNavLink>
-            <MudNavLink Href="/report" Icon="@Icons.Material.Filled.Report">观影报告</MudNavLink>
-            <MudNavLink Href="/settings" Icon="@Icons.Material.Filled.Settings">设置</MudNavLink>
+            <MudButton Class="nav-link-btn" StartIcon="@Icons.Material.Filled.Home" OnClick="@(() => HandleNavClick("/"))">首页(海报墙)</MudButton>
+            <MudButton Class="nav-link-btn" StartIcon="@Icons.Material.Filled.BarChart" OnClick="@(() => HandleNavClick("/dashboard"))">观影统计</MudButton>
+            <MudButton Class="nav-link-btn" StartIcon="@Icons.Material.Filled.Movie" OnClick="@(() => HandleNavClick("/movies"))">电影库</MudButton>
+            <MudButton Class="nav-link-btn" StartIcon="@Icons.Material.Filled.AutoAwesome" OnClick="@(() => HandleNavClick("/semantic-search"))">语义搜索</MudButton>
+            <MudButton Class="nav-link-btn" StartIcon="@Icons.Material.Filled.Chat" OnClick="@(() => HandleNavClick("/chat"))">AI 对话</MudButton>
+            <MudButton Class="nav-link-btn" StartIcon="@Icons.Material.Filled.Report" OnClick="@(() => HandleNavClick("/report"))">观影报告</MudButton>
+            <MudButton Class="nav-link-btn" StartIcon="@Icons.Material.Filled.Schedule" OnClick="@(() => HandleNavClick("/watch-plans"))">观影计划</MudButton>
+            <MudButton Class="nav-link-btn" StartIcon="@Icons.Material.Filled.Label" OnClick="@(() => HandleNavClick("/tags"))">标签管理</MudButton>
+            <MudButton Class="nav-link-btn" StartIcon="@Icons.Material.Filled.TextSnippet" OnClick="@(() => HandleNavClick("/logs"))">系统日志</MudButton>
+            <MudButton Class="nav-link-btn" StartIcon="@Icons.Material.Filled.Settings" OnClick="@(() => HandleNavClick("/settings"))">设置</MudButton>
         </MudNavMenu>
     </MudDrawer>
 
@@ -120,4 +125,12 @@
         : "background: white;";
 
     private void ToggleDrawer() => _drawerOpen = !_drawerOpen;
+
+    private void NavigateToSettings() => NavigationManager.NavigateTo("/settings");
+
+    private void HandleNavClick(string url)
+    {
+        _drawerOpen = false;
+        NavigationManager.NavigateTo(url, forceLoad: true);
+    }
 }

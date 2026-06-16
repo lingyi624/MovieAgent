@@ -16,6 +16,27 @@ public class PlayerService : IPlayerService
     public TimeSpan Position => TimeSpan.Zero;
     public float Volume => 0;
     
+    public int VideoWidth => 0;
+    public int VideoHeight => 0;
+    public TimeSpan VideoTimestamp { get; private set; }
+    public TimeSpan AudioTimestamp { get; private set; }
+    public long AudioPlayPosition { get; private set; } = 0;
+    public event EventHandler<byte[]>? FrameUpdated;
+    public event EventHandler? PlaybackEnded;
+
+    public event EventHandler? PlaybackRequestedByBlazor
+    {
+        add { }
+        remove { }
+    }
+
+    public void RequestPlayback(string filePath)
+    {
+        // PlayerService 直接调用 PlayAsync 即可
+    }
+
+    public string? GetCurrentRequestedFilePath() => null;
+
     public int AudioTrackCount => 0;
     public int CurrentAudioTrack => -1;
     public int SpuTrackCount => 0;
@@ -46,8 +67,8 @@ public class PlayerService : IPlayerService
 
     public async Task PlayAsync(string filePath)
     {
-        Stop();
-        
+        await StopAsync();
+
         if (!File.Exists(filePath))
             throw new FileNotFoundException($"Movie file not found: {filePath}");
 
@@ -83,7 +104,7 @@ public class PlayerService : IPlayerService
         await Task.CompletedTask;
     }
 
-    public void Stop()
+    public Task StopAsync()
     {
         if (_process != null && !_process.HasExited)
         {
@@ -91,6 +112,7 @@ public class PlayerService : IPlayerService
             _process.Dispose();
         }
         _process = null;
+        return Task.CompletedTask;
     }
 
     public void Pause() { }

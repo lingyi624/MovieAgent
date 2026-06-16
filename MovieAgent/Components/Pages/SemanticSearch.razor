@@ -1,6 +1,7 @@
 @page "/semantic-search"
 @inject IMovieRepository MovieRepo
 @inject IVectorDatabaseService VectorDb
+@inject IHybridSearchService HybridSearch
 @inject IPlayerService PlayerService
 @inject NavigationManager NavigationManager
 @implements IAsyncDisposable
@@ -37,6 +38,27 @@
                     重新构建所有向量
                 </MudButton>
             </MudStack>
+
+            <MudStack Row="true" Spacing="3" AlignItems="AlignItems.Center">
+                <MudText Typo="Typo.body2" Style="color: #888;">搜索模式:</MudText>
+                <MudButtonGroup Size="Size.Small">
+                    <MudButton Variant="_searchMode == SearchMode.Hybrid ? Variant.Filled : Variant.Outlined" 
+                               Color="Color.Primary" 
+                               OnClick="() => _searchMode = SearchMode.Hybrid">
+                        混合检索
+                    </MudButton>
+                    <MudButton Variant="_searchMode == SearchMode.Vector ? Variant.Filled : Variant.Outlined" 
+                               Color="Color.Primary" 
+                               OnClick="() => _searchMode = SearchMode.Vector">
+                        向量检索
+                    </MudButton>
+                    <MudButton Variant="_searchMode == SearchMode.Keyword ? Variant.Filled : Variant.Outlined" 
+                               Color="Color.Primary" 
+                               OnClick="() => _searchMode = SearchMode.Keyword">
+                        关键词检索
+                    </MudButton>
+                </MudButtonGroup>
+            </MudStack>
         </MudStack>
     </MudPaper>
 
@@ -44,37 +66,44 @@
     {
         <MudPaper Elevation="0" Style="background: #1A1A2E; padding: 32px; border-radius: 12px; text-align: center;">
             <MudProgressCircular Color="Color.Primary" Indeterminate="true" Size="Size.Large" />
-            <MudText Style="color: #E0E0E0; margin-top: 12px;">正在搜索电影向量...</MudText>
+            <MudText Style="color: #E0E0E0; margin-top: 12px;">正在搜索电影...</MudText>
         </MudPaper>
     }
     else if (_searchResults != null && _searchResults.Any())
     {
-        <MudText Typo="Typo.h6" Style="color: #E0E0E0; margin-bottom: 16px;">找到 @_searchResults.Count 部相似电影</MudText>
+        <MudText Typo="Typo.h6" Style="color: #E0E0E0; margin-bottom: 16px;">找到 @_searchResults.Count 部电影</MudText>
         <MudGrid>
-            @foreach (var r in _searchResults)
+            @foreach (var movie in _searchResults)
             {
                 <MudItem xs="12" sm="6" md="4">
                     <MudCard Style="background: #2D2D44; border-radius: 12px; overflow: hidden; cursor: pointer;"
-                             @onclick="() => GoToDetail(r.MovieId)">
+                             @onclick="() => GoToDetail(movie.Id)">
                         <MudCardContent Style="padding: 16px;">
                             <MudStack Row="true" AlignItems="AlignItems.Center" Justify="Justify.SpaceBetween" Style="margin-bottom: 8px;">
-                                <MudText Style="color: #E94560; font-weight: bold; max-width: 200px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">@r.Title</MudText>
-                                <MudChip T="string" Size="Size.Small" Color="Color.Primary">@r.Similarity.ToString("0.00")</MudChip>
+                                <MudText Style="color: #E94560; font-weight: bold; max-width: 200px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">@movie.Title</MudText>
+                                @if (_searchMode != SearchMode.Keyword)
+                                {
+                                    <MudChip T="string" Size="Size.Small" Color="Color.Primary">@string.Format("{0:0.0}", movie.Rating)</MudChip>
+                                }
                             </MudStack>
-                            @if (!string.IsNullOrWhiteSpace(r.Overview))
+                            @if (!string.IsNullOrWhiteSpace(movie.Overview))
                             {
                                 <MudText Typo="Typo.body2" Style="color: #B0B0C0;">
-                                    @r.Overview.Substring(0, Math.Min(120, r.Overview.Length))...
+                                    @movie.Overview.Substring(0, Math.Min(120, movie.Overview.Length))...
                                 </MudText>
+                            }
+                            @if (!string.IsNullOrWhiteSpace(movie.Resolution))
+                            {
+                                <MudChip T="string" Size="Size.Small" Color="Color.Secondary" Style="margin-top: 8px;">@movie.Resolution</MudChip>
                             }
                         </MudCardContent>
                         <MudCardActions Style="padding: 8px 16px 16px 16px;">
                             <MudButton Variant="Variant.Filled" Color="Color.Primary" Size="Size.Small"
-                                       Style="background:#E94560;" OnClick="(e => PlayMovie(r.MovieId))">
+                                       Style="background:#E94560;" OnClick="(e => PlayMovie(movie.Id))">
                                 播放
                             </MudButton>
                             <MudButton Variant="Variant.Text" Color="Color.Secondary" Size="Size.Small"
-                                       OnClick="(e => GoToDetail(r.MovieId))">
+                                       OnClick="(e => GoToDetail(movie.Id))">
                                 详情
                             </MudButton>
                         </MudCardActions>
@@ -102,7 +131,7 @@
                     输入自然语言描述，如「关于太空冒险的科幻片」
                 </MudListItem>
                 <MudListItem T="string" Icon="@Icons.Material.Filled.Star">
-                    系统会将电影简介转换为向量并搜索最相似的电影
+                    支持三种搜索模式：混合检索、向量检索、关键词检索
                 </MudListItem>
                 <MudListItem T="string" Icon="@Icons.Material.Filled.Star">
                     首次使用请点击「构建向量索引」
@@ -113,6 +142,13 @@
 </MudContainer>
 
 @code {
+    private enum SearchMode
+    {
+        Hybrid,
+        Vector,
+        Keyword
+    }
+
     private string _searchText = string.Empty;
     private bool _isSearching;
     private bool _isBuilding;
@@ -120,8 +156,9 @@
     private int _totalToBuild;
     private int _totalRecords;
     private int _totalMovies;
-    private List<VectorSearchResult>? _searchResults;
+    private List<Movie>? _searchResults;
     private MudTextField<string>? _searchRef;
+    private SearchMode _searchMode = SearchMode.Hybrid;
 
     protected override async Task OnInitializedAsync()
     {
@@ -147,13 +184,26 @@
 
         try
         {
-            var results = await VectorDb.SearchAsync(_searchText, 12);
-            _searchResults = results;
+            switch (_searchMode)
+            {
+                case SearchMode.Hybrid:
+                    _searchResults = await HybridSearch.SearchAsync(_searchText, topK: 12);
+                    break;
+                case SearchMode.Vector:
+                    var vectorResults = await VectorDb.SearchAsync(_searchText, 12);
+                    var movieIds = vectorResults.Select(r => r.MovieId).ToList();
+                    var allMovies = await MovieRepo.GetAllAsync();
+                    _searchResults = allMovies.Where(m => movieIds.Contains(m.Id)).ToList();
+                    break;
+                case SearchMode.Keyword:
+                    _searchResults = await MovieRepo.SearchAsync(_searchText);
+                    break;
+            }
         }
         catch (Exception ex)
         {
             Console.WriteLine($"[SemanticSearch] 搜索失败: {ex.Message}");
-            _searchResults = new List<VectorSearchResult>();
+            _searchResults = new List<Movie>();
         }
         finally
         {
@@ -278,6 +328,5 @@
 
     public async ValueTask DisposeAsync()
     {
-        // VectorDB doesn't need disposal of its own
     }
 }

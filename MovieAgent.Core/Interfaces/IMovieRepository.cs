@@ -90,6 +90,30 @@ public interface IMovieRepository
     Task<List<string>> GetAllResolutionsAsync();
 
     /// <summary>
+    /// 获取所有国家/地区列表
+    /// </summary>
+    /// <returns>国家/地区列表</returns>
+    Task<List<string>> GetAllCountriesAsync();
+
+    /// <summary>
+    /// 获取所有语言列表
+    /// </summary>
+    /// <returns>语言列表</returns>
+    Task<List<string>> GetAllLanguagesAsync();
+
+    /// <summary>
+    /// 获取所有视频编码格式列表
+    /// </summary>
+    /// <returns>视频编码格式列表</returns>
+    Task<List<string>> GetAllVideoCodecsAsync();
+
+    /// <summary>
+    /// 获取所有HDR类型列表
+    /// </summary>
+    /// <returns>HDR类型列表</returns>
+    Task<List<string>> GetAllHdrTypesAsync();
+
+    /// <summary>
     /// 获取去重后的电影列表（同一电影只返回一条）
     /// </summary>
     /// <param name="filter">过滤条件（可选）</param>
@@ -115,4 +139,39 @@ public interface IMovieRepository
     /// <param name="count">返回数量，默认20部</param>
     /// <returns>最近添加的电影列表</returns>
     Task<List<Movie>> GetRecentlyAddedAsync(int count = 20);
+
+    /// <summary>
+    /// 获取电影的所有视频文件路径
+    /// </summary>
+    /// <param name="movieId">电影ID</param>
+    /// <returns>视频文件路径列表</returns>
+    Task<List<string>> GetMovieVideoPathsAsync(int movieId);
+
+    /// <summary>
+    /// 从硬盘目录获取海报图片（当数据库海报字段为空时）
+    /// </summary>
+    /// <param name="filePath">电影文件路径</param>
+    /// <returns>海报图片字节数组，如果未找到则返回null</returns>
+    byte[]? GetPosterFromDirectory(string filePath);
+
+    /// <summary>
+    /// 从硬盘目录获取媒体信息文件
+    /// </summary>
+    /// <param name="filePath">电影文件路径</param>
+    /// <returns>媒体信息字典，如果未找到则返回null</returns>
+    Dictionary<string, string>? GetMediaInfoFromDirectory(string filePath);
+
+    /// <summary>
+    /// 检查并更新电影的海报（从目录获取）
+    /// </summary>
+    /// <param name="movie">电影实体</param>
+    /// <returns>是否成功更新</returns>
+    Task<bool> UpdatePosterFromDirectoryAsync(Movie movie);
+
+    /// <summary>
+    /// 检查并更新电影的媒体信息（从目录获取）
+    /// </summary>
+    /// <param name="movie">电影实体</param>
+    /// <returns>是否成功更新</returns>
+    Task<bool> UpdateMediaInfoFromDirectoryAsync(Movie movie);
 }

@@ -1,4 +1,4 @@
-﻿<Project Sdk="Microsoft.NET.Sdk.Razor">
+<Project Sdk="Microsoft.NET.Sdk.Razor">
 
   <PropertyGroup>
     <OutputType>WinExe</OutputType>
@@ -9,6 +9,7 @@
     <RootNamespace>MovieAgent</RootNamespace>
     <ApplicationTitle>Movie Agent</ApplicationTitle>
     <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+    <ApplicationIcon>Resources\appicon.ico</ApplicationIcon>
   </PropertyGroup>
 
   <ItemGroup>
@@ -16,6 +17,7 @@
     <PackageReference Include="MudBlazor" Version="9.5.0" />
     <PackageReference Include="Microsoft.Extensions.Hosting" Version="10.0.0-preview.3.25171.1" />
     <PackageReference Include="System.Drawing.Common" Version="9.0.0" />
+    <PackageReference Include="System.Management" Version="8.0.0" />
     <PackageReference Include="FFmpeg.AutoGen" Version="8.1.0" />
   </ItemGroup>
 
@@ -33,5 +35,9 @@
     <None Update="appsettings.json" CopyToOutputDirectory="PreserveNewest" />
     <None Update="share.json" CopyToOutputDirectory="PreserveNewest" />
   </ItemGroup>
+
+  <Target Name="GenerateIcon" BeforeTargets="Build">
+    <Exec Command="powershell.exe -ExecutionPolicy Bypass -File generate-icon.ps1" WorkingDirectory="$(ProjectDir)" />
+  </Target>
 
 </Project>

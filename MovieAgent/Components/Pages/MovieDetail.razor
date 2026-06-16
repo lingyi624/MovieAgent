@@ -4,6 +4,8 @@
 @inject MovieAgent.Infrastructure.Services.ITagService TagService
 @inject NavigationManager NavigationManager
 @inject ILoggerService Logger
+@inject MovieAgent.Infrastructure.Services.IDoubanService DoubanService
+@inject MovieAgent.Infrastructure.Services.IMovieReviewService ReviewService
 
 <PageTitle>@(_movie?.Title ?? "电影详情")</PageTitle>
 
@@ -40,6 +42,10 @@ else
                     <MudChip T="string" Size="Size.Small" Color="Color.Dark" Style="background:#FFD700;">
                         <MudIcon Icon="@Icons.Material.Filled.Star" Size="Size.Small" />
                         @_movie.Rating.Value.ToString("0.0")
+                        @if (!string.IsNullOrEmpty(_ratingSource))
+                        {
+                            <span style="margin-left: 4px; font-size: 10px;">(@_ratingSource)</span>
+                        }
                     </MudChip>
                 }
                 @if (_movie.Runtime.HasValue)
@@ -119,6 +125,14 @@ else
             {
                 <MudText Typo="Typo.body2"><strong>主演:</strong> @_movie.Cast</MudText>
             }
+            @if (!string.IsNullOrEmpty(_movie.Country))
+            {
+                <MudText Typo="Typo.body2"><strong>地区:</strong> @_movie.Country</MudText>
+            }
+            @if (!string.IsNullOrEmpty(_movie.Language))
+            {
+                <MudText Typo="Typo.body2"><strong>语言:</strong> @_movie.Language</MudText>
+            }
             <MudText Typo="Typo.body2"><strong>文件大小:</strong> @FormatFileSize(_movie.FileSize)</MudText>
             <MudText Typo="Typo.caption" Style="color: gray; margin-top: 8px;">@_movie.FilePath</MudText>
 
@@ -133,12 +147,103 @@ else
                                Color="Color.Error" OnClick="ToggleFavorite" />
                 <MudRating SelectedValue="_userRating" Size="Size.Small" SelectedValueChanged="OnRatingChanged" Color="Color.Warning" />
             </MudStack>
+
+            <div style="margin-top: 16px; padding: 12px; background: #2D2D44; border-radius: 8px;">
+                <MudText Typo="Typo.subtitle2" Style="color: #E94560; margin-bottom: 8px;">评分同步</MudText>
+                <MudStack Row="true" Wrap="Wrap.Wrap" Spacing="2" AlignItems="AlignItems.Center">
+                    <MudTextField T="string" @bind-Value="_doubanId" Placeholder="豆瓣电影ID" Style="width: 180px;" />
+                    <MudButton Size="Size.Small" Variant="Variant.Outlined" Color="Color.Info" 
+                               OnClick="SearchDoubanRating" Disabled="@_isSearching">
+                        @if (_isSearching)
+                        {
+                            <MudProgressCircular Size="Size.Small" Indeterminate="true" />
+                            <span style="margin-left: 4px;">搜索中...</span>
+                        }
+                        else
+                        {
+                            <MudIcon Icon="@Icons.Material.Filled.Search" Size="Size.Small" />
+                            <span>搜索豆瓣评分</span>
+                        }
+                    </MudButton>
+                    @if (_doubanMovie != null)
+                    {
+                        <MudChip T="string" Size="Size.Small" Color="Color.Primary" Style="background:#00BFFF;">
+                            <MudIcon Icon="@Icons.Material.Filled.Star" Size="Size.Small" />
+                            豆瓣 @_doubanMovie.Rating.Value.ToString("0.0")
+                        </MudChip>
+                        <MudButton Size="Size.Small" Variant="Variant.Filled" Color="Color.Primary" 
+                                   OnClick="SyncDoubanRating" Style="background:#00BFFF;">
+                            <MudIcon Icon="@Icons.Material.Filled.Download" Size="Size.Small" />
+                            <span>同步评分</span>
+                        </MudButton>
+                    }
+                </MudStack>
+                @if (!string.IsNullOrEmpty(_doubanMessage))
+                {
+                    <MudText Typo="Typo.caption" Style="color: #E94560; margin-top: 8px;">@_doubanMessage</MudText>
+                }
+            </div>
+
+            @* 影评区域 *@
+            <div style="margin-top: 16px; padding: 12px; background: #2D2D44; border-radius: 8px;">
+                <MudStack Row="true" Justify="Justify.SpaceBetween" AlignItems="AlignItems.Center" Style="margin-bottom: 12px;">
+                    <MudText Typo="Typo.subtitle2" Style="color: #E94560;">我的影评</MudText>
+                    @if (_myReview == null)
+                    {
+                        <MudButton Size="Size.Small" Variant="Variant.Filled" Color="Color.Primary" 
+                                   OnClick="ShowReviewDialog" Style="background:#E94560;">
+                            <MudIcon Icon="@Icons.Material.Filled.Edit" Size="Size.Small" />
+                            <span>写影评</span>
+                        </MudButton>
+                    }
+                </MudStack>
+                
+                @if (_myReview != null)
+                {
+                    <MudPaper Elevation="0" Style="padding: 12px; background: #1A1A2E; border-radius: 8px;">
+                        <MudStack Row="true" AlignItems="AlignItems.Center" Spacing="2" Style="margin-bottom: 8px;">
+                            <MudRating ReadOnly="true" SelectedValue="_myReview.Rating" Size="Size.Small" Color="Color.Warning" />
+                            <MudText Typo="Typo.caption" Style="color: #888;">
+                                @_myReview.CreatedAt.ToString("yyyy-MM-dd HH:mm")
+                            </MudText>
+                            <MudSpacer />
+                            <MudIconButton Icon="@Icons.Material.Filled.Edit" Size="Size.Small" Color="Color.Info"
+                                           OnClick="() => ShowEditReviewDialog(_myReview)" />
+                            <MudIconButton Icon="@Icons.Material.Filled.Delete" Size="Size.Small" Color="Color.Error"
+                                           OnClick="() => DeleteReview(_myReview)" />
+                        </MudStack>
+                        <MudText Typo="Typo.body2" Style="color: #E0E0E0; white-space: pre-wrap;">@_myReview.Content</MudText>
+                    </MudPaper>
+                }
+                else
+                {
+                    <MudText Typo="Typo.body2" Style="color: #888;">还没有写过影评，记录你的观影感受吧！</MudText>
+                }
+            </div>
         </MudItem>
     </MudGrid>
     
     @* 相似电影推荐 *@
     <SimilarMoviesPanel MovieId="@Id" TopK="6" />
 }
+
+@* 影评编辑对话框 *@
+<MudDialog @bind-Visible="_reviewDialogVisible">
+    <DialogContent>
+        <MudStack Spacing="3">
+            <MudText Typo="Typo.h6">@(_isEditingReview ? "编辑影评" : "写影评")</MudText>
+            <MudRating @bind-Value="_reviewRating" Size="Size.Medium" Color="Color.Warning" />
+            <MudTextField T="string" @bind-Value="_reviewContent" Label="影评内容" Variant="Variant.Outlined" 
+                         Lines="6" Placeholder="写下你对这部电影的感受..." />
+        </MudStack>
+    </DialogContent>
+    <DialogActions>
+        <MudButton OnClick="CloseReviewDialog">取消</MudButton>
+        <MudButton Color="Color.Primary" Variant="Variant.Filled" OnClick="SaveReview" Style="background:#E94560;">
+            保存
+        </MudButton>
+    </DialogActions>
+</MudDialog>
 
 @code {
     [Parameter] public int Id { get; set; }
@@ -148,15 +253,31 @@ else
     private string _newTag = string.Empty;
     private bool _isGenerating = false;
     private bool _isLoading = false;
+    
+    private string _doubanId = string.Empty;
+    private MovieAgent.Infrastructure.Services.DoubanMovieInfo? _doubanMovie;
+    private bool _isSearching = false;
+    private string _doubanMessage = string.Empty;
+    private string _ratingSource = string.Empty;
+    
+    private List<MovieAgent.Core.Entities.MovieReview> _reviews = new();
+    private MovieAgent.Core.Entities.MovieReview? _myReview;
+    private bool _reviewDialogVisible = false;
+    private bool _isEditingReview = false;
+    private int _reviewRating = 3;
+    private string _reviewContent = string.Empty;
+    private int? _editingReviewId;
 
     protected override async Task OnInitializedAsync()
     {
         await LoadMovieAndTags();
+        await LoadReviews();
     }
 
     protected override async Task OnParametersSetAsync()
     {
         await LoadMovieAndTags();
+        await LoadReviews();
     }
 
     private async Task LoadMovieAndTags()
@@ -164,11 +285,49 @@ else
         _isLoading = true;
         _isGenerating = false;
         await InvokeAsync(StateHasChanged);
-        
+
         try
         {
             _movie = await MovieRepo.GetByIdAsync(Id);
-            _userRating = _movie?.UserRating ?? 0;
+            if (_movie != null)
+            {
+                // 自动获取海报和媒体信息（如果数据库中没有）
+                if (string.IsNullOrEmpty(_movie.PosterPath))
+                {
+                    // 先尝试从豆瓣获取
+                    var doubanInfo = await DoubanService.SearchMovieAsync(_movie.Title, _movie.ReleaseYear);
+                    if (doubanInfo != null)
+                    {
+                        if (!string.IsNullOrEmpty(doubanInfo.Poster))
+                            _movie.PosterPath = doubanInfo.Poster;
+                        if (doubanInfo.Rating.HasValue)
+                            _movie.Rating = doubanInfo.Rating.Value;
+                        if (!string.IsNullOrEmpty(doubanInfo.Director))
+                            _movie.Director = doubanInfo.Director;
+                        if (!string.IsNullOrEmpty(doubanInfo.Genres))
+                            _movie.Genres = doubanInfo.Genres;
+                        if (!string.IsNullOrEmpty(doubanInfo.Country))
+                            _movie.Country = doubanInfo.Country;
+                        if (!string.IsNullOrEmpty(doubanInfo.Language))
+                            _movie.Language = doubanInfo.Language;
+                        if (!string.IsNullOrEmpty(doubanInfo.Summary))
+                            _movie.Overview = doubanInfo.Summary;
+
+                        await MovieRepo.UpdateAsync(_movie);
+                    }
+                    else
+                    {
+                        // 如果豆瓣没有找到，尝试从本地目录获取
+                        await MovieRepo.UpdatePosterFromDirectoryAsync(_movie);
+                        await MovieRepo.UpdateMediaInfoFromDirectoryAsync(_movie);
+                        _movie = await MovieRepo.GetByIdAsync(Id); // 重新加载
+                    }
+                }
+
+                _userRating = _movie?.UserRating ?? 0;
+                _ratingSource = _movie?.TmdbId != null ? "TMDB" : string.Empty;
+            }
+
             _tags = await TagService.GetTagsAsync(Id);
             _newTag = string.Empty;
         }
@@ -177,6 +336,12 @@ else
             _isLoading = false;
             await InvokeAsync(StateHasChanged);
         }
+    }
+
+    private async Task LoadReviews()
+    {
+        _reviews = await ReviewService.GetReviewsByMovieAsync(Id);
+        _myReview = _reviews.FirstOrDefault();
     }
 
     private async Task LoadTags()
@@ -264,6 +429,129 @@ else
         _movie.UserRating = rating;
         await MovieRepo.UpdateAsync(_movie);
         await InvokeAsync(StateHasChanged);
+    }
+
+    private async Task SearchDoubanRating()
+    {
+        if (string.IsNullOrWhiteSpace(_doubanId))
+        {
+            _doubanMessage = "请输入豆瓣电影ID";
+            return;
+        }
+
+        _isSearching = true;
+        _doubanMessage = string.Empty;
+        await InvokeAsync(StateHasChanged);
+
+        try
+        {
+            _doubanMovie = await DoubanService.GetMovieInfoAsync(_doubanId.Trim());
+            if (_doubanMovie == null)
+            {
+                _doubanMessage = "未找到该电影信息";
+            }
+            else if (!_doubanMovie.Rating.HasValue)
+            {
+                _doubanMessage = "该电影暂无评分";
+            }
+        }
+        catch (Exception ex)
+        {
+            _doubanMessage = $"搜索失败: {ex.Message}";
+            Logger.Error(ex, "[MovieDetail] 豆瓣搜索失败");
+        }
+        finally
+        {
+            _isSearching = false;
+            await InvokeAsync(StateHasChanged);
+        }
+    }
+
+    private async Task SyncDoubanRating()
+    {
+        if (_doubanMovie == null || !_doubanMovie.Rating.HasValue || _movie == null)
+            return;
+
+        try
+        {
+            await DoubanService.SyncDoubanRatingAsync(_movie.Id, _doubanMovie.Id!);
+            await LoadMovieAndTags();
+            _ratingSource = "豆瓣";
+            _doubanMessage = "评分同步成功！";
+            await InvokeAsync(StateHasChanged);
+        }
+        catch (Exception ex)
+        {
+            _doubanMessage = $"同步失败: {ex.Message}";
+            Logger.Error(ex, "[MovieDetail] 豆瓣评分同步失败");
+        }
+    }
+
+    private void ShowReviewDialog()
+    {
+        _isEditingReview = false;
+        _editingReviewId = null;
+        _reviewRating = 3;
+        _reviewContent = string.Empty;
+        _reviewDialogVisible = true;
+    }
+
+    private void ShowEditReviewDialog(MovieAgent.Core.Entities.MovieReview review)
+    {
+        _isEditingReview = true;
+        _editingReviewId = review.Id;
+        _reviewRating = review.Rating;
+        _reviewContent = review.Content;
+        _reviewDialogVisible = true;
+    }
+
+    private void CloseReviewDialog()
+    {
+        _reviewDialogVisible = false;
+    }
+
+    private async Task SaveReview()
+    {
+        if (string.IsNullOrWhiteSpace(_reviewContent))
+        {
+            Logger.Debug("[MovieDetail] 请输入影评内容");
+            return;
+        }
+
+        try
+        {
+            if (_isEditingReview && _editingReviewId.HasValue)
+            {
+                await ReviewService.UpdateReviewAsync(_editingReviewId.Value, _reviewContent, _reviewRating);
+                Logger.Debug($"[MovieDetail] 影评已更新");
+            }
+            else
+            {
+                await ReviewService.CreateReviewAsync(Id, _reviewContent, _reviewRating);
+                Logger.Debug($"[MovieDetail] 影评已保存");
+            }
+            
+            _reviewDialogVisible = false;
+            await LoadReviews();
+        }
+        catch (Exception ex)
+        {
+            Logger.Error(ex, "[MovieDetail] 保存影评失败");
+        }
+    }
+
+    private async Task DeleteReview(MovieAgent.Core.Entities.MovieReview review)
+    {
+        try
+        {
+            await ReviewService.DeleteReviewAsync(review.Id);
+            Logger.Debug($"[MovieDetail] 影评已删除");
+            await LoadReviews();
+        }
+        catch (Exception ex)
+        {
+            Logger.Error(ex, "[MovieDetail] 删除影评失败");
+        }
     }
 
     private static string FormatFileSize(long bytes) => bytes switch

@@ -1,0 +1,394 @@
+@inject IMovieRepository MovieRepo
+
+ <div class="filter-panel">
+    <div class="filter-header">
+        <h3>筛选条件</h3>
+        <button @onclick="ResetFilters" class="reset-btn">重置</button>
+    </div>
+
+    <div class="filter-section">
+        <h4>类型</h4>
+        <div class="filter-tags">
+            @foreach (var genre in Genres)
+            {
+                <button @onclick="() => ToggleGenre(genre)"
+                        class="tag-btn @(SelectedGenres.Contains(genre) ? "selected" : "")">
+                    @genre
+                </button>
+            }
+        </div>
+    </div>
+
+    <div class="filter-section">
+        <h4>年代</h4>
+        <div class="year-range">
+            <input type="number" @bind="MinYear" placeholder="起始年份" min="1900" max="2099" />
+            <span class="separator">-</span>
+            <input type="number" @bind="MaxYear" placeholder="结束年份" min="1900" max="2099" />
+        </div>
+    </div>
+
+    <div class="filter-section">
+        <h4>地区</h4>
+        <div class="filter-tags">
+            @foreach (var country in Countries)
+            {
+                <button @onclick="() => ToggleCountry(country)"
+                        class="tag-btn @(SelectedCountries.Contains(country) ? "selected" : "")">
+                    @country
+                </button>
+            }
+        </div>
+    </div>
+
+    <div class="filter-section">
+        <h4>语言</h4>
+        <div class="filter-tags">
+            @foreach (var language in Languages)
+            {
+                <button @onclick="() => ToggleLanguage(language)"
+                        class="tag-btn @(SelectedLanguages.Contains(language) ? "selected" : "")">
+                    @language
+                </button>
+            }
+        </div>
+    </div>
+
+    <div class="filter-section">
+        <h4>画质</h4>
+        <div class="filter-tags">
+            @foreach (var resolution in Resolutions)
+            {
+                <button @onclick="() => SelectResolution(resolution)"
+                        class="tag-btn @(SelectedResolution == resolution ? "selected" : "")">
+                    @resolution
+                </button>
+            }
+        </div>
+    </div>
+
+    <div class="filter-section">
+        <h4>HDR</h4>
+        <div class="filter-tags">
+            @foreach (var hdr in HdrTypes)
+            {
+                <button @onclick="() => SelectHdrType(hdr)"
+                        class="tag-btn @(SelectedHdrType == hdr ? "selected" : "")">
+                    @hdr
+                </button>
+            }
+        </div>
+    </div>
+
+    <div class="filter-section">
+        <h4>评分</h4>
+        <div class="rating-range">
+            <input type="range" @bind="MinRating" min="0" max="10" step="0.5" />
+            <span>@MinRating - 10</span>
+        </div>
+    </div>
+
+    <div class="filter-section">
+        <h4>状态</h4>
+        <div class="status-options">
+            <label>
+                <input type="checkbox" @bind="ShowWatched" />
+                <span>已观看</span>
+            </label>
+            <label>
+                <input type="checkbox" @bind="ShowUnwatched" />
+                <span>未观看</span>
+            </label>
+            <label>
+                <input type="checkbox" @bind="ShowFavorites" />
+                <span>收藏</span>
+            </label>
+        </div>
+    </div>
+
+    <div class="filter-actions">
+        <button @onclick="ApplyFilters" class="apply-btn">应用筛选</button>
+    </div>
+</div> 
+
+<style scoped>
+    .filter-panel {
+        background: rgba(255, 255, 255, 0.05);
+        border-radius: 12px;
+        padding: 16px;
+        max-height: 80vh;
+        overflow-y: auto;
+    }
+
+    .filter-header {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        margin-bottom: 16px;
+        padding-bottom: 8px;
+        border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+    }
+
+        .filter-header h3 {
+            margin: 0;
+            font-size: 16px;
+            color: #fff;
+        }
+
+    .reset-btn {
+        background: rgba(255, 255, 255, 0.1);
+        border: none;
+        color: #fff;
+        padding: 6px 12px;
+        border-radius: 6px;
+        cursor: pointer;
+        font-size: 12px;
+    }
+
+        .reset-btn:hover {
+            background: rgba(255, 255, 255, 0.2);
+        }
+
+    .filter-section {
+        margin-bottom: 16px;
+    }
+
+        .filter-section h4 {
+            margin: 0 0 8px 0;
+            font-size: 12px;
+            color: rgba(255, 255, 255, 0.7);
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+        }
+
+    .filter-tags {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 6px;
+    }
+
+    .tag-btn {
+        background: rgba(255, 255, 255, 0.08);
+        border: 1px solid rgba(255, 255, 255, 0.1);
+        color: rgba(255, 255, 255, 0.8);
+        padding: 4px 10px;
+        border-radius: 16px;
+        cursor: pointer;
+        font-size: 12px;
+        transition: all 0.2s;
+    }
+
+        .tag-btn:hover {
+            background: rgba(255, 255, 255, 0.15);
+        }
+
+        .tag-btn.selected {
+            background: #E94560;
+            border-color: #E94560;
+            color: #fff;
+        }
+
+    .year-range {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+    }
+
+        .year-range input {
+            width: 80px;
+            background: rgba(255, 255, 255, 0.08);
+            border: 1px solid rgba(255, 255, 255, 0.1);
+            color: #fff;
+            padding: 6px 8px;
+            border-radius: 6px;
+            font-size: 12px;
+        }
+
+    .separator {
+        color: rgba(255, 255, 255, 0.5);
+    }
+
+    .rating-range {
+        display: flex;
+        align-items: center;
+        gap: 12px;
+    }
+
+        .rating-range input[type="range"] {
+            flex: 1;
+            height: 4px;
+            background: rgba(255, 255, 255, 0.2);
+            border-radius: 2px;
+            outline: none;
+            -webkit-appearance: none;
+        }
+
+            .rating-range input[type="range"]::-webkit-slider-thumb {
+                -webkit-appearance: none;
+                width: 14px;
+                height: 14px;
+                background: #E94560;
+                border-radius: 50%;
+                cursor: pointer;
+            }
+
+        .rating-range span {
+            color: rgba(255, 255, 255, 0.8);
+            font-size: 12px;
+            min-width: 60px;
+        }
+
+    .status-options {
+        display: flex;
+        flex-direction: column;
+        gap: 6px;
+    }
+
+        .status-options label {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            cursor: pointer;
+            color: rgba(255, 255, 255, 0.8);
+            font-size: 13px;
+        }
+
+        .status-options input[type="checkbox"] {
+            width: 14px;
+            height: 14px;
+            accent-color: #E94560;
+        }
+
+    .filter-actions {
+        margin-top: 16px;
+        padding-top: 16px;
+        border-top: 1px solid rgba(255, 255, 255, 0.1);
+    }
+
+    .apply-btn {
+        width: 100%;
+        background: linear-gradient(135deg, #E94560, #FF6B6B);
+        border: none;
+        color: #fff;
+        padding: 10px;
+        border-radius: 8px;
+        cursor: pointer;
+        font-size: 14px;
+        font-weight: 600;
+    }
+
+        .apply-btn:hover {
+            opacity: 0.9;
+        }
+</style>
+
+@code {
+    [Parameter]
+    public EventCallback<MovieFilter> OnFilterChanged { get; set; }
+
+    public List<string> Genres { get; set; } = new();
+    public List<string> Countries { get; set; } = new();
+    public List<string> Languages { get; set; } = new();
+    public List<string> Resolutions { get; set; } = new();
+    public List<string> HdrTypes { get; set; } = new();
+
+    public List<string> SelectedGenres { get; set; } = new();
+    public List<string> SelectedCountries { get; set; } = new();
+    public List<string> SelectedLanguages { get; set; } = new();
+    public string? SelectedResolution { get; set; }
+    public string? SelectedHdrType { get; set; }
+    public int? MinYear { get; set; }
+    public int? MaxYear { get; set; }
+    public double MinRating { get; set; } = 0;
+    public bool ShowWatched { get; set; } = true;
+    public bool ShowUnwatched { get; set; } = true;
+    public bool ShowFavorites { get; set; }
+
+    protected override async Task OnInitializedAsync()
+    {
+        await LoadFilterOptions();
+    }
+
+    private async Task LoadFilterOptions()
+    {
+        Genres = await MovieRepo.GetAllGenresAsync();
+        Countries = await MovieRepo.GetAllCountriesAsync();
+        Languages = await MovieRepo.GetAllLanguagesAsync();
+        Resolutions = await MovieRepo.GetAllResolutionsAsync();
+        HdrTypes = await MovieRepo.GetAllHdrTypesAsync();
+    }
+
+    private async Task ToggleGenre(string genre)
+    {
+        if (SelectedGenres.Contains(genre))
+            SelectedGenres.Remove(genre);
+        else
+            SelectedGenres.Add(genre);
+        await Task.CompletedTask;
+    }
+
+    private async Task ToggleCountry(string country)
+    {
+        if (SelectedCountries.Contains(country))
+            SelectedCountries.Remove(country);
+        else
+            SelectedCountries.Add(country);
+        await Task.CompletedTask;
+    }
+
+    private async Task ToggleLanguage(string language)
+    {
+        if (SelectedLanguages.Contains(language))
+            SelectedLanguages.Remove(language);
+        else
+            SelectedLanguages.Add(language);
+        await Task.CompletedTask;
+    }
+
+    private async Task SelectResolution(string resolution)
+    {
+        SelectedResolution = SelectedResolution == resolution ? null : resolution;
+        await Task.CompletedTask;
+    }
+
+    private async Task SelectHdrType(string hdr)
+    {
+        SelectedHdrType = SelectedHdrType == hdr ? null : hdr;
+        await Task.CompletedTask;
+    }
+
+    private async Task ResetFilters()
+    {
+        SelectedGenres.Clear();
+        SelectedCountries.Clear();
+        SelectedLanguages.Clear();
+        SelectedResolution = null;
+        SelectedHdrType = null;
+        MinYear = null;
+        MaxYear = null;
+        MinRating = 0;
+        ShowWatched = true;
+        ShowUnwatched = true;
+        ShowFavorites = false;
+        await Task.CompletedTask;
+    }
+
+    private async Task ApplyFilters()
+    {
+        var filter = new MovieFilter
+        {
+            Genres = SelectedGenres.Any() ? SelectedGenres : null,
+            Countries = SelectedCountries.Any() ? SelectedCountries : null,
+            Languages = SelectedLanguages.Any() ? SelectedLanguages : null,
+            Resolution = SelectedResolution,
+            HdrType = SelectedHdrType,
+            MinYear = MinYear,
+            MaxYear = MaxYear,
+            MinRating = MinRating > 0 ? MinRating : null,
+            IsWatched = !ShowWatched ? false : ShowWatched && !ShowUnwatched ? true : null,
+            IsFavorite = ShowFavorites ? true : null
+        };
+
+        await OnFilterChanged.InvokeAsync(filter);
+    }
+}

@@ -87,6 +87,36 @@ public class LanceDbVectorDatabaseService : IVectorDatabaseService, IAsyncDispos
         return schema;
     }
 
+    // 创建向量索引（IVF）
+    public async Task CreateIndexAsync(int numPartitions = 128)
+    {
+        await EnsureDatabaseAsync();
+        if (_moviesTable == null) return;
+
+        try
+        {
+            Log($"[LanceDB] 开始创建 IVF 索引，分区数: {numPartitions}");
+            var recordCount = await _moviesTable.CountRows();
+            if (recordCount < 100)
+            {
+                Log("[LanceDB] 记录数少于100，跳过索引创建");
+                return;
+            }
+            Log("[LanceDB] IVF 索引创建已跳过（LanceDB .NET API 限制）");
+        }
+        catch (Exception ex)
+        {
+            Log($"[LanceDB] 索引创建失败: {ex.Message}");
+        }
+    }
+
+    // 检查是否已存在索引
+    public async Task<bool> HasIndexAsync()
+    {
+        await EnsureDatabaseAsync();
+        return false;
+    }
+
     // 使用 Ollama 生成嵌入向量
     public async Task<float[]> GenerateEmbeddingAsync(string text)
     {
