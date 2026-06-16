@@ -17,3 +17,9 @@
 /MovieAgent/appsettings.json
 /MovieAgent/appsettings.json
 /MovieAgent/appsettings.json
+/IconGenerator/bin/Debug/net10.0-windows
+/IconGenerator/obj/Debug/net10.0-windows
+/IconGenerator/obj
+/MovieAgent.FFmpegDecoder/bin/Debug/net10.0
+/MovieAgent.FFmpegDecoder/obj
+*.md
