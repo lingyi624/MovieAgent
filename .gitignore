@@ -23,3 +23,11 @@
 /MovieAgent.FFmpegDecoder/bin/Debug/net10.0
 /MovieAgent.FFmpegDecoder/obj
 *.md
+/TestApp
+/TestWrapper/obj
+/TestWrapper/bin/Debug/net6.0
+/TestWrapper
+/build_err.txt
+/build_err2.txt
+/build_errors.txt
+/build_output.txt
