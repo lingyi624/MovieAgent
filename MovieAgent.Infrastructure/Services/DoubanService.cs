@@ -32,13 +32,15 @@ public class DoubanService : IDoubanService
 {
     private readonly HttpClient _httpClient;
     private readonly IMovieRepository _movieRepo;
+    private readonly IMovieUpdateService? _movieUpdateService;
     private readonly ILoggerService _logger;
 
-    public DoubanService(HttpClient httpClient, IMovieRepository movieRepo, ILoggerService logger)
+    public DoubanService(HttpClient httpClient, IMovieRepository movieRepo, IMovieUpdateService? movieUpdateService, ILoggerService logger)
     {
         _httpClient = httpClient;
         _httpClient.DefaultRequestHeaders.Add("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36");
         _movieRepo = movieRepo;
+        _movieUpdateService = movieUpdateService;
         _logger = logger;
     }
 
@@ -96,7 +98,16 @@ public class DoubanService : IDoubanService
         if (movie != null)
         {
             movie.Rating = info.Rating.Value;
-            await _movieRepo.UpdateAsync(movie);
+            
+            // 使用统一更新服务，同步向量数据库
+            if (_movieUpdateService != null)
+            {
+                await _movieUpdateService.UpdateMovieWithVectorAsync(movie);
+            }
+            else
+            {
+                await _movieRepo.UpdateAsync(movie);
+            }
         }
     }
 

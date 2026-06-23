@@ -1,3 +1,7 @@
+using MovieAgent.FFmpegDecoder;
+using System;
+using System.Collections.Generic;
+
 namespace MovieAgent.Core.Interfaces;
 
 /// <summary>
@@ -34,7 +38,7 @@ public interface IPlayerService
     int VideoHeight { get; }
 
     /// <summary>帧更新事件</summary>
-    event EventHandler<byte[]>? FrameUpdated;
+    event EventHandler<FrameData>? FrameUpdated;
 
     /// <summary>播放结束事件</summary>
     event EventHandler? PlaybackEnded;
@@ -98,6 +102,11 @@ public interface IPlayerService
     int CurrentAudioTrack { get; }
 
     /// <summary>
+    /// 获取音频轨道列表
+    /// </summary>
+    List<AudioTrackInfo>? GetAudioTracks();
+
+    /// <summary>
     /// 切换音轨
     /// </summary>
     /// <param name="trackIndex">音轨索引</param>
@@ -110,8 +119,30 @@ public interface IPlayerService
     int CurrentSpuTrack { get; }
 
     /// <summary>
+    /// 获取字幕轨道列表
+    /// </summary>
+    List<SubtitleTrackInfo>? GetSubtitleTracks();
+
+    /// <summary>
     /// 切换字幕轨
     /// </summary>
     /// <param name="trackIndex">字幕轨索引</param>
     void SetSpuTrack(int trackIndex);
+
+    /// <summary>
+    /// 截图
+    /// </summary>
+    void TakeScreenshot();
+
+    /// <summary>
+    /// 设置字幕延迟
+    /// </summary>
+    /// <param name="delayMs">延迟时间（毫秒）</param>
+    void SetSubtitleDelay(double delayMs);
+
+    /// <summary>
+    /// 设置播放速度
+    /// </summary>
+    /// <param name="speed">播放速度</param>
+    void SetPlaybackSpeed(double speed);
 }

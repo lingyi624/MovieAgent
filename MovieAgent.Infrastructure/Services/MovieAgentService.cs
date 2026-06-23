@@ -1,5 +1,7 @@
 using System.Diagnostics;
+using System.IO;
 using System.Net.Http;
+using System.Net.Http.Json;
 using System.Text;
 using System.Text.Json;
 using MovieAgent.Core.Interfaces;
@@ -10,29 +12,35 @@ public class MovieAgentService : IAgentService
 {
     private readonly HttpClient _httpClient;
     private readonly IMovieRepository _movieRepo;
+    private readonly IMovieUpdateService? _movieUpdateService;
     private readonly IPlayerService _player;
     private readonly IConversationMemoryService _memoryService;
     private readonly IHybridSearchService _hybridSearch;
-    private string _modelName = "llama3.2";
+    private readonly IVectorDatabaseService _vectorDb;
+    private string _modelName = string.Empty;
+    private string _ollamaUrl;
     private const string DefaultUserId = "default";
 
     public bool IsAvailable { get; private set; }
     public string? LastError { get; private set; }
 
-    public MovieAgentService(IMovieRepository movieRepo, IPlayerService player, 
+    public MovieAgentService(IMovieRepository movieRepo, IMovieUpdateService? movieUpdateService, IPlayerService player, 
         IConversationMemoryService memoryService, IHybridSearchService hybridSearch,
-        string modelUrl, string modelName)
+        IVectorDatabaseService vectorDb, string modelUrl, string modelName)
     {
         _movieRepo = movieRepo;
+        _movieUpdateService = movieUpdateService;
         _player = player;
         _memoryService = memoryService;
         _hybridSearch = hybridSearch;
+        _vectorDb = vectorDb;
         _modelName = modelName;
+        _ollamaUrl = modelUrl;
         _httpClient = new HttpClient { BaseAddress = new Uri(modelUrl) };
         
         Debug.WriteLine($"[Agent] Initializing with URL: {modelUrl}, Model: {modelName}");
     }
-
+    public string? ModelName => _modelName;
     public async Task InitializeAsync()
     {
         IsAvailable = false;
@@ -112,32 +120,74 @@ public class MovieAgentService : IAgentService
         try
         {
             Debug.WriteLine($"[Agent] Sending to Ollama: {userMessage}");
+           
+             
+            // 不加载历史记录，仅使用当前查询和电影上下文
+            // RAG: 从向量数据库检索相关电影信息
+            var movieContext = await BuildMovieContextAsync(userMessage);
             
-            var context = _memoryService.BuildContextPrompt(DefaultUserId);
-            var prompt = $"{GetSystemPrompt()}\n\n{context}\n\n用户: {userMessage}\n助手:";
-            
+            // 使用 /api/chat 接口，不包含历史对话
             var requestBody = new
             {
                 model = _modelName,
-                prompt = prompt,
-                stream = false
+                messages = new[]
+                {
+                    new { role = "system", content = GetSystemPrompt() },
+                    new { role = "user", content = $"{movieContext}\n\n{userMessage}" }
+                },
+                stream = true,
+                options = new { temperature = 0.1, num_predict = 512, num_ctx = 1024 }
             };
 
             var json = JsonSerializer.Serialize(requestBody);
             var content = new StringContent(json, Encoding.UTF8, "application/json");
             
-            var response = await _httpClient.PostAsync("/api/generate", content);
-            var responseJson = await response.Content.ReadAsStringAsync();
+            var response = await _httpClient.PostAsync("/api/chat", content);
+            response.EnsureSuccessStatusCode();
             
-            using var doc = JsonDocument.Parse(responseJson);
-            var result = doc.RootElement.GetProperty("response").GetString() ?? "";
+            Debug.WriteLine($"[Agent] Stream started");
+            using var stream = await response.Content.ReadAsStreamAsync();
+            using var reader = new StreamReader(stream);
             
-            Debug.WriteLine($"[Agent] Received: {result}");
+            var result = new StringBuilder();
+            string? line;
+            int chunkCount = 0;
             
-            var finalResult = string.IsNullOrWhiteSpace(result) 
-                ? "抱歉，我无法理解你的请求。" 
-                : result;
+            while ((line = await reader.ReadLineAsync()) != null)
+            {
+                if (string.IsNullOrWhiteSpace(line)) continue;
+                
+                try
+                {
+                    using var doc = JsonDocument.Parse(line);
+                    if (doc.RootElement.TryGetProperty("message", out var message))
+                    {
+                        if (message.TryGetProperty("content", out var contentElement))
+                        {
+                            var chunk = contentElement.GetString();
+                            if (!string.IsNullOrEmpty(chunk))
+                            {
+                                result.Append(chunk);
+                                chunkCount++;
+                                Debug.WriteLine($"[Agent] Chunk {chunkCount}: {chunk.Substring(0, Math.Min(50, chunk.Length))}...");
+                                OnStreamDataReceived?.Invoke(chunk);
+                            }
+                        }
+                    }
+                }
+                catch (Exception ex) 
+                { 
+                    Debug.WriteLine($"[Agent] Parse error: {ex.Message}, line: {line}"); 
+                }
+            }
             
+            Debug.WriteLine($"[Agent] Stream completed, total chunks: {chunkCount}, length: {result.Length}");
+            
+            var finalResult = result.ToString().Trim();
+            if (string.IsNullOrWhiteSpace(finalResult))
+                finalResult = "抱歉，我无法理解你的请求。";
+            
+            Debug.WriteLine($"[Agent] Received: {finalResult}");
             _memoryService.AddMessage(DefaultUserId, userMessage, finalResult);
             
             return finalResult;
@@ -150,6 +200,8 @@ public class MovieAgentService : IAgentService
             return errorMsg;
         }
     }
+
+    public event Action<string>? OnStreamDataReceived;
 
     private async Task<string?> HandleLocalCommand(string userMessage)
     {
@@ -209,7 +261,17 @@ public class MovieAgentService : IAgentService
                 if (movies.Count > 0)
                 {
                     movies[0].UserRating = rating;
-                    await _movieRepo.UpdateAsync(movies[0]);
+                    
+                    // 使用统一更新服务，同步向量数据库
+                    if (_movieUpdateService != null)
+                    {
+                        await _movieUpdateService.UpdateMovieWithVectorAsync(movies[0]);
+                    }
+                    else
+                    {
+                        await _movieRepo.UpdateAsync(movies[0]);
+                    }
+                    
                     return $"已为《{movies[0].Title}》打 {rating} 星";
                 }
             }
@@ -239,26 +301,182 @@ public class MovieAgentService : IAgentService
     }
 
     private static string GetSystemPrompt() => """
-        你是一个专业的电影管家，名叫"小影"。你的职责是帮助用户管理和发现电影。
-        
-        可用命令：
-        - /play 电影名 - 播放电影
-        - /search 关键词 - 搜索电影
-        - /recommend - 推荐电影
-        - /rate 电影名 评分 - 为电影打分
-        
-        你可以执行以下操作：
-        1. 推荐电影：根据用户的喜好、心情、类型推荐电影
-        2. 搜索电影：按标题、类型、演员、导演搜索
-        3. 播放电影：启动播放器播放指定的电影
-        4. 电影信息：提供电影的详细信息（时长、评分、简介等）
-        5. 评分记录：记录用户对电影的评价
-        6. 闲聊交流：与用户进行友好的对话
+        你是电影管家“小影”。回答必须基于本地电影库，禁止编造，禁止推荐外部电影。
 
-        回复要求：
-        - 用中文回复，语气友好热情
-        - 回复简洁明了，不超过200字
-        - 如果用户想看电影，优先推荐本地库中评分高的
-        - 参考对话历史理解用户上下文
+        回答规则：
+        1. 必须使用电影库中的电影标题且电影标题必须用《电影标题》括起来，不管是英文还是中文标题。
+        2. 如果用户询问的信息在电影库中不存在（如具体上映日期），必须直接回复：“此类电影或者这一部电影资料在电影库未收录” 严禁反问用户任何问题。
+        3. 回答按模板回复。
+         
+
+        示例：
+        用户: "电影标题"
+        助手: "《电影标题》
+               年份: XX | 评分:XX | 时长: XX 
+               类型: XX
+               导演: XX
+               主演: XX
+               简介: XX"
+
+        用户: "播放指环王"
+        助手: "正在播放《指环王1：护戒使者》。"
+
+        用户: "有哪些4K电影推荐"
+        助手: "1. 《电影标题1》 - 年份 XX，类型 XX，导演 XX，评分XX分
+               2. 《电影标题2》 - 年份 XX，类型 XX，导演 XX，评分XX分"
+
+        用户: "推荐一部科幻片"
+        助手: "《电影标题》
+               年份: XX | 评分:XX| 时长: XX 
+               类型: XX
+               导演: XX
+               主演: XX
+               简介: XX"
+        
+        用户: "给盗梦空间打5星"
+        助手: "已经给《盗梦空间》打5星。"
+        
         """;
+    // 查询重写提示词
+    private const string QueryRewritePrompt = """
+你是一个电影搜索引擎的查询优化助手。你的任务是将用户的自然语言查询重写为关键词列表，用于向量搜索。
+
+规则：
+1. 只输出用空格分隔的关键词，不要包含任何解释、序号、前缀或后缀。
+2. 保留原查询的核心实体（电影名、人名、类型）。
+3. 不要添加无关词（如“电影”、“片”、“推荐”等）。 
+4. 输出不超过10个关键词。
+
+示例： 
+
+用户: "我想看XX导演的电影"
+重写结果: XX  
+
+用户: "功夫"
+重写结果: 功夫
+
+用户: "推荐一部科幻片"
+重写结果: 科幻片
+
+用户查询: {query}
+重写结果:
+""";
+
+    private async Task<string> BuildMovieContextAsync(string userMessage)
+    {
+        try
+        {
+            // 1. 查询重写：使用AI将用户查询优化为更适合向量搜索的文本
+            //var rewrittenQuery = await RewriteQueryAsync(userMessage);
+            //Debug.WriteLine($"[Agent] Original query: {userMessage}");
+            //Debug.WriteLine($"[Agent] Rewritten query: {rewrittenQuery}");
+
+            // 2. 使用重写后的查询进行搜索
+            var movies = await _hybridSearch.SearchAsync(userMessage, topK: 5);
+            if (movies.Count == 0) 
+                return "【电影库检索结果】\n未找到相关电影，请尝试其他关键词。\n---\n";
+
+            var sb = new StringBuilder();
+            sb.AppendLine("【电影库检索结果】");
+            sb.AppendLine("以下是从本地电影库中检索到的相关电影信息，回答时请参考：");
+            sb.AppendLine("---");
+            
+            foreach (var m in movies)
+            {
+                var genres = ParseGenres(m.Genres);
+                var cast = m.Cast != null && m.Cast.Length > 50 ? m.Cast[..50] + "..." : m.Cast;
+                
+                sb.AppendLine($"  电影标题《{m.Title}》");
+                sb.AppendLine($"  年份: {m.ReleaseYear} | 评分: {m.Rating} | 时长: {FormatRuntime(m.Runtime)}");
+                sb.AppendLine($"  类型: {genres}");
+                sb.AppendLine($"  导演: {m.Director ?? "未知"}");
+                if (!string.IsNullOrEmpty(cast))
+                    sb.AppendLine($"  主演: {cast}");
+                if (!string.IsNullOrWhiteSpace(m.Overview))
+                {
+                    var overview = m.Overview.Length > 150 ? m.Overview[..150] + "..." : m.Overview;
+                    sb.AppendLine($"  简介: {overview}");
+                }
+                sb.AppendLine();
+            }
+            sb.AppendLine("---");
+            return sb.ToString();
+        }
+        catch (Exception ex)
+        {
+            Debug.WriteLine($"[Agent] BuildMovieContext error: {ex.Message}");
+            return "【电影库检索失败】\n无法获取电影信息，请稍后重试。\n---\n";
+        }
+    }
+
+    /// <summary>
+    /// 使用AI重写查询，提升向量搜索效果
+    /// </summary>
+    private async Task<string> RewriteQueryAsync(string query)
+    {
+        try
+        {
+            var request = new
+            {
+                model = _modelName,
+                messages = new[]
+                {
+                    new { role = "system", content = QueryRewritePrompt },
+                    new { role = "user", content = query }
+                },
+                stream = false,
+                options = new { temperature = 0.1, num_predict = 80, num_ctx = 256 }
+            };
+
+            var content = new StringContent(JsonSerializer.Serialize(request), Encoding.UTF8, "application/json");
+            var response = await _httpClient.PostAsync("/api/chat", content);
+            var responseString = await response.Content.ReadAsStringAsync();
+            Console.WriteLine($"原始响应: {responseString}");
+            if (!response.IsSuccessStatusCode)
+            {
+                Debug.WriteLine($"[Agent] Query rewrite failed: {response.StatusCode}");
+                return query; // 降级：返回原始查询
+            }
+
+            var json = await response.Content.ReadFromJsonAsync<JsonElement>();
+            if (json.TryGetProperty("message", out var messageObj) && 
+                messageObj.TryGetProperty("content", out var responseText))
+            {
+                var rewritten = responseText.GetString()?.Trim() ?? query;
+                // 清理可能的引号和多余空白
+                rewritten = rewritten.Trim('"', ' ', '\n', '\r');
+                return string.IsNullOrEmpty(rewritten) ? query : rewritten;
+            }
+
+            return query;
+        }
+        catch (Exception ex)
+        {
+            Debug.WriteLine($"[Agent] Query rewrite error: {ex.Message}");
+            return query; // 降级：返回原始查询
+        }
+    }
+
+    private string ParseGenres(string? genresJson)
+    {
+        if (string.IsNullOrEmpty(genresJson)) return "未知";
+        
+        try
+        {
+            var genres = JsonSerializer.Deserialize<List<string>>(genresJson);
+            return genres != null && genres.Any() ? string.Join("、", genres) : "未知";
+        }
+        catch
+        {
+            return genresJson;
+        }
+    }
+
+    private string FormatRuntime(int? runtime)
+    {
+        if (!runtime.HasValue) return "未知";
+        var hours = runtime.Value / 60;
+        var minutes = runtime.Value % 60;
+        return hours > 0 ? $"{hours}小时{minutes}分钟" : $"{minutes}分钟";
+    }
 }

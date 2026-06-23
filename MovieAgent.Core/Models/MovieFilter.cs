@@ -22,4 +22,8 @@ public class MovieFilter
     public string? HdrType { get; set; }
     
     public List<string>? Tags { get; set; }
+    
+    public List<string>? Director { get; set; }
+    public List<string>? Cast { get; set; }
+    public bool? IsTVSeries { get; set; }
 }

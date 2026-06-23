@@ -42,11 +42,11 @@ namespace MovieAgent.FFmpegDecoder
             }
 
             // 重新检测（在后台线程执行）
-            var result = await Task.Run(() => {
-                DebugLogger.WriteLine($"[Detector] Detecting hardware for {codecId}...");
-                return PerformFullDetection(codecId);
-            });
-
+            //var result = await Task.Run(() => {
+            //    DebugLogger.WriteLine($"[Detector] Detecting hardware for {codecId}...");
+            //     return PerformFullDetection(codecId); 
+            //});
+            var result= PerformFullDetection(codecId); 
             // 保存结果
             _runtimeCache[codecId] = result;
             _configManager.SaveDetectionResult(codecId, result);

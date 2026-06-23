@@ -1,4 +1,5 @@
 @inject IThemeService ThemeService
+@inject ILocalizationService LocalizationService
 
 <MudIconButton 
     Icon="@(ThemeService.CurrentTheme == ThemeMode.Dark ? Icons.Material.Filled.LightMode : Icons.Material.Filled.DarkMode)" 
@@ -8,7 +9,9 @@
     Style="margin-left: 8px;" />
 
 @code {
-    private string CurrentThemeName => ThemeService.CurrentTheme == ThemeMode.Dark ? "切换到亮色模式" : "切换到暗色模式";
+    private string CurrentThemeName => ThemeService.CurrentTheme == ThemeMode.Dark 
+        ? LocalizationService.Translate("LightMode") 
+        : LocalizationService.Translate("DarkMode");
 
     private async void ToggleTheme()
     {

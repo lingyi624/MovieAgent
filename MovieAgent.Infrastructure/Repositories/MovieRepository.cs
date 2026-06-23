@@ -52,6 +52,12 @@ public class MovieRepository : IMovieRepository
                 query = query.Where(m => m.Country != null && filter.Countries.Any(c => m.Country.Contains(c)));
             if (filter.Languages is { Count: > 0 })
                 query = query.Where(m => m.Language != null && filter.Languages.Any(l => m.Language.Contains(l)));
+            if (filter.Director is { Count: > 0 })
+                query = query.Where(m => m.Director != null && filter.Director.Any(d => m.Director.Contains(d)));
+            if (filter.Cast is { Count: > 0 })
+                query = query.Where(m => m.Cast != null && filter.Cast.Any(c => m.Cast.Contains(c)));
+            if (filter.IsTVSeries.HasValue)
+                query = query.Where(m => m.IsTVSeries == filter.IsTVSeries);
 
             query = filter.SortBy?.ToLower() switch
             {
@@ -59,6 +65,9 @@ public class MovieRepository : IMovieRepository
                 "year" => filter.SortDescending ? query.OrderByDescending(m => m.ReleaseYear) : query.OrderBy(m => m.ReleaseYear),
                 "rating" => filter.SortDescending ? query.OrderByDescending(m => m.Rating) : query.OrderBy(m => m.Rating),
                 "created" => filter.SortDescending ? query.OrderByDescending(m => m.CreatedAt) : query.OrderBy(m => m.CreatedAt),
+                "unwatched" => query.OrderBy(m => m.IsWatched).ThenByDescending(m => m.CreatedAt),
+                "recent" => query.OrderByDescending(m => m.WatchedAt).ThenByDescending(m => m.CreatedAt),
+                "filesize" => filter.SortDescending ? query.OrderByDescending(m => m.FileSize) : query.OrderBy(m => m.FileSize),
                 _ => query.OrderByDescending(m => m.CreatedAt)
             };
 
@@ -79,7 +88,9 @@ public class MovieRepository : IMovieRepository
     public async Task<List<Movie>> SearchAsync(string keyword)
         => await _db.Movies.Where(m => m.Title.Contains(keyword)
             || (m.OriginalTitle != null && m.OriginalTitle.Contains(keyword))
-            || (m.Director != null && m.Director.Contains(keyword)))
+            || (m.Director != null && m.Director.Contains(keyword))
+            || (m.Cast != null && m.Cast.Contains(keyword))
+            || (m.Overview != null && m.Overview.Contains(keyword)))
             .OrderByDescending(m => m.Rating)
             .Take(20)
             .ToListAsync();
@@ -144,6 +155,12 @@ public class MovieRepository : IMovieRepository
                 query = query.Where(m => m.Country != null && filter.Countries.Any(c => m.Country.Contains(c)));
             if (filter.Languages is { Count: > 0 })
                 query = query.Where(m => m.Language != null && filter.Languages.Any(l => m.Language.Contains(l)));
+            if (filter.Director is { Count: > 0 })
+                query = query.Where(m => m.Director != null && filter.Director.Any(d => m.Director.Contains(d)));
+            if (filter.Cast is { Count: > 0 })
+                query = query.Where(m => m.Cast != null && filter.Cast.Any(c => m.Cast.Contains(c)));
+            if (filter.IsTVSeries.HasValue)
+                query = query.Where(m => m.IsTVSeries == filter.IsTVSeries);
         }
         
         return await query.CountAsync();
@@ -215,6 +232,48 @@ public class MovieRepository : IMovieRepository
         return allLanguages.OrderBy(l => l).ToList();
     }
 
+    public async Task<List<string>> GetAllDirectorsAsync()
+    {
+        var directors = await _db.Movies
+            .Where(m => !string.IsNullOrEmpty(m.Director))
+            .Select(m => m.Director!)
+            .ToListAsync();
+        
+        var all = new HashSet<string>();
+        foreach (var dir in directors)
+        {
+            foreach (var d in dir.Split(',', StringSplitOptions.RemoveEmptyEntries))
+            {
+                var trimmed = d.Trim();
+                if (!string.IsNullOrEmpty(trimmed))
+                    all.Add(trimmed);
+            }
+        }
+        
+        return all.OrderBy(d => d).ToList();
+    }
+
+    public async Task<List<string>> GetAllCastsAsync()
+    {
+        var casts = await _db.Movies
+            .Where(m => !string.IsNullOrEmpty(m.Cast))
+            .Select(m => m.Cast!)
+            .ToListAsync();
+        
+        var all = new HashSet<string>();
+        foreach (var castList in casts)
+        {
+            foreach (var c in castList.Split(',', StringSplitOptions.RemoveEmptyEntries))
+            {
+                var trimmed = c.Trim();
+                if (!string.IsNullOrEmpty(trimmed))
+                    all.Add(trimmed);
+            }
+        }
+
+        return all.OrderBy(c => c).ToList();
+    }
+
     public async Task<List<string>> GetAllVideoCodecsAsync()
     {
         var codecs = await _db.Movies
@@ -244,12 +303,17 @@ public class MovieRepository : IMovieRepository
         if (filter != null)
         {
             if (!string.IsNullOrWhiteSpace(filter.SearchKeyword))
-                query = query.Where(m => m.Title.Contains(filter.SearchKeyword));
+                query = query.Where(m => m.Title.Contains(filter.SearchKeyword)||
+                m.Director.Contains(filter.SearchKeyword)  ||
+                m.Cast.Contains(filter.SearchKeyword));
+   
             if (filter.Genres is { Count: > 0 })
             {
-                var s = JsonSerializer.Serialize(filter.Genres);
-                s = s.TrimStart('[').TrimStart('"').TrimEnd('"').TrimEnd(']');
-                query = query.Where(m =>   m.Genres.Contains(s));
+                foreach (var genre in filter.Genres)
+                {
+                    string likePattern = $"%\"{genre}\"%";
+                    query = query.Where(m => m.Genres != null && EF.Functions.Like(m.Genres, likePattern));
+                }
             }
             if (filter.MinYear.HasValue)
                 query = query.Where(m => m.ReleaseYear >= filter.MinYear);
@@ -281,6 +345,12 @@ public class MovieRepository : IMovieRepository
                     query = query.Where(m => m.Tags != null && EF.Functions.Like(m.Tags, likePattern));
                 }
             }
+            if (filter.Director is { Count: > 0 })
+                query = query.Where(m => m.Director != null && filter.Director.Any(d => m.Director.Contains(d)));
+            if (filter.Cast is { Count: > 0 })
+                query = query.Where(m => m.Cast != null && filter.Cast.Any(c => m.Cast.Contains(c)));
+            if (filter.IsTVSeries.HasValue)
+                query = query.Where(m => m.IsTVSeries == filter.IsTVSeries);
         }
 
         var movies = await query.ToListAsync();
@@ -298,6 +368,9 @@ public class MovieRepository : IMovieRepository
                 "year" => filter.SortDescending ? grouped.OrderByDescending(m => m.ReleaseYear).ToList() : grouped.OrderBy(m => m.ReleaseYear).ToList(),
                 "rating" => filter.SortDescending ? grouped.OrderByDescending(m => m.Rating).ToList() : grouped.OrderBy(m => m.Rating).ToList(),
                 "created" => filter.SortDescending ? grouped.OrderByDescending(m => m.CreatedAt).ToList() : grouped.OrderBy(m => m.CreatedAt).ToList(),
+                "unwatched" => grouped.OrderBy(m => m.IsWatched).ThenByDescending(m => m.CreatedAt).ToList(),
+                "recent" => grouped.OrderByDescending(m => m.WatchedAt).ThenByDescending(m => m.CreatedAt).ToList(),
+                "filesize" => filter.SortDescending ? grouped.OrderByDescending(m => m.FileSize).ToList() : grouped.OrderBy(m => m.FileSize).ToList(),
                 _ => grouped.OrderByDescending(m => m.CreatedAt).ToList()
             };
 
@@ -314,8 +387,9 @@ public class MovieRepository : IMovieRepository
         if (filter != null)
         {
             if (!string.IsNullOrWhiteSpace(filter.SearchKeyword))
-                query = query.Where(m => m.Title.Contains(filter.SearchKeyword));
-            if (filter.Genres is { Count: > 0 })
+                query = query.Where(m => m.Title.Contains(filter.SearchKeyword) ||
+                               m.Director.Contains(filter.SearchKeyword) ||
+                               m.Cast.Contains(filter.SearchKeyword)); if (filter.Genres is { Count: > 0 })
                 foreach (var genre in filter.Genres)
                 {
                     string likePattern = $"%\"{genre}\"%";
@@ -343,6 +417,12 @@ public class MovieRepository : IMovieRepository
                 query = query.Where(m => m.Country != null && filter.Countries.Any(c => m.Country.Contains(c)));
             if (filter.Languages is { Count: > 0 })
                 query = query.Where(m => m.Language != null && filter.Languages.Any(l => m.Language.Contains(l)));
+            if (filter.Director is { Count: > 0 })
+                query = query.Where(m => m.Director != null && filter.Director.Any(d => m.Director.Contains(d)));
+            if (filter.Cast is { Count: > 0 })
+                query = query.Where(m => m.Cast != null && filter.Cast.Any(c => m.Cast.Contains(c)));
+            if (filter.IsTVSeries.HasValue)
+                query = query.Where(m => m.IsTVSeries == filter.IsTVSeries);
         }
 
         var movies = await query.ToListAsync();
@@ -357,23 +437,27 @@ public class MovieRepository : IMovieRepository
 
     public async Task<List<string>> GetMovieVideoPathsAsync(int movieId)
     {
-        var movie = await _db.Movies.FindAsync(movieId);
-        if (movie == null || string.IsNullOrEmpty(movie.FilePath))
-            return new List<string>();
-
-        var directory = Path.GetDirectoryName(movie.FilePath);
-        if (string.IsNullOrEmpty(movie.FilePath))
-            return new List<string>();
-
-        var videoExtensions = new[] { ".mp4", ".mkv", ".avi", ".mov", ".flv", ".wmv", ".webm", ".m4v" };
         
-        var videoFiles = Directory.GetFiles(directory)
-            .Where(f => videoExtensions.Any(ext => f.EndsWith(ext, StringComparison.OrdinalIgnoreCase)))
-            .OrderBy(f => f)
-            .ToList();
+            var movie = await _db.Movies.FindAsync(movieId);
+            if (movie == null || string.IsNullOrEmpty(movie.FilePath))
+                return new List<string>();
 
-        return videoFiles;
+            var directory = Path.GetDirectoryName(movie.FilePath);
+            if (string.IsNullOrEmpty(movie.FilePath))
+                return new List<string>();
+
+            var videoExtensions = new[] { ".mp4", ".mkv", ".avi", ".mov", ".flv", ".wmv", ".webm", ".m4v" };
+       
+            var videoFiles = Directory.GetFiles(directory)
+                .Where(f => videoExtensions.Any(ext => f.EndsWith(ext, StringComparison.OrdinalIgnoreCase)))
+                .OrderBy(f => f)
+                .ToList();
+            return videoFiles;
+        
     }
+
+             
+       
 
     /// <summary>
     /// 从硬盘目录获取海报图片（当数据库海报字段为空时）
@@ -502,6 +586,7 @@ public class MovieRepository : IMovieRepository
     /// <returns>是否成功更新</returns>
     public async Task<bool> UpdatePosterFromDirectoryAsync(Movie movie)
     {
+        if (movie == null) return false;
         if (string.IsNullOrEmpty(movie.FilePath))
             return false;
 

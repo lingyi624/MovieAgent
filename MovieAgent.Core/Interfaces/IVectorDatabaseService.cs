@@ -55,8 +55,49 @@ public interface IVectorDatabaseService
     /// 使用 Ollama 生成文本嵌入向量
     /// </summary>
     /// <param name="text">输入文本</param>
+    /// <param name="isQuery">是否为查询向量（true=search_query前缀，false=search_document前缀）</param>
     /// <returns>768维浮点向量</returns>
-    Task<float[]> GenerateEmbeddingAsync(string text);
+    Task<float[]> GenerateEmbeddingAsync(string text, bool isQuery = false);
+
+    /// <summary>
+    /// 生成查询向量（带 search_query 前缀）
+    /// </summary>
+    Task<float[]> GenerateQueryEmbeddingAsync(string query);
+
+    /// <summary>
+    /// 生成文档向量（带 search_document 前缀）
+    /// </summary>
+    Task<float[]> GenerateDocumentEmbeddingAsync(string document);
+
+    /// <summary>
+    /// 批量生成文档向量（带 search_document 前缀）
+    /// </summary>
+    /// <param name="textsWithIndex">文本列表，每个元素包含(索引, 文本)</param>
+    /// <param name="progress">进度回调</param>
+    /// <returns>生成的向量列表，按原始索引排序</returns>
+    Task<List<(int Index, float[] Vector)>> BatchGenerateDocumentEmbeddingsAsync(
+        List<(int Index, string Text)> textsWithIndex,
+        IProgress<(int Current, int Total)>? progress = null);
+
+    /// <summary>
+    /// 批量添加电影向量（单次批量插入）
+    /// </summary>
+    Task<int> BatchAddMoviesAsync(List<(int MovieId, float[] Vector, string Title, string? Overview)> movies);
+
+    /// <summary>
+    /// 批量生成并添加向量（一体化操作）
+    /// </summary>
+    /// <param name="movies">电影列表，每项包含(电影ID, 嵌入文本, 标题, 简介)</param>
+    /// <param name="progress">进度回调</param>
+    /// <returns>添加成功的数量</returns>
+    Task<int> BatchGenerateAndAddAsync(
+        List<(int MovieId, string Text, string Title, string? Overview)> movies,
+        IProgress<(int Current, int Total, string Stage)>? progress = null);
+
+    /// <summary>
+    /// 获取索引状态
+    /// </summary>
+    Task<string> GetIndexStatusAsync();
 
     /// <summary>
     /// 获取数据库中的记录总数

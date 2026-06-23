@@ -3,6 +3,7 @@ using MovieAgent.Core.Interfaces;
 using System.Diagnostics;
 using System.Globalization;
 using System.IO;
+using System.Net.WebSockets;
 using System.Text.RegularExpressions;
 
 namespace MovieAgent.Infrastructure.Services;
@@ -64,33 +65,36 @@ public class MovieScannerService : IMovieScannerService
 
     public async Task<List<string>> ScanVideoFilesAsync(List<string> sharePaths)
     {
-        var files = new List<string>();
-        foreach (var path in sharePaths)
+        return await Task.Run(() =>
         {
-            if (!Directory.Exists(path) && !Directory.GetFiles(path).Any())
+            var files = new List<string>();
+            foreach (var path in sharePaths)
             {
-                Debug.WriteLine($"[Scanner] Path not found: {path}");
-                continue;
-            }
-
-            try
-            { 
-                var found = new List<string>(); 
-                GetFilesSafe(path, VideoExtensions, found);
-                files.AddRange(found);
-                ScanProgressChanged?.Invoke(this, new ScanProgressEventArgs
+                if (!Directory.Exists(path))
                 {
-                    CurrentPath = path,
-                    FoundCount = found.Count(),
-                    TotalScanned = files.Count
-                });
+                    Debug.WriteLine($"[Scanner] Path not found: {path}");
+                    continue;
+                }
+
+                try
+                {
+                    var found = new List<string>();
+                    GetFilesSafe(path, VideoExtensions, found);
+                    files.AddRange(found);
+                    ScanProgressChanged?.Invoke(this, new ScanProgressEventArgs
+                    {
+                        CurrentPath = path,
+                        FoundCount = found.Count,
+                        TotalScanned = files.Count
+                    });
+                }
+                catch (Exception ex)
+                {
+                    Debug.WriteLine($"[Scanner] Error scanning {path}: {ex.Message}");
+                }
             }
-            catch (Exception ex)
-            {
-                Debug.WriteLine($"[Scanner] Error scanning {path}: {ex.Message}");
-            }
-        }
-        return files;
+            return files;
+        });
     }
 
     public async Task<List<string>> ScanNewVideoFilesAsync(List<string> sharePaths)
@@ -147,78 +151,196 @@ public class MovieScannerService : IMovieScannerService
 
     public async Task<int> ImportNewMoviesAsync(List<string> filePaths, CancellationToken ct = default)
     {
-        int newCount = 0, skipped = 0;
         int total = filePaths.Count;
         
-        for (int i = 0; i < total; i++)
+        // 阶段1：扫描文件，收集数据（不保存到数据库）
+       var movies= await _repo.GetAllAsync(); 
+        var movieDataList = new List<(string FilePath, Movie Movie, MediaInfoResult? MediaInfo)>();
+         foreach (var movie in movies)
         {
-            if (ct.IsCancellationRequested) break;
-            var fp = filePaths[i];
-            
-            ScanProgressChanged?.Invoke(this, new ScanProgressEventArgs
+            movieDataList.Add((movie.FilePath, movie, null));
+
+            int scannedCount = 0;
+
+            ReportProgress(new ScanProgressEventArgs
             {
-                CurrentFileName = Path.GetFileName(fp),
-                CurrentIndex = i + 1,
+                Stage = "Scanning",
                 TotalFiles = total,
-                TotalScanned = newCount + skipped
+                TotalScanned = 0
             });
+        }
+        
+        //for (int i = 0; i < total; i++)
+        //{
+        //    if (ct.IsCancellationRequested) break;
+        //    var fp = filePaths[i];
+            
+        //    scannedCount++;
+            
+        //    // 只在处理完一批（每50个）或者最后更新进度，避免频繁UI更新
+        //    if (scannedCount % 50 == 0 || scannedCount == total)
+        //    {
+        //        ReportProgress(new ScanProgressEventArgs
+        //        {
+        //            Stage = "Scanning",
+        //            CurrentFileName = Path.GetFileName(fp),
+        //            CurrentIndex = i + 1,
+        //            TotalFiles = total,
+        //            TotalScanned = scannedCount
+        //        });
+        //    }
 
-            try
+        //    try
+        //    {
+        //        // 检查文件是否已存在
+        //        var existingMovie = await _repo.GetByFilePathAsync(fp);
+                
+        //        Movie movie;
+        //        if (existingMovie != null)
+        //        {
+        //            movie = existingMovie;
+        //        }
+        //        else
+        //        {
+        //            movie = ParseFileName(fp);
+        //            if (movie == null) continue;
+        //        }
+
+        //        MediaInfoResult? mediaInfo = null;
+        //        try
+        //        {
+        //            mediaInfo = _mediaInfo.GetMediaInfo(fp);
+        //            if (mediaInfo.Success)
+        //            {
+        //                movie.VideoCodec = mediaInfo.VideoCodec;
+        //                movie.AudioCodec = mediaInfo.AudioCodec;
+        //                movie.Resolution = mediaInfo.Resolution;
+        //                movie.HdrType = mediaInfo.HdrType;
+        //            }
+        //        }
+        //        catch (Exception ex)
+        //        {
+        //            Debug.WriteLine($"[Scanner] MediaInfo error: {ex.Message}");
+        //        }
+
+        //        try
+        //        {
+        //            await _tmdb.FillMovieMetadataAsync(movie);
+        //        }
+        //        catch { /* metadata optional */ }
+
+        //        movieDataList.Add((fp, movie, mediaInfo));
+        //    }
+        //    catch (Exception ex)
+        //    {
+        //        Debug.WriteLine($"[Scanner] Error: {ex.Message}");
+        //    }
+        //}
+
+        if (movieDataList.Count == 0)
+        {
+            await UpdateLastScanTimeAsync();
+            return 0;
+        }
+
+        // 阶段2：两个任务并行处理
+        int dbCount = 0, vectorCount = 0;
+        var lockObj = new object();
+        
+        // 使用简单的 Action 来报告进度
+        Action<int, int> reportProgress = (db, vector) =>
+        {
+            lock (lockObj)
             {
-                if (await _repo.ExistsByFilePathAsync(fp)) { skipped++; continue; }
-                var movie = ParseFileName(fp);
-                if (movie == null) { skipped++; continue; }
+                dbCount = db;
+                vectorCount = vector;
+            }
+            
+            ReportProgress(new ScanProgressEventArgs
+            {
+                Stage = "Processing",
+                TotalFiles = movieDataList.Count,
+                DbImported = db,
+                VectorUpdated = vector
+            });
+        };
 
+        // 任务1：保存到 SQLite 数据库
+        var dbTask = Task.Run(async () =>
+        {
+            int count = 0;
+            foreach (var (fp, movie, mediaInfo) in movieDataList)
+            {
+                if (ct.IsCancellationRequested) break;
                 try
                 {
-                    var mediaInfo = _mediaInfo.GetMediaInfo(fp);
-                    if (mediaInfo.Success)
-                    {
-                        movie.VideoCodec = mediaInfo.VideoCodec;
-                        movie.AudioCodec = mediaInfo.AudioCodec;
-                        movie.Resolution = mediaInfo.Resolution;
-                        movie.HdrType = mediaInfo.HdrType;
-                        Debug.WriteLine($"[Scanner] Media parsed: {movie.VideoCodec}, {movie.AudioCodec}, {movie.Resolution}, HDR: {movie.HdrType}");
-                    }
+                    // 实际的数据库操作应该在这里
+                    count++;
                 }
                 catch (Exception ex)
                 {
-                    Debug.WriteLine($"[Scanner] MediaInfo error: {ex.Message}");
+                    Debug.WriteLine($"[Scanner] DB Error: {ex.Message}");
                 }
+                
+                reportProgress(count, vectorCount);
+            }
+            return count;
+        }, ct);
 
+        // 任务2：更新向量数据库（包含生成嵌入文本）
+        var vectorTask = Task.Run(async () =>
+        {
+            int count = 0;
+            var moviesToVector = movieDataList
+                .Where(x => x.Movie.Id > 0)
+                .Select(x => x.Movie)
+                .ToList();
+            
+            if (_vectorDb != null && moviesToVector.Count > 0)
+            {
                 try
                 {
-                    await _tmdb.FillMovieMetadataAsync(movie);
+                    // 准备向量数据
+                    var vectorData = moviesToVector
+                        .Select(m => (m.Id, BuildEmbeddingText(m), m.Title ?? "", m.Overview))
+                        .ToList();
+                    
+                    // 使用批量接口（每批1000个）生成并添加向量
+                    count = await _vectorDb.BatchGenerateAndAddAsync(vectorData, new Progress<(int Current, int Total, string Stage)>(p =>
+                    {
+                        reportProgress(dbCount, p.Current);
+                    }));
                 }
-                catch { /* metadata optional */ }
-
-                await _repo.AddAsync(movie);
-                newCount++;
-
-                if (_vectorDb != null)
+                catch (Exception ex)
                 {
-                    try
-                    {
-                        await UpdateVectorDatabaseAsync(movie);
-                    }
-                    catch (Exception ex)
-                    {
-                        Debug.WriteLine($"[Scanner] Vector DB update failed for {movie.Title}: {ex.Message}");
-                    }
+                    Debug.WriteLine($"[Scanner] Vector Error: {ex.Message}");
                 }
             }
-            catch { skipped++; }
-        }
+            return count;
+        }, ct);
+
+        // 等待所有任务完成
+        await Task.WhenAll(dbTask, vectorTask);
+        
+        int dbResult = dbTask.Result;
+        int vectorResult = vectorTask.Result;
 
         await UpdateLastScanTimeAsync();
 
-        ScanCompleted?.Invoke(this, new ScanCompletedEventArgs
+        ReportProgress(new ScanProgressEventArgs
         {
-            TotalFiles = filePaths.Count,
-            NewMovies = newCount,
-            Skipped = skipped
+            Stage = "Completed",
+            TotalFiles = movieDataList.Count,
+            DbImported = dbResult,
+            VectorUpdated = vectorResult
         });
-        return newCount;
+
+        return dbResult;
+    }
+    
+    private void ReportProgress(ScanProgressEventArgs args)
+    {
+        ScanProgressChanged?.Invoke(this, args);
     }
 
     public async Task<int> ImportIncrementalMoviesAsync(List<string> sharePaths, CancellationToken ct = default)
@@ -247,123 +369,11 @@ public class MovieScannerService : IMovieScannerService
         }
     }
 
-    private static readonly Regex YearRegex = new Regex(@"\b(19|20)\d{2}\b", RegexOptions.Compiled);
-    private static readonly Regex ResolutionRegex = new Regex(@"\b(4K|2160p|1080p|720p)\b", RegexOptions.Compiled | RegexOptions.IgnoreCase);
-    private static readonly Regex VideoCodecRegex = new Regex(@"\b(x265|HEVC|x264|AVC|AV1)\b", RegexOptions.Compiled | RegexOptions.IgnoreCase);
-    private static readonly Regex AudioCodecRegex = new Regex(@"\b(DTS-HD|TrueHD|DTS|AC3|AAC|Atmos)\b", RegexOptions.Compiled | RegexOptions.IgnoreCase);
-    private static readonly Regex ReleaseGroupRegex = new Regex(@"[-_\s]+(SeeHD|CtrlHD|NTb|DIMENSION|Felony|SPARKS|BOBO)$", RegexOptions.Compiled | RegexOptions.IgnoreCase);
-    private static readonly string[] CleanupPatterns = {
-        @"[\.\-_]",
-        @"(4K|2160p|1080p|720p|HDR|HDR10|DV|HEVC|H\.?264|H\.?265|AVC|AV1|BluRay|WEB-DL|WEBRip|REMUX|PROPER|REPACK|DSNP|NF|AMZN|HMAX|ATVP|DDP?5\.1|Atmos|TrueHD|DTS-HD|DTS|MA|AAC|AC3|MP3|FLAC|HDRip|BDRip|XviD|DivX|S\d{2}E\d{2})"
-    };
+  
 
     public static Movie? ParseFileName(string filePath)
-    {
-        if (string.IsNullOrWhiteSpace(filePath)) return null;
-        string fileName;
-        try { fileName = Path.GetFileNameWithoutExtension(filePath); }
-        catch (ArgumentException) { return null; }
-        if (string.IsNullOrWhiteSpace(fileName)) return null;
-
-        string chineseTitle = null;
-        string englishTitle = null;
-        int? year = null;
-
-        var bracketMatch = Regex.Match(fileName, @"\[(.*?)\]");
-        if (bracketMatch.Success)
-        {
-            chineseTitle = bracketMatch.Groups[1].Value.Trim();
-            string remainingAfterBracket = fileName.Substring(bracketMatch.Index + bracketMatch.Length);
-
-            var yearMatch = YearRegex.Match(remainingAfterBracket);
-            if (yearMatch.Success)
-            {
-                year = int.Parse(yearMatch.Value);
-                string englishCandidate = remainingAfterBracket.Substring(0, yearMatch.Index);
-                englishCandidate = Regex.Replace(englishCandidate, @"[\.\-_]", " ");
-                englishCandidate = Regex.Replace(englishCandidate, @"\b(BluRay|WEB-DL|WEBRip|REMUX|PROPER|REPACK|DSNP|NF|AMZN|HMAX|ATVP|DDP?5\.1|Atmos|TrueHD|DTS-HD|DTS|MA|AAC|AC3|MP3|FLAC|HDRip|BDRip|XviD|DivX|10bit|8bit|x265|x264|HEVC|AVC|AV1|2Audio|MultiAudio|BOBO)\b", "", RegexOptions.IgnoreCase);
-                englishCandidate = Regex.Replace(englishCandidate, @"\s+", " ").Trim();
-                if (!string.IsNullOrEmpty(englishCandidate))
-                {
-                    var textInfo = CultureInfo.InvariantCulture.TextInfo;
-                    englishTitle = textInfo.ToTitleCase(englishCandidate.ToLower());
-                }
-            }
-        }
-
-        if (!string.IsNullOrEmpty(chineseTitle))
-        {
-            var resolution = ResolutionRegex.Match(fileName).Value?.ToUpper();
-            var videoCodec = VideoCodecRegex.Match(fileName).Value?.ToUpper();
-            var audioCodec = AudioCodecRegex.Match(fileName).Value?.ToUpper();
-
-            var fileInfo = new FileInfo(filePath);
-            return new Movie
-            {
-                Title = chineseTitle,
-                OriginalTitle = englishTitle,
-                ReleaseYear = year,
-                Resolution = resolution,
-                VideoCodec = videoCodec,
-                AudioCodec = audioCodec,
-                FilePath = filePath,
-                FileSize = fileInfo.Exists ? fileInfo.Length : 0,
-                IsWatched = false,
-                IsFavorite = false,
-                CreatedAt = DateTime.UtcNow,
-                UpdatedAt = DateTime.UtcNow
-            };
-        }
-
-        string workingTitle = fileName;
-        year = null;
-
-        var yearMatchGeneral = YearRegex.Match(workingTitle);
-        if (yearMatchGeneral.Success)
-        {
-            year = int.Parse(yearMatchGeneral.Value);
-            workingTitle = workingTitle.Replace(yearMatchGeneral.Value, "");
-        }
-
-        workingTitle = Regex.Replace(workingTitle, @"[\[\(].*?[\]\)]", "");
-
-        var resolutionGen = ResolutionRegex.Match(workingTitle).Value?.ToUpper();
-        var videoCodecGen = VideoCodecRegex.Match(workingTitle).Value?.ToUpper();
-        var audioCodecGen = AudioCodecRegex.Match(workingTitle).Value?.ToUpper();
-
-        workingTitle = ReleaseGroupRegex.Replace(workingTitle, "");
-        foreach (var pattern in CleanupPatterns)
-            workingTitle = Regex.Replace(workingTitle, pattern, " ", RegexOptions.IgnoreCase);
-
-        workingTitle = Regex.Replace(workingTitle, @"\b(?![A-Z][a-z]+\b)[A-Z0-9]+\b", "");
-        workingTitle = Regex.Replace(workingTitle, @"\s+", " ").Trim();
-
-        if (!string.IsNullOrWhiteSpace(workingTitle))
-        {
-            var titleInfo = new CultureInfo("en-US", false).TextInfo;
-            workingTitle = titleInfo.ToTitleCase(workingTitle.ToLower());
-        }
-        else
-        {
-            return null;
-        }
-
-        var fileInfoGen = new FileInfo(filePath);
-        return new Movie
-        {
-            Title = workingTitle,
-            OriginalTitle = null,
-            ReleaseYear = year,
-            Resolution = resolutionGen,
-            VideoCodec = videoCodecGen,
-            AudioCodec = audioCodecGen,
-            FilePath = filePath,
-            FileSize = fileInfoGen.Exists ? fileInfoGen.Length : 0,
-            IsWatched = false,
-            IsFavorite = false,
-            CreatedAt = DateTime.UtcNow,
-            UpdatedAt = DateTime.UtcNow
-        };
+    { 
+        return UltimateMovieParser.ParseFileName(filePath);
     }
 
     private async Task UpdateVectorDatabaseAsync(Movie movie)
@@ -379,7 +389,8 @@ public class MovieScannerService : IMovieScannerService
                 return;
             }
 
-            var vector = await _vectorDb.GenerateEmbeddingAsync(text);
+            // 使用 search_document 前缀生成文档向量
+            var vector = await _vectorDb.GenerateDocumentEmbeddingAsync(text);
             if (vector == null || vector.Length == 0)
             {
                 Debug.WriteLine($"[Scanner] Empty embedding for: {movie.Title}");
@@ -396,31 +407,252 @@ public class MovieScannerService : IMovieScannerService
         }
     }
 
+    /// <summary>
+    /// 批量更新向量数据库（推荐使用，性能更高）
+    /// </summary>
+    /// <param name="movies">电影列表</param>
+    /// <param name="progress">进度回调</param>
+    /// <returns>成功更新的数量</returns>
+    public async Task<int> BatchUpdateVectorDatabaseAsync(List<Movie> movies, IProgress<(int Current, int Total)>? progress = null)
+    {
+        if (_vectorDb == null || movies.Count == 0) return 0;
+
+        try
+        {
+            Debug.WriteLine($"[Scanner] 开始批量更新向量数据库，共 {movies.Count} 部电影");
+            
+            // 准备批量数据
+            var movieData = new List<(int MovieId, string Text, string Title, string? Overview)>();
+            
+            foreach (var movie in movies)
+            {
+                if (movie.Id == 0) continue;
+                
+                var text = BuildEmbeddingText(movie);
+                if (string.IsNullOrWhiteSpace(text))
+                {
+                    Debug.WriteLine($"[Scanner] 跳过空嵌入文本: {movie.Title}");
+                    continue;
+                }
+                
+                // 输出嵌入文本的前100个字符（用于调试）
+                Debug.WriteLine($"[Scanner] 生成嵌入文本: {movie.Title} - {text[..Math.Min(text.Length, 100)]}...");
+                
+                movieData.Add((movie.Id, text, movie.Title, movie.Overview));
+            }
+
+            if (movieData.Count == 0) 
+            {
+                Debug.WriteLine("[Scanner] 没有有效的嵌入数据");
+                return 0;
+            }
+
+            Debug.WriteLine($"[Scanner] 准备批量生成 {movieData.Count} 个向量...");
+
+            // 使用批量生成并添加方法
+            var progressWrapper = new Progress<(int Current, int Total, string Stage)>(p =>
+            {
+                Debug.WriteLine($"[Scanner] 批量更新进度: {p.Current}/{p.Total} - {p.Stage}");
+                progress?.Report((p.Current, p.Total));
+            });
+
+            var addedCount = await _vectorDb.BatchGenerateAndAddAsync(movieData, progressWrapper);
+            
+            Debug.WriteLine($"[Scanner] 批量向量更新完成: {addedCount} 部电影");
+            return addedCount;
+        }
+        catch (Exception ex)
+        {
+            Debug.WriteLine($"[Scanner] BatchUpdateVectorDatabaseAsync 失败: {ex.Message}");
+            throw;
+        }
+    }
+
+    /// <summary>
+    /// 更新所有电影的向量（重新生成全部）
+    /// </summary>
+    public async Task<int> RegenerateAllVectorsAsync(IProgress<(int Current, int Total)>? progress = null)
+    {
+        if (_vectorDb == null) return 0;
+
+        try
+        {
+            Debug.WriteLine("[Scanner] Regenerating all vectors...");
+            
+            // 获取所有电影
+            var allMovies = await _repo.GetAllAsync();
+            if (allMovies.Count == 0) return 0;
+
+            Debug.WriteLine($"[Scanner] Found {allMovies.Count} movies to regenerate vectors");
+
+            return await BatchUpdateVectorDatabaseAsync(allMovies, progress);
+        }
+        catch (Exception ex)
+        {
+            Debug.WriteLine($"[Scanner] RegenerateAllVectorsAsync failed: {ex.Message}");
+            throw;
+        }
+    }
+
     private string BuildEmbeddingText(Movie movie)
     {
         var parts = new List<string>();
         
+        // 基本信息 - 使用中文标签
         if (!string.IsNullOrWhiteSpace(movie.Title))
-            parts.Add(movie.Title);
+            parts.Add($"电影标题：{movie.Title}");
+        
+        if (!string.IsNullOrWhiteSpace(movie.OriginalTitle))
+            parts.Add($"原名：{movie.OriginalTitle}");
+        
+        if (!string.IsNullOrWhiteSpace(movie.Tagline))
+            parts.Add($"标语：{movie.Tagline}");
+        
+        // 上映信息
+        if (movie.ReleaseDate.HasValue)
+            parts.Add($"上映日期：{movie.ReleaseDate.Value:yyyy年MM月dd日}");
         
         if (movie.ReleaseYear.HasValue)
-            parts.Add($"Year: {movie.ReleaseYear.Value}");
+            parts.Add($"上映年份：{movie.ReleaseYear.Value}年");
         
-        if (!string.IsNullOrWhiteSpace(movie.Overview))
-            parts.Add(movie.Overview);
+        if (!string.IsNullOrWhiteSpace(movie.Status))
+            parts.Add($"状态：{movie.Status}");
         
+        // 制片信息
+        if (!string.IsNullOrWhiteSpace(movie.ProductionCompanies))
+            parts.Add($"制片公司：{ParseJsonList(movie.ProductionCompanies)}");
+        
+        if (!string.IsNullOrWhiteSpace(movie.ProductionCountries))
+            parts.Add($"制片国家：{ParseJsonList(movie.ProductionCountries)}");
+        
+        if (!string.IsNullOrWhiteSpace(movie.OriginCountry))
+            parts.Add($"原产国：{movie.OriginCountry}");
+        
+        if (!string.IsNullOrWhiteSpace(movie.Country))
+            parts.Add($"国家：{movie.Country}");
+        
+        // 财务信息
+        if (movie.Budget.HasValue && movie.Budget > 0)
+            parts.Add($"预算：{movie.Budget.Value:N0}美元");
+        
+        if (movie.Revenue.HasValue && movie.Revenue > 0)
+            parts.Add($"票房：{movie.Revenue.Value:N0}美元");
+        
+        // 语言信息
+        if (!string.IsNullOrWhiteSpace(movie.OriginalLanguage))
+            parts.Add($"原始语言：{GetLanguageName(movie.OriginalLanguage)}");
+        
+        if (!string.IsNullOrWhiteSpace(movie.Language))
+            parts.Add($"语言：{movie.Language}");
+        
+        if (!string.IsNullOrWhiteSpace(movie.AudioLanguages))
+            parts.Add($"音频语言：{movie.AudioLanguages}");
+        
+        // 类型和关键词
         if (!string.IsNullOrWhiteSpace(movie.Genres))
-            parts.Add($"Genres: {movie.Genres}");
+            parts.Add($"类型：{ParseJsonList(movie.Genres)}");
+        
+        if (!string.IsNullOrWhiteSpace(movie.Keywords))
+            parts.Add($"关键词：{ParseJsonList(movie.Keywords)}");
+        
+        if (!string.IsNullOrWhiteSpace(movie.AlternativeTitles))
+            parts.Add($"别名：{movie.AlternativeTitles}");
+        
+        // 演职人员
+        if (!string.IsNullOrWhiteSpace(movie.Director))
+            parts.Add($"导演：{movie.Director}");
+        
+        if (!string.IsNullOrWhiteSpace(movie.Writer))
+            parts.Add($"编剧：{movie.Writer}");
+        
+        if (!string.IsNullOrWhiteSpace(movie.Cast))
+            parts.Add($"演员：{movie.Cast}");
+        
+        // 视频技术信息
+        if (!string.IsNullOrWhiteSpace(movie.VideoCodec))
+            parts.Add($"视频编码：{movie.VideoCodec}");
         
         if (!string.IsNullOrWhiteSpace(movie.Resolution))
-            parts.Add($"Resolution: {movie.Resolution}");
+            parts.Add($"分辨率：{movie.Resolution}");
         
-        if (!string.IsNullOrWhiteSpace(movie.VideoCodec))
-            parts.Add($"Video: {movie.VideoCodec}");
+        if (movie.Width.HasValue && movie.Height.HasValue)
+            parts.Add($"尺寸：{movie.Width}x{movie.Height}");
         
+        if (movie.FrameRate.HasValue)
+            parts.Add($"帧率：{movie.FrameRate}");
+        
+        if (!string.IsNullOrWhiteSpace(movie.AspectRatio))
+            parts.Add($"画幅比例：{movie.AspectRatio}");
+        
+        if (!string.IsNullOrWhiteSpace(movie.HdrType))
+            parts.Add($"HDR类型：{movie.HdrType}");
+        
+        if (!string.IsNullOrWhiteSpace(movie.ColorSpace))
+            parts.Add($"色彩空间：{movie.ColorSpace}");
+        
+        if (!string.IsNullOrWhiteSpace(movie.BitDepth))
+            parts.Add($"位深：{movie.BitDepth}");
+        
+        // 音频技术信息
         if (!string.IsNullOrWhiteSpace(movie.AudioCodec))
-            parts.Add($"Audio: {movie.AudioCodec}");
+            parts.Add($"音频编码：{movie.AudioCodec}");
+        
+        if (!string.IsNullOrWhiteSpace(movie.AudioChannels))
+            parts.Add($"音频声道：{movie.AudioChannels}");
+        
+        if (!string.IsNullOrWhiteSpace(movie.SubtitleFormats))
+            parts.Add($"字幕格式：{movie.SubtitleFormats}");
+        
+        // 评分和收藏
+        if (movie.Rating.HasValue)
+            parts.Add($"评分：{movie.Rating:F1}分");
+        
+        if (movie.VoteCount.HasValue)
+            parts.Add($"投票数：{movie.VoteCount.Value:N0}");
+        
+        if (movie.Popularity.HasValue)
+            parts.Add($"人气：{movie.Popularity:F1}");
+        
+        if (movie.Runtime.HasValue)
+        {
+            var hours = movie.Runtime.Value / 60;
+            var minutes = movie.Runtime.Value % 60;
+            var runtimeStr = hours > 0 ? $"{hours}小时{minutes}分钟" : $"{minutes}分钟";
+            parts.Add($"时长：{runtimeStr}");
+        }
+        
+        // 简介
+        if (!string.IsNullOrWhiteSpace(movie.Overview))
+            parts.Add($"简介：{movie.Overview}");
 
-        return string.Join(" ", parts);
+        return string.Join("。", parts);
+    }
+
+    private string ParseJsonList(string? json)
+    {
+        if (string.IsNullOrEmpty(json)) return "";
+        
+        try
+        {
+            var list = System.Text.Json.JsonSerializer.Deserialize<List<string>>(json);
+            return list != null && list.Any() ? string.Join("、", list) : json;
+        }
+        catch
+        {
+            return json;
+        }
+    }
+
+    private string GetLanguageName(string code)
+    {
+        var languageMap = new Dictionary<string, string>
+        {
+            { "en", "英语" }, { "zh", "中文" }, { "ja", "日语" },
+            { "ko", "韩语" }, { "fr", "法语" }, { "de", "德语" },
+            { "it", "意大利语" }, { "es", "西班牙语" }, { "ru", "俄语" },
+            { "hi", "印地语" }, { "th", "泰语" }, { "pt", "葡萄牙语" }
+        };
+        
+        return languageMap.TryGetValue(code.ToLower(), out var name) ? name : code.ToUpper();
     }
 }

@@ -1,25 +1,29 @@
 @inject IMovieRepository MovieRepo
 @inject NavigationManager NavigationManager
+@inject ILocalizationService LocalizationService
+@inject IJSRuntime JSRuntime
 
 <MudTextField T="string" 
               @bind-Value="_searchText"
-              Placeholder="搜索电影..."
+              Placeholder="@LocalizationService.Translate("SearchPlaceholder")"
               Adornment="Adornment.End"
               AdornmentIcon="@Icons.Material.Filled.Search"
-              Style="width: 350px; background: rgba(255,255,255,0.08); border-radius: 20px; border: 1px solid rgba(255,255,255,0.1);"
-              color="Color.Inherit"
+              Style="@TextFieldStyle"
+              color="Color.Inherit" OnAdornmentClick="@ShowSearchPanel"
               Variant="Variant.Outlined"
-               OnKeyUp="HandleKeyUp"
-               @onfocus="ShowSearchPanel"  
-              
-              inputStyle="color: white; font-size: 13px;"
+              OnKeyUp="HandleKeyUp"
+              @onfocus="ShowSearchPanel"
+              @onblur="HandleBlur"
+              inputStyle="@InputStyle"
               AdornmentColor="Color.Inherit" />
 
 <MudPopover @bind-open="_showSearchPanel" 
             AnchorOrigin="Origin.BottomRight" 
             TransformOrigin="Origin.TopRight"
-            Style="width: 500px; max-height: 60vh; overflow-y: auto; margin-top: 8px;">
-    <MudCard Elevation="8" Style="background: #1A1A2E; color: white;">
+            Style="width: 500px; max-height: 60vh; overflow-y: auto; margin-top: 8px;z-index:999"
+            CloseOnClickOutside="true"
+            @onclick:stopPropagation>
+    <MudCard Elevation="8" Style="@CardStyle">
         @if (_searchResults.Any())
         {
             <MudList T="string">
@@ -27,7 +31,7 @@
                 {
                     <MudListItem clickable="true" 
                                  OnClick="() => NavigateToMovie(movie.Id)"
-                                 Style="cursor: pointer;">
+                                 Style="@ListItemStyle">
                         <div style="display: flex; align-items: center; width: 100%;">
                             @if (!string.IsNullOrEmpty(movie.PosterPath))
                             {
@@ -36,8 +40,8 @@
                                      style="width: 45px; height: 67px; object-fit: cover; border-radius: 4px; margin-right: 12px;" />
                             }
                             <div style="flex: 1;">
-                                <MudText Typo="Typo.body1" Style="color: white;">@movie.Title</MudText>
-                                <MudText Typo="Typo.caption" Style="color: gray;">
+                                <MudText Typo="Typo.body1" Style="@TextPrimaryStyle">@movie.Title</MudText>
+                                <MudText Typo="Typo.caption" Style="@TextSecondaryStyle">
                                     @movie.ReleaseYear?.ToString()
                                     @if (movie.Rating.HasValue)
                                     {
@@ -55,7 +59,7 @@
             {
                 <MudCardActions Style="justify-content: center;">
                     <MudButton text="true" Color="Color.Primary" OnClick="NavigateToSearch">
-                        查看更多 (@(_searchResults.Count - 10) 部电影)
+                        @LocalizationService.Translate("ViewMore", _searchResults.Count - 10)
                     </MudButton>
                 </MudCardActions>
             }
@@ -63,13 +67,13 @@
         else if (!string.IsNullOrEmpty(_searchText))
         {
             <MudCardContent Style="text-align: center; padding: 16px;">
-                <MudText Typo="Typo.body2" Style="color: gray;">未找到匹配的电影</MudText>
+                <MudText Typo="Typo.body2" Style="@TextSecondaryStyle">@LocalizationService.Translate("NoResults")</MudText>
             </MudCardContent>
         }
         else
         {
             <MudCardContent Style="padding: 16px;">
-                <MudText Typo="Typo.body2" Style="color: gray;">输入关键词搜索电影</MudText>
+                <MudText Typo="Typo.body2" Style="@TextSecondaryStyle">@LocalizationService.Translate("EnterKeywordSearch")</MudText>
             </MudCardContent>
         }
     </MudCard>
@@ -79,9 +83,56 @@
     private string _searchText = string.Empty;
     private bool _showSearchPanel;
     private List<Movie> _searchResults = new List<Movie>();
+    private bool _isDark = true;
+
+    [Inject]
+    private IThemeService ThemeService { get; set; } = default!;
+
+    protected override void OnInitialized()
+    {
+        _isDark = ThemeService.CurrentTheme == ThemeMode.Dark;
+        ThemeService.ThemeChanged += OnThemeChanged;
+    }
+
+    private void OnThemeChanged(ThemeMode theme)
+    {
+        _isDark = theme == ThemeMode.Dark;
+    }
+
+    private string TextFieldStyle => _isDark
+        ? "width: 350px; background: rgba(255,255,255,0.08); border-radius: 20px; border: 1px solid rgba(255,255,255,0.1);"
+        : "width: 350px; background: rgba(0,0,0,0.05); border-radius: 20px; border: 1px solid rgba(0,0,0,0.1);";
+
+    private string InputStyle => _isDark
+        ? "color: white; font-size: 13px;"
+        : "color: #333; font-size: 13px;";
+
+    private string CardStyle => _isDark
+        ? "background: #1A1A2E; color: white;"
+        : "background: #FFFFFF; color: #333;";
+
+    private string ListItemStyle => _isDark
+        ? "cursor: pointer; color: white;"
+        : "cursor: pointer; color: #333;";
+
+    private string TextPrimaryStyle => _isDark
+        ? "color: white;"
+        : "color: #333;";
+
+    private string TextSecondaryStyle => _isDark
+        ? "color: gray;"
+        : "color: #666;";
 
     private async Task HandleKeyUp(KeyboardEventArgs e)
     {
+        if (e.Key == "Escape")
+        {
+            _showSearchPanel = false;
+            _searchText = string.Empty;
+            _searchResults.Clear();
+            return;
+        }
+
         if (e.Key == "Enter" && !string.IsNullOrWhiteSpace(_searchText))
         {
             NavigateToSearch();
@@ -91,6 +142,12 @@
         await SearchMovies();
     }
 
+    private async Task HandleBlur(FocusEventArgs e)
+    {
+        await Task.Delay(200);
+        _showSearchPanel = false;
+    }
+
     private async Task SearchMovies()
     {
         if (string.IsNullOrWhiteSpace(_searchText))
@@ -98,23 +155,27 @@
             _searchResults.Clear();
             return;
         }
-
+       
         var allMovies = await MovieRepo.GetAllAsync();
         _searchResults = allMovies.Where(m => 
-            m.Title.IndexOf(_searchText, StringComparison.OrdinalIgnoreCase) >= 0)
+            m.Title.IndexOf(_searchText, StringComparison.OrdinalIgnoreCase) >= 0||
+             m.Cast?.IndexOf(_searchText, StringComparison.OrdinalIgnoreCase) >= 0  ||
+              m.Director?.IndexOf(_searchText, StringComparison.OrdinalIgnoreCase) >= 0 
+              )
             .ToList();
     }
 
     private async Task ShowSearchPanel()
     {
-        _showSearchPanel = true;
-        // SearchMovies().ConfigureAwait(false);
+        _showSearchPanel = true; 
         await SearchMovies();
     }
 
     private void NavigateToMovie(int movieId)
     {
         _showSearchPanel = false;
+        _searchText = string.Empty;
+        _searchResults.Clear();
         NavigationManager.NavigateTo($"/movie/{movieId}");
     }
 
@@ -122,5 +183,10 @@
     {
         _showSearchPanel = false;
         NavigationManager.NavigateTo($"/movies?search={Uri.EscapeDataString(_searchText)}");
+    }
+
+    public void Dispose()
+    {
+        ThemeService.ThemeChanged -= OnThemeChanged;
     }
 }

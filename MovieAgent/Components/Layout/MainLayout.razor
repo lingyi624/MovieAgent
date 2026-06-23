@@ -1,11 +1,13 @@
 @using MovieAgent.Components.Controls
 @using MovieAgent.Core.Interfaces
 @using Microsoft.AspNetCore.Components.Routing
+@using MudBlazor
 @inherits LayoutComponentBase
 @inject IMovieRepository MovieRepo
 @inject IAgentService AgentService
 @inject IMovieScannerService ScannerService
 @inject IThemeService ThemeService
+@inject ILocalizationService LocalizationService
 @inject NavigationManager NavigationManager
 
 <MudThemeProvider Theme="_currentTheme" />
@@ -22,32 +24,32 @@
             </MudText>
             <MudSpacer />
             <SearchBar />
-            <MudButton Style="margin-right: 8px; color: white;" Href="/chat" StartIcon="@Icons.Material.Filled.Message">
-                AI 对话
+            <MudButton Style="@ChatButtonStyle" Href="/chat" StartIcon="@Icons.Material.Filled.Message">
+                @LocalizationService.Translate("Chat")
             </MudButton>
             <ThemeToggle />
             <MudIconButton Icon="@Icons.Material.Filled.Settings" Color="Color.Inherit" OnClick="NavigateToSettings" />
         </MudAppBar>
 
-    <MudDrawer @bind-Open="_drawerOpen" Anchor="Anchor.Left" Variant="DrawerVariant.Temporary" Style="background: #1A1A2E; color: white;">
+    <MudDrawer @bind-Open="_drawerOpen" Anchor="Anchor.Left" Variant="DrawerVariant.Temporary" Style="@DrawerStyle">
         <MudNavMenu>
-            <MudText Typo="Typo.h6" Style="padding: 16px; color: #E94560;">菜单</MudText>
+            <MudText Typo="Typo.h6" Style="padding: 16px; color: #E94560;">@LocalizationService.Translate("Menu")</MudText>
             <MudDivider Style="background: #E94560;" />
-            <MudButton Class="nav-link-btn" StartIcon="@Icons.Material.Filled.Home" OnClick="@(() => HandleNavClick("/"))">首页(海报墙)</MudButton>
-            <MudButton Class="nav-link-btn" StartIcon="@Icons.Material.Filled.BarChart" OnClick="@(() => HandleNavClick("/dashboard"))">观影统计</MudButton>
-            <MudButton Class="nav-link-btn" StartIcon="@Icons.Material.Filled.Movie" OnClick="@(() => HandleNavClick("/movies"))">电影库</MudButton>
-            <MudButton Class="nav-link-btn" StartIcon="@Icons.Material.Filled.AutoAwesome" OnClick="@(() => HandleNavClick("/semantic-search"))">语义搜索</MudButton>
-            <MudButton Class="nav-link-btn" StartIcon="@Icons.Material.Filled.Chat" OnClick="@(() => HandleNavClick("/chat"))">AI 对话</MudButton>
-            <MudButton Class="nav-link-btn" StartIcon="@Icons.Material.Filled.Report" OnClick="@(() => HandleNavClick("/report"))">观影报告</MudButton>
-            <MudButton Class="nav-link-btn" StartIcon="@Icons.Material.Filled.Schedule" OnClick="@(() => HandleNavClick("/watch-plans"))">观影计划</MudButton>
-            <MudButton Class="nav-link-btn" StartIcon="@Icons.Material.Filled.Label" OnClick="@(() => HandleNavClick("/tags"))">标签管理</MudButton>
-            <MudButton Class="nav-link-btn" StartIcon="@Icons.Material.Filled.TextSnippet" OnClick="@(() => HandleNavClick("/logs"))">系统日志</MudButton>
-            <MudButton Class="nav-link-btn" StartIcon="@Icons.Material.Filled.Settings" OnClick="@(() => HandleNavClick("/settings"))">设置</MudButton>
+            <MudButton Class="nav-link-btn" StartIcon="@Icons.Material.Filled.Home" OnClick="@(() => HandleNavClick("/"))">@LocalizationService.Translate("Home")</MudButton>
+            <MudButton Class="nav-link-btn" StartIcon="@Icons.Material.Filled.Movie" OnClick="@(() => HandleNavClick("/movies"))">@LocalizationService.Translate("Movies")</MudButton> 
+            <MudButton Class="nav-link-btn" StartIcon="@Icons.Material.Filled.BarChart" OnClick="@(() => HandleNavClick("/dashboard"))">@LocalizationService.Translate("Dashboard")</MudButton>
+            <MudButton Class="nav-link-btn" StartIcon="@Icons.Material.Filled.AutoAwesome" OnClick="@(() => HandleNavClick("/semantic-search"))">@LocalizationService.Translate("Search")</MudButton>
+            <MudButton Class="nav-link-btn" StartIcon="@Icons.Material.Filled.Chat" OnClick="@(() => HandleNavClick("/chat"))">@LocalizationService.Translate("Chat")</MudButton>
+            <MudButton Class="nav-link-btn" StartIcon="@Icons.Material.Filled.Report" OnClick="@(() => HandleNavClick("/report"))">@LocalizationService.Translate("Report")</MudButton>
+            <MudButton Class="nav-link-btn" StartIcon="@Icons.Material.Filled.Schedule" OnClick="@(() => HandleNavClick("/watch-plans"))">@LocalizationService.Translate("WatchPlans")</MudButton>
+            <MudButton Class="nav-link-btn" StartIcon="@Icons.Material.Filled.Label" OnClick="@(() => HandleNavClick("/tags"))">@LocalizationService.Translate("Tags")</MudButton>
+            <MudButton Class="nav-link-btn" StartIcon="@Icons.Material.Filled.TextSnippet" OnClick="@(() => HandleNavClick("/logs"))">@LocalizationService.Translate("Logs")</MudButton>
+            <MudButton Class="nav-link-btn" StartIcon="@Icons.Material.Filled.Settings" OnClick="@(() => HandleNavClick("/settings"))">@LocalizationService.Translate("Settings")</MudButton>
         </MudNavMenu>
     </MudDrawer>
 
     <MudMainContent>
-        <MudContainer MaxWidth="MaxWidth.ExtraExtraLarge" Style="padding: 24px; min-height: calc(100vh - 64px);">
+        <MudContainer MaxWidth="MaxWidth.ExtraExtraLarge" Style="@MainContentStyle">
             @Body
         </MudContainer>
     </MudMainContent>
@@ -80,6 +82,23 @@
 
     private MudTheme CreateDarkTheme() => new MudTheme
     {
+        PaletteDark = new PaletteDark
+        {
+            Primary = Colors.Red.Accent3,
+            Secondary = Colors.Green.Accent3,
+            Background = "#0F0F1A",
+            Surface = "#1A1A2E",
+            DrawerBackground = "#1A1A2E",
+            DrawerText = "#E0E0E0",
+            AppbarBackground = "#1A1A2E",
+            AppbarText = "#E0E0E0",
+            TextPrimary = "#E0E0E0",
+            TextSecondary = "#888888",
+            Error = Colors.Red.Accent3,
+            Success = Colors.Green.Accent3,
+            Info = Colors.Blue.Accent3,
+            Warning = Colors.Orange.Accent3
+        },
         PaletteLight = new PaletteLight
         {
             Primary = Colors.Red.Accent3,
@@ -101,6 +120,23 @@
 
     private MudTheme CreateLightTheme() => new MudTheme
     {
+        PaletteDark = new PaletteDark
+        {
+            Primary = Colors.Red.Accent3,
+            Secondary = Colors.Green.Accent3,
+            Background = "#FFFFFF",
+            Surface = "#F5F5F5",
+            DrawerBackground = "#FFFFFF",
+            DrawerText = "#333333",
+            AppbarBackground = "#FFFFFF",
+            AppbarText = "#333333",
+            TextPrimary = "#333333",
+            TextSecondary = "#666666",
+            Error = Colors.Red.Accent3,
+            Success = Colors.Green.Accent3,
+            Info = Colors.Blue.Accent3,
+            Warning = Colors.Orange.Accent3
+        },
         PaletteLight = new PaletteLight
         {
             Primary = Colors.Red.Accent3,
@@ -122,7 +158,19 @@
 
     private string AppBarStyle => _isDark 
         ? "background: linear-gradient(135deg, #1A1A2E 0%, #16213E 100%);" 
-        : "background: white;";
+        : "background: linear-gradient(135deg, #FFFFFF 0%, #F5F5F5 100%);";
+
+    private string DrawerStyle => _isDark 
+        ? "background: #1A1A2E; color: white;" 
+        : "background: #FFFFFF; color: #333;";
+
+    private string MainContentStyle => _isDark 
+        ? "padding: 24px; min-height: calc(100vh - 64px); background: #0F0F1A;" 
+        : "padding: 24px; min-height: calc(100vh - 64px); background: #F5F5F5;";
+
+    private string ChatButtonStyle => _isDark 
+        ? "margin-right: 8px; color: white;" 
+        : "margin-right: 8px; color: #333;";
 
     private void ToggleDrawer() => _drawerOpen = !_drawerOpen;
 
@@ -132,5 +180,10 @@
     {
         _drawerOpen = false;
         NavigationManager.NavigateTo(url, forceLoad: true);
+    }
+
+    public void Dispose()
+    {
+        ThemeService.ThemeChanged -= OnThemeChanged;
     }
 }

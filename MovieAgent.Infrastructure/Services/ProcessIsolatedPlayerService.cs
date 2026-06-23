@@ -1,6 +1,8 @@
 using MovieAgent.Core.Interfaces;
+using MovieAgent.FFmpegDecoder;
 using System;
 using System.Collections.Concurrent;
+using System.Collections.Generic;
 using System.Diagnostics;
 using System.IO;
 using System.IO.Pipes;
@@ -182,7 +184,7 @@ namespace MovieAgent.Infrastructure.Services
         /// <summary>
         /// 帧更新事件，当收到新的视频帧时触发
         /// </summary>
-        public event EventHandler<byte[]>? FrameUpdated;
+        public event EventHandler<FrameData>? FrameUpdated;
 
         /// <summary>
         /// 播放结束事件
@@ -223,6 +225,26 @@ namespace MovieAgent.Infrastructure.Services
         /// 字幕轨道信息接收事件
         /// </summary>
         public event EventHandler<SubtitleTracksMessage>? SubtitleTracksReceived;
+
+        /// <summary>
+        /// 截图结果接收事件
+        /// </summary>
+        public event EventHandler<ScreenshotResultMessage>? ScreenshotResultReceived;
+
+        /// <summary>
+        /// 字幕延迟信息接收事件
+        /// </summary>
+        public event EventHandler<SubtitleDelayMessage>? SubtitleDelayReceived;
+
+        /// <summary>
+        /// 分辨率降级通知事件
+        /// </summary>
+        public event EventHandler<ResolutionDownscaleMessage>? ResolutionDownscale;
+
+        /// <summary>
+        /// 字幕解码完成事件
+        /// </summary>
+        public event EventHandler<SubtitleDecodedMessage>? SubtitleDecoded;
 
         #endregion
 
@@ -546,7 +568,16 @@ namespace MovieAgent.Infrastructure.Services
                             AudioPlayPosition = frame.AudioPlayPosition;
                             Position = TimeSpan.FromMilliseconds(frame.VideoTimestamp);
 
-                            FrameUpdated?.Invoke(this, data);
+                            var frameData = new FrameData
+                            {
+                                Width = frame.Width,
+                                Height = frame.Height,
+                                Data = data,
+                                VideoTimestamp = frame.VideoTimestamp,
+                                AudioTimestamp = frame.AudioTimestamp,
+                                AudioPlayPosition = frame.AudioPlayPosition
+                            };
+                            FrameUpdated?.Invoke(this, frameData);
                         }
                         break;
 
@@ -623,6 +654,42 @@ namespace MovieAgent.Infrastructure.Services
                         {
                             _logger.Debug($"[Player] Subtitle tracks received: {subtitleTracks.TrackCount} tracks");
                             SubtitleTracksReceived?.Invoke(this, subtitleTracks);
+                        }
+                        break;
+
+                    case "ScreenshotResult":
+                        var screenshotResult = JsonSerializer.Deserialize<ScreenshotResultMessage>(message);
+                        if (screenshotResult != null)
+                        {
+                            _logger.Debug($"[Player] Screenshot result: {(screenshotResult.Success ? "success" : "failed")}, path: {screenshotResult.FilePath}");
+                            ScreenshotResultReceived?.Invoke(this, screenshotResult);
+                        }
+                        break;
+
+                    case "SubtitleDelay":
+                        var subtitleDelay = JsonSerializer.Deserialize<SubtitleDelayMessage>(message);
+                        if (subtitleDelay != null)
+                        {
+                            _logger.Debug($"[Player] Subtitle delay: {subtitleDelay.DelayMs}ms");
+                            SubtitleDelayReceived?.Invoke(this, subtitleDelay);
+                        }
+                        break;
+
+                    case "ResolutionDownscale":
+                        var resolutionDownscale = JsonSerializer.Deserialize<ResolutionDownscaleMessage>(message);
+                        if (resolutionDownscale != null)
+                        {
+                            _logger.Information($"[Player] Resolution downscale: {resolutionDownscale.OriginalWidth}x{resolutionDownscale.OriginalHeight} -> {resolutionDownscale.TargetWidth}x{resolutionDownscale.TargetHeight}");
+                            ResolutionDownscale?.Invoke(this, resolutionDownscale);
+                        }
+                        break;
+
+                    case "SubtitleDecoded":
+                        var subtitleDecoded = JsonSerializer.Deserialize<SubtitleDecodedMessage>(message);
+                        if (subtitleDecoded != null)
+                        {
+                            _logger.Debug($"[Player] Subtitle decoded: {subtitleDecoded.Text}");
+                            SubtitleDecoded?.Invoke(this, subtitleDecoded);
                         }
                         break;
                 }
@@ -805,15 +872,18 @@ namespace MovieAgent.Infrastructure.Services
                     _logger.Debug("[Player] Waiting for decoder process to exit...");
                     using (var cts = new CancellationTokenSource(TimeSpan.FromSeconds(2)))
                     {
-                        await _decoderProcess.WaitForExitAsync(cts.Token);
-                        if (_decoderProcess.HasExited)
+                        if (_decoderProcess != null)
                         {
-                            _logger.Debug($"[Player] Decoder process exited normally with PID: {_decoderProcess.Id}");
-                        }
-                        else
-                        {
-                            _logger.Warning("[Player] Decoder process did not exit in time, forcing kill");
-                            _decoderProcess.Kill();
+                            await _decoderProcess.WaitForExitAsync(cts.Token);
+                            if (_decoderProcess != null && _decoderProcess.HasExited)
+                            {
+                                _logger.Debug($"[Player] Decoder process exited normally with PID: {_decoderProcess.Id}");
+                            }
+                            else
+                            {
+                                _logger.Warning("[Player] Decoder process did not exit in time, forcing kill");
+                                _decoderProcess.Kill();
+                            }
                         }
                     }
                 }
@@ -822,6 +892,7 @@ namespace MovieAgent.Infrastructure.Services
                     _logger.Error($"[Player] Error waiting for decoder exit: {ex.Message}");
                     try
                     {
+                        if(_decoderProcess!=null)
                         _decoderProcess.Kill();
                     }
                     catch { }
@@ -965,6 +1036,39 @@ namespace MovieAgent.Infrastructure.Services
         }
 
         /// <summary>
+        /// 获取音频轨道列表（进程隔离模式下暂不支持）
+        /// </summary>
+        public System.Collections.Generic.List<MovieAgent.FFmpegDecoder.AudioTrackInfo>? GetAudioTracks()
+        {
+            _logger.Debug("[Player] GetAudioTracks not supported in process-isolated mode");
+            return null;
+        }
+
+        /// <summary>
+        /// 获取字幕轨道列表（进程隔离模式下暂不支持）
+        /// </summary>
+        public System.Collections.Generic.List<MovieAgent.FFmpegDecoder.SubtitleTrackInfo>? GetSubtitleTracks()
+        {
+            _logger.Debug("[Player] GetSubtitleTracks not supported in process-isolated mode");
+            return null;
+        }
+
+        public void TakeScreenshot()
+        {
+            _logger.Debug("[Player] TakeScreenshot not supported in isolated mode");
+        }
+
+        public void SetSubtitleDelay(double delayMs)
+        {
+            _logger.Debug($"[Player] SetSubtitleDelay: {delayMs}ms not supported in isolated mode");
+        }
+
+        public void SetPlaybackSpeed(double speed)
+        {
+            _logger.Debug($"[Player] SetPlaybackSpeed: {speed}x not supported in isolated mode");
+        }
+
+        /// <summary>
         /// 尝试初始化共享内存
         /// 使用共享内存可以提高视频帧传输效率
         /// </summary>
@@ -1015,14 +1119,20 @@ namespace MovieAgent.Infrastructure.Services
                     {
                         if (_sharedMemory.ReadFrame(out byte[] frameData, out long timestamp, out long audioTimestamp, out long audioPlayPosition))
                         {
-                            _logger.Debug($"[Player] Frame from shared memory: {_sharedMemory.FrameWidth}x{_sharedMemory.FrameHeight}, data size: {frameData.Length} bytes");
-                            _logger.Debug($"[Player] Frame from shared memory: {_sharedMemory.FrameWidth}x{_sharedMemory.FrameHeight}, VideoTimestamp: {timestamp} ms, AudioTimestamp: {audioTimestamp} ms, AudioPlayPosition: {audioPlayPosition} ms");
-
                             AudioTimestamp = TimeSpan.FromMilliseconds(audioTimestamp);
                             VideoTimestamp = TimeSpan.FromMilliseconds(timestamp);
                             AudioPlayPosition = audioPlayPosition;
-                            Position = TimeSpan.FromMilliseconds(VideoTimestamp.TotalMilliseconds);
-                            FrameUpdated?.Invoke(this, frameData);
+                            Position = TimeSpan.FromMilliseconds(timestamp);
+                            var frameDataObj = new FrameData
+                            {
+                                Width = 0,  // shared memory doesn't carry dimensions
+                                Height = 0,
+                                Data = frameData,
+                                VideoTimestamp = timestamp,
+                                AudioTimestamp = audioTimestamp,
+                                AudioPlayPosition = audioPlayPosition
+                            };
+                            FrameUpdated?.Invoke(this, frameDataObj);
                         }
                         else
                         {
@@ -1167,6 +1277,21 @@ namespace MovieAgent.Infrastructure.Services
             /// 解码模式（Auto/Hardware/Software）
             /// </summary>
             public string? DecodeMode { get; set; }
+
+            /// <summary>
+            /// 播放速度倍率（用于SetSpeed命令）
+            /// </summary>
+            public double Speed { get; set; } = 1.0;
+
+            /// <summary>
+            /// 截图保存路径（用于Screenshot命令）
+            /// </summary>
+            public string? ScreenshotPath { get; set; }
+
+            /// <summary>
+            /// 字幕延迟（毫秒，用于SetSubtitleDelay命令）
+            /// </summary>
+            public double SubtitleDelay { get; set; }
         }
 
         /// <summary>
@@ -1452,6 +1577,50 @@ namespace MovieAgent.Infrastructure.Services
             /// 描述信息
             /// </summary>
             public string Description { get; set; } = string.Empty;
+        }
+
+        /// <summary>
+        /// 截图结果消息类
+        /// </summary>
+        public class ScreenshotResultMessage
+        {
+            public string Type { get; set; } = "ScreenshotResult";
+            public string? FilePath { get; set; }
+            public bool Success { get; set; }
+        }
+
+        /// <summary>
+        /// 字幕延迟消息类
+        /// </summary>
+        public class SubtitleDelayMessage
+        {
+            public string Type { get; set; } = "SubtitleDelay";
+            public double DelayMs { get; set; }
+        }
+
+        /// <summary>
+        /// 分辨率降级消息类
+        /// </summary>
+        public class ResolutionDownscaleMessage
+        {
+            public string Type { get; set; } = "ResolutionDownscale";
+            public string Message { get; set; } = string.Empty;
+            public int OriginalWidth { get; set; }
+            public int OriginalHeight { get; set; }
+            public int TargetWidth { get; set; }
+            public int TargetHeight { get; set; }
+            public string Reason { get; set; } = string.Empty;
+        }
+
+        /// <summary>
+        /// 字幕解码消息类
+        /// </summary>
+        public class SubtitleDecodedMessage
+        {
+            public string Type { get; set; } = "SubtitleDecoded";
+            public string Text { get; set; } = string.Empty;
+            public double StartTime { get; set; }
+            public double EndTime { get; set; }
         }
 
         #endregion

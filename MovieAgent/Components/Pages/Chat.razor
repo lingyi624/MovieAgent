@@ -1,7 +1,14 @@
 @page "/chat"
 @inject IAgentService AgentService
 @inject IMovieRepository MovieRepo
+@inject IConversationMemoryService MemoryService
 @inject IServiceProvider ServiceProvider
+@inject NavigationManager Navigation
+@inject IJSRuntime JS
+@inject IConfiguration Config
+@implements IAsyncDisposable
+@using Microsoft.JSInterop
+@using MovieAgent.Infrastructure.Services
 
 <PageTitle>AI 对话</PageTitle>
 
@@ -24,66 +31,240 @@
             </MudText>
         }
         <MudText Typo="Typo.caption" Style="margin-top: 8px; color: #BBB;">
-            请确保 Ollama 已启动并运行 llama3.2 模型
+            请确保 Ollama 已启动并运行 @Config["AI:ModelName"] 模型
         </MudText>
     </MudAlert>
 }
 
-<MudPaper Elevation="3" Style="padding: 16px; height: 60vh; overflow-y: auto; display: flex; flex-direction: column;" Class="chat-container">
-    @foreach (var msg in _messages)
-    {
-        <div style="margin-bottom: 12px; display: flex; @(msg.IsUser ? "justify-content: flex-end;" : "justify-content: flex-start;")">
-            <MudPaper Elevation="2" Style="@($"padding: 12px 16px; max-width: 70%; border-radius: 12px; background: {(msg.IsUser ? "#E94560" : "#2D2D44")}; color: white;")">
-                <MudText Typo="Typo.body2" Style="white-space: pre-wrap;">@msg.Text</MudText>
-                <MudText Typo="Typo.caption" Style="color: rgba(255,255,255,0.6);">@msg.Time.ToString("HH:mm")</MudText>
-            </MudPaper>
-        </div>
-    }
+<MudGrid>
+    <!-- 对话区域 -->
+    <MudItem xs="12" md="8">
+        <MudPaper Elevation="3" Style="padding: 16px; height: 70vh; display: flex; flex-direction: column;" Class="chat-container">
+            <div style="flex: 1; overflow-y: auto;" @ref="_scrollContainer">
+                @foreach (var msg in _messages)
+                {
+                    <div style="margin-bottom: 12px; display: flex; @(msg.IsUser ? "justify-content: flex-end;" : "justify-content: flex-start;")">
+                        <MudPaper Elevation="2" Style="@($"padding: 12px 16px; max-width: 85%; border-radius: 12px; background: {(msg.IsUser ? "#E94560" : "#2D2D44")}; color: white;")">
+                            <MudText Typo="Typo.body2" Style="white-space: pre-wrap;">@msg.Text</MudText>
+                            <MudText Typo="Typo.caption" Style="color: rgba(255,255,255,0.6);">@msg.Time.ToString("HH:mm")</MudText>
+                        </MudPaper>
+                    </div>
+                }
 
-    @if (_isThinking)
-    {
-        <MudProgressCircular Size="Size.Small" Color="Color.Primary" Indeterminate="true" />
-    }
-</MudPaper>
+                @if (_isThinking)
+                {
+                    <div style="margin-bottom: 12px; display: flex; justify-content: flex-start;">
+                        <MudPaper Elevation="2" Style="padding: 12px 16px; border-radius: 12px; background: #2D2D44;">
+                            <MudProgressCircular Size="Size.Small" Color="Color.Default" Indeterminate="true" />
+                        </MudPaper>
+                    </div>
+                }
+            </div>
 
-<MudGrid Style="margin-top: 12px;">
-    <MudItem xs="10">
-        <MudTextField @bind-Value="_inputMessage" Label="输入消息..." Variant="Variant.Outlined"
-                      Lines="2" OnKeyUp="OnKeyUp" Immediate="true" />
+            <!-- 输入区域 -->
+            <div style="margin-top: 12px;">
+                <MudGrid>
+                    <MudItem xs="10">
+                        <MudTextField @bind-Value="_inputMessage" Label="输入消息..." Variant="Variant.Outlined"
+                                      Lines="2" OnKeyUp="OnKeyUp" Immediate="true" />
+                    </MudItem>
+                    <MudItem xs="2">
+                        <MudButton Variant="Variant.Filled" Color="Color.Primary" OnClick="SendMessage"
+                                   FullWidth="true" Style="height: 56px; background: #E94560;">
+                            发送
+                        </MudButton>
+                    </MudItem>
+                </MudGrid>
+            </div>
+        </MudPaper>
+
+        <MudText Typo="Typo.caption" Style="color: gray; margin-top: 8px;">
+            试试说: "推荐一部科幻片" | "播放盗梦空间" | "有哪些4K电影" | "给盗梦空间打5星"
+        </MudText>
     </MudItem>
-    <MudItem xs="2">
-        <MudButton Variant="Variant.Filled" Color="Color.Primary" OnClick="SendMessage"
-                   FullWidth="true" Style="height: 56px; background: #E94560;">
-            发送
-        </MudButton>
+
+    <!-- 相关电影卡片区域 -->
+    <MudItem xs="12" md="4">
+        @if (_relatedMovies.Any())
+        {
+            <MudText Typo="Typo.h6" Style="color: #E94560; margin-bottom: 12px;">
+                相关电影 (@_relatedMovies.Count)
+            </MudText>
+            <div style="max-height: 65vh; overflow-y: auto;">
+                @foreach (var movie in _relatedMovies)
+                {
+                    <MudCard Style="margin-bottom: 12px; background: #2D2D44;" Class="movie-card">
+                        <MudCardMedia Image="@GetPosterUrl(movie)" Height="400"   Style="object-fit: cover;" />
+                        <MudCardContent Style="padding: 12px;">
+                            <MudText Typo="Typo.subtitle1" Style="color: white; font-weight: bold;" Class="movie-title">
+                                @movie.Title
+                            </MudText>
+                            @if (movie.ReleaseYear.HasValue)
+                            {
+                                <MudText Typo="Typo.caption" Style="color: #AAA;">
+                                    @movie.ReleaseYear.Value
+                                </MudText>
+                            }
+                            @if (movie.Rating.HasValue)
+                            {
+                                <div style="margin-top: 4px;">
+                                    <MudRating ReadOnly="true" SelectedValue="@((int)(movie.Rating.Value / 2))" Size="Size.Small" />
+                                    <MudText Typo="Typo.caption" Style="color: #AAA; margin-left: 4px;">
+                                        @movie.Rating.Value.ToString("F1")/10
+                                    </MudText>
+                                </div>
+                            }
+                            @if (!string.IsNullOrWhiteSpace(movie.Genres))
+                            {
+                               @*  <MudText Typo="Typo.caption" Style="color: #888; margin-top: 4px;">
+                                    @movie.Genres
+                                </MudText> *@
+                                <MudStack Row="true" Spacing="2" Style="margin-bottom: 12px; flex-wrap: wrap;">
+                                    @foreach (var genre in GetGenresList(movie.Genres))
+                                    {
+                                        <MudChip T="string" Size="Size.Small" Color="Color.Dark">@genre</MudChip>
+                                    }
+                                </MudStack>
+                            }
+                            <MudButton Variant="Variant.Filled" Color="Color.Primary" 
+                                       FullWidth="true" Style="margin-top: 8px; background: #E94560;"
+                                       OnClick="@(() => PlayMovie(movie.FilePath))">
+                                <MudIcon Icon="@Icons.Material.Filled.PlayArrow" Style="margin-right: 4px;" />
+                                播放
+                            </MudButton>
+                        </MudCardContent>
+                    </MudCard>
+                }
+            </div>
+        }
+        else
+        {
+            <MudPaper Elevation="2" Style="padding: 24px; text-align: center; background: #1E1E2E; height: 200px; display: flex; align-items: center; justify-content: center;">
+                <MudText Typo="Typo.body2" Style="color: #666;">
+                    询问电影相关问题<br/>将显示相关电影卡片
+                </MudText>
+            </MudPaper>
+        }
     </MudItem>
 </MudGrid>
 
-<MudText Typo="Typo.caption" Style="color: gray; margin-top: 8px;">
-    试试说: "推荐一部科幻片" | "播放盗梦空间" | "有哪些4K电影" | "给盗梦空间打5星"
-</MudText>
-
 @code {
     private List<ChatMessage> _messages = new();
+    private List<Movie> _relatedMovies = new();
     private string _inputMessage = "";
     private bool _isThinking;
     private bool _isReconnecting;
+    private bool _isLoadingHistory;
+    private bool _isStreamSubscribed;
+    private ElementReference _scrollContainer;
+    private const string UserId = "default";
+    private int _streamingMessageIndex = -1;
 
     protected override async Task OnInitializedAsync()
     {
+        _isLoadingHistory = true;
+        StateHasChanged();
+        try
+        {
+            await MemoryService.LoadHistoryAsync(UserId);
+            var history = MemoryService.GetHistory(UserId);
+            if (history.Count > 0)
+            {
+                _messages.Clear();
+                _messages.Add(new ChatMessage { Text = "已恢复上次对话记录。", IsUser = false, Time = DateTime.Now });
+                foreach (var msg in history)
+                {
+                    if (msg.User != "[摘要]")
+                    {
+                        _messages.Add(new ChatMessage { Text = msg.User, IsUser = true, Time = msg.Timestamp });
+                        _messages.Add(new ChatMessage { Text = msg.Agent, IsUser = false, Time = msg.Timestamp });
+                    }
+                }
+                await Task.Delay(500);
+            }
+        }
+        catch { }
+        _isLoadingHistory = false;
+
+        // 订阅流式响应事件
+        var movieAgentService = AgentService as MovieAgentService;
+        if (movieAgentService != null && !_isStreamSubscribed)
+        {
+            movieAgentService.OnStreamDataReceived += OnStreamDataReceived;
+            _isStreamSubscribed = true;
+            Console.WriteLine("[Chat] Subscribed to stream event");
+        }
+
         if (!AgentService.IsAvailable)
         {
             _messages.Add(new ChatMessage { Text = "AI 服务正在连接中...", IsUser = false, Time = DateTime.Now });
-            await Task.Delay(2000);
+            StateHasChanged();
+            
+            // 添加重试机制
+            int retryCount = 0;
+            const int maxRetries = 3;
+            while (!AgentService.IsAvailable && retryCount < maxRetries)
+            {
+                await Task.Delay(1000);
+                retryCount++;
+            }
+            
             if (!AgentService.IsAvailable)
             {
                 _messages.Clear();
                 _messages.Add(new ChatMessage { Text = "AI 服务连接失败，请点击上方按钮重新连接或检查 Ollama 是否启动。", IsUser = false, Time = DateTime.Now });
             }
+            else
+            {
+                _messages.RemoveAt(_messages.Count - 1); // 移除"正在连接中"消息
+                _messages.Add(new ChatMessage { Text = "你好！我是你的电影管家小影，有什么可以帮你？", IsUser = false, Time = DateTime.Now });
+            }
         }
         else
         {
-            _messages.Add(new ChatMessage { Text = "你好！我是你的电影管家小影，有什么可以帮你？", IsUser = false, Time = DateTime.Now });
+            if (_messages.Count == 0)
+            {
+                _messages.Add(new ChatMessage { Text = "你好！我是你的电影管家小影，有什么可以帮你？", IsUser = false, Time = DateTime.Now });
+            }
+        }
+        StateHasChanged();
+    }
+
+    public async ValueTask DisposeAsync()
+    {
+        var movieAgentService = AgentService as MovieAgentService;
+        // 取消订阅事件
+        if (_isStreamSubscribed)
+        {
+             if (movieAgentService != null)
+            {
+                movieAgentService.OnStreamDataReceived -= OnStreamDataReceived;
+            }
+            _isStreamSubscribed = false;
+        }
+            // 从服务获取当前模型名称
+            var modelName = movieAgentService?.ModelName ?? Config["AI:ModelName"] ?? "phi3.5:3.8b-mini-instruct-q4_K_M";
+            var modelUrl = Config["AI:ModelUrl"] ?? "http://localhost:11434";
+            await MemoryService.CompressAndSaveAsync(UserId, modelUrl, modelName);
+        
+    }
+
+    private async void OnStreamDataReceived(string chunk)
+    {
+        Console.WriteLine($"[Chat] Stream received: {chunk.Substring(0, Math.Min(30, chunk.Length))}...");
+        if (_streamingMessageIndex >= 0 && _streamingMessageIndex < _messages.Count)
+        {
+            _messages[_streamingMessageIndex].Text += chunk;
+            await InvokeAsync(() =>
+            {
+                Console.WriteLine($"[Chat] StateHasChanged called, current text length: {_messages[_streamingMessageIndex].Text.Length}");
+                StateHasChanged();
+                _ = ScrollToBottom();
+            });
+        }
+        else
+        {
+            Console.WriteLine($"[Chat] Invalid streaming message index: {_streamingMessageIndex}");
         }
     }
 
@@ -98,12 +279,12 @@
         
         if (success)
         {
-            _messages.Clear();
+           // _messages.Clear();
             _messages.Add(new ChatMessage { Text = "AI 服务连接成功！你好！我是你的电影管家小影，有什么可以帮你？", IsUser = false, Time = DateTime.Now });
         }
         else
         {
-            _messages.Add(new ChatMessage { Text = "连接失败，请确保 Ollama 已启动并运行 llama3:latest 模型。", IsUser = false, Time = DateTime.Now });
+            _messages.Add(new ChatMessage { Text = $"连接失败，请确保 Ollama 已启动并运行 {Config["AI:ModelName"] ?? "phi3.5:3.8b-mini-instruct-q4_K_M"} 模型。", IsUser = false, Time = DateTime.Now });
         }
         StateHasChanged();
     }
@@ -114,21 +295,143 @@
         var msg = _inputMessage.Trim();
         _inputMessage = "";
         _messages.Add(new ChatMessage { Text = msg, IsUser = true, Time = DateTime.Now });
+        _relatedMovies.Clear();
+
+        // 确保事件已订阅
+        var movieAgentService = AgentService as MovieAgentService;
+        if (movieAgentService != null && !_isStreamSubscribed)
+        {
+            movieAgentService.OnStreamDataReceived += OnStreamDataReceived;
+            _isStreamSubscribed = true;
+            Console.WriteLine("[Chat] Subscribed to stream event");
+        }
 
         _isThinking = true;
+        _streamingMessageIndex = _messages.Count;
+        _messages.Add(new ChatMessage { Text = "", IsUser = false, Time = DateTime.Now });
         StateHasChanged();
+        await ScrollToBottom();
 
         try
         {
+            Console.WriteLine("[Chat] Calling ChatAsync...");
             var response = await AgentService.ChatAsync(msg);
-            _messages.Add(new ChatMessage { Text = response, IsUser = false, Time = DateTime.Now });
+            Console.WriteLine($"[Chat] ChatAsync returned: {response.Substring(0, Math.Min(50, response.Length))}...");
+            // 只有当流式响应没有产生任何内容时才设置文本
+            if (string.IsNullOrWhiteSpace(_messages[_streamingMessageIndex].Text))
+            {
+                _messages[_streamingMessageIndex].Text = response;
+            }
+            await SearchRelatedMoviesAsync(msg, response);
         }
         catch (Exception ex)
         {
-            _messages.Add(new ChatMessage { Text = $"出错: {ex.Message}", IsUser = false, Time = DateTime.Now });
+            Console.WriteLine($"[Chat] Error: {ex.Message}");
+            // 如果流式响应已经开始，只在出错时添加错误信息
+            if (string.IsNullOrWhiteSpace(_messages[_streamingMessageIndex].Text))
+            {
+                _messages[_streamingMessageIndex].Text = $"出错: {ex.Message}";
+            }
+            else
+            {
+                _messages[_streamingMessageIndex].Text += $"\n\n[出错: {ex.Message}]";
+            }
         }
 
         _isThinking = false;
+        _streamingMessageIndex = -1;
+        StateHasChanged();
+        await ScrollToBottom();
+    }
+
+    private async Task SearchRelatedMoviesAsync(string query, string response)
+    {
+        try
+        {
+            // 从查询和回复中提取可能的电影名称
+            var movieNames = ExtractMovieNames(response);
+            
+            if (movieNames.Any())
+            {
+                var movies = new List<Movie>();
+                foreach (var name in movieNames.Take(5)) // 最多显示5部
+                {
+                    var found = await MovieRepo.GetAllAsync();
+                    var movie = found.FirstOrDefault(m => 
+                        m.Title.Contains(name, StringComparison.OrdinalIgnoreCase) ||
+                        (m.OriginalTitle != null && m.OriginalTitle.Contains(name, StringComparison.OrdinalIgnoreCase)));
+                    
+                    if (movie != null && !movies.Any(m => m.Id == movie.Id))
+                    {
+                        movies.Add(movie);
+                    }
+                }
+                
+                if (movies.Any())
+                {
+                    _relatedMovies = movies;
+                }
+            }
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"搜索相关电影失败: {ex.Message}");
+        }
+    }
+
+    private List<string> ExtractMovieNames(string text)
+    {
+        var names = new List<string>();
+        
+        // 匹配引号内的电影名
+        var quoteMatches = System.Text.RegularExpressions.Regex.Matches(text, @"[""''](.+?)[""'']");
+        foreach (System.Text.RegularExpressions.Match match in quoteMatches)
+        {
+            var name = match.Groups[1].Value.Trim();
+            if (name.Length > 2 && name.Length < 100)
+            {
+                names.Add(name);
+            }
+        }
+        
+        // 匹配 "《》" 中的电影名（中文常用格式）
+        var bracketMatches = System.Text.RegularExpressions.Regex.Matches(text, @"[《](.+?)[》]");
+        foreach (System.Text.RegularExpressions.Match match in bracketMatches)
+        {
+            var name = match.Groups[1].Value.Trim();
+            if (name.Length > 2 && name.Length < 100)
+            {
+                names.Add(name);
+            }
+        }
+        
+        return names.Distinct().ToList();
+    }
+
+    private string GetPosterUrl(Movie movie)
+    {
+        if (!string.IsNullOrWhiteSpace(movie.PosterPath))
+        {
+            if (movie.PosterPath.StartsWith("http"))
+                return movie.PosterPath;
+            return $"https://image.tmdb.org/t/p/w500{movie.PosterPath}";
+        }
+        return "https://via.placeholder.com/500x750?text=No+Poster";
+    }
+
+    private void PlayMovie(string filePath)
+    {
+        Navigation.NavigateTo($"/player?file={Uri.EscapeDataString(filePath)}");
+    }
+
+    private async Task ScrollToBottom()
+    {
+        try
+        {
+            await Task.Delay(100); // 等待 UI 更新
+            await JS.InvokeVoidAsync("window.scrollToBottom", _scrollContainer);
+        }
+        catch { }
     }
 
     private async Task OnKeyUp(KeyboardEventArgs e)
@@ -141,5 +444,22 @@
         public string Text { get; set; } = "";
         public bool IsUser { get; set; }
         public DateTime Time { get; set; }
+    }
+    private List<string> GetGenresList(string? genres)
+    {
+        if (string.IsNullOrEmpty(genres)) return new List<string>();
+
+        // 尝试解析 JSON 数组
+        try
+        {
+            var result = System.Text.Json.JsonSerializer.Deserialize<List<string>>(genres);
+            if (result != null) return result;
+        }
+        catch { }
+
+        // 如果不是 JSON，按逗号分隔
+        return genres.Split(',', StringSplitOptions.RemoveEmptyEntries)
+                     .Select(g => g.Trim())
+                     .ToList();
     }
 }

@@ -21,7 +21,7 @@
                               Variant="Variant.Outlined" Style="flex: 1;"
                               HelperText="例如：关于太空冒险的科幻片、悬疑推理、温暖的治愈系电影..."
                               HelperTextOnFocus="true"
-                              OnKeyDown="OnKeyDown" />
+                              OnKeyUp="OnKeyUpHandler" Immediate="true" />
                 <MudButton Variant="Variant.Filled" Color="Color.Primary" OnClick="DoSearch" Disabled="@_isSearching"
                            Style="background:#E94560; min-width: 120px;" StartIcon="@Icons.Material.Filled.Search">
                     @(_isSearching ? "搜索中..." : "搜索")
@@ -29,31 +29,38 @@
             </MudStack>
 
             <MudStack Row="true" Spacing="3">
-                <MudButton Variant="Variant.Outlined" Color="Color.Secondary" OnClick="BuildIndex"
-                           Disabled="@_isBuilding" StartIcon="@Icons.Material.Filled.Build">
+                <MudButton Variant="Variant.Filled" Color="Color.Primary" OnClick="BuildIndex"
+                           Disabled="@_isBuilding" StartIcon="@Icons.Material.Filled.Build"
+                           Style="background:#E94560;">
                     @(_isBuilding ? $"生成向量中... ({_builtCount}/{_totalToBuild})" : "构建向量索引")
                 </MudButton>
-                <MudButton Variant="Variant.Outlined" Color="Color.Secondary" OnClick="RebuildIndex"
-                           Disabled="@_isBuilding" StartIcon="@Icons.Material.Filled.Refresh">
+                <MudButton Variant="Variant.Filled" Color="Color.Warning" OnClick="RebuildIndex"
+                           Disabled="@_isBuilding" StartIcon="@Icons.Material.Filled.Refresh"
+                           Style="background:#FF9800; color:white;">
                     重新构建所有向量
                 </MudButton>
+                @if (_isBuilding)
+                {
+                    <MudProgressLinear Color="Color.Primary" Style="width: 200px; align-self: center;" />
+                    <MudText Typo="Typo.caption" Style="color: #FF9800; align-self: center;">正在生成向量，请稍候...</MudText>
+                }
             </MudStack>
 
             <MudStack Row="true" Spacing="3" AlignItems="AlignItems.Center">
                 <MudText Typo="Typo.body2" Style="color: #888;">搜索模式:</MudText>
                 <MudButtonGroup Size="Size.Small">
-                    <MudButton Variant="_searchMode == SearchMode.Hybrid ? Variant.Filled : Variant.Outlined" 
-                               Color="Color.Primary" 
+                    <MudButton Variant="_searchMode == SearchMode.Hybrid ? Variant.Filled : Variant.Outlined"
+                               Color="Color.Primary" Style="@(_searchMode == SearchMode.Hybrid ? "color:red;" : "color:white;")"
                                OnClick="() => _searchMode = SearchMode.Hybrid">
                         混合检索
                     </MudButton>
                     <MudButton Variant="_searchMode == SearchMode.Vector ? Variant.Filled : Variant.Outlined" 
-                               Color="Color.Primary" 
+                               Color="Color.Primary" Style="@(_searchMode == SearchMode.Vector ? "color:red;" : "color:white;")"
                                OnClick="() => _searchMode = SearchMode.Vector">
                         向量检索
                     </MudButton>
                     <MudButton Variant="_searchMode == SearchMode.Keyword ? Variant.Filled : Variant.Outlined" 
-                               Color="Color.Primary" 
+                               Color="Color.Primary" Style="@(_searchMode == SearchMode.Keyword ? "color:red;" : "color:white;")"
                                OnClick="() => _searchMode = SearchMode.Keyword">
                         关键词检索
                     </MudButton>
@@ -168,10 +175,9 @@
         _totalMovies = movies.Count;
     }
 
-    private Task OnKeyDown(KeyboardEventArgs e)
+    private async Task OnKeyUpHandler(KeyboardEventArgs e)
     {
-        if (e.Key == "Enter") return DoSearch();
-        return Task.CompletedTask;
+        if (e.Key == "Enter") await DoSearch();
     }
 
     private async Task DoSearch()
@@ -190,13 +196,10 @@
                     _searchResults = await HybridSearch.SearchAsync(_searchText, topK: 12);
                     break;
                 case SearchMode.Vector:
-                    var vectorResults = await VectorDb.SearchAsync(_searchText, 12);
-                    var movieIds = vectorResults.Select(r => r.MovieId).ToList();
-                    var allMovies = await MovieRepo.GetAllAsync();
-                    _searchResults = allMovies.Where(m => movieIds.Contains(m.Id)).ToList();
+                    _searchResults = await SearchVectorWithKeywordSplit(_searchText, 12);
                     break;
                 case SearchMode.Keyword:
-                    _searchResults = await MovieRepo.SearchAsync(_searchText);
+                    _searchResults = await SearchKeywordWithSplit(_searchText);
                     break;
             }
         }
@@ -210,6 +213,92 @@
             _isSearching = false;
             StateHasChanged();
         }
+    }
+
+    /// <summary>
+    /// 向量检索 - 支持关键词拆分
+    /// </summary>
+    private async Task<List<Movie>> SearchVectorWithKeywordSplit(string query, int topK)
+    {
+        var keywords = SplitKeywords(query);
+        
+        if (keywords.Count > 1)
+        {
+            Console.WriteLine($"[SemanticSearch] Vector search split '{query}' into {keywords.Count} keywords");
+            var allVectorResults = new List<VectorSearchResult>();
+            
+            foreach (var keyword in keywords)
+            {
+                var results = await VectorDb.SearchAsync(keyword, topK * 2);
+                allVectorResults.AddRange(results);
+            }
+            
+            // 按相似度排序并去重
+            var sortedResults = allVectorResults
+                .GroupBy(r => r.MovieId)
+                .Select(g => g.OrderByDescending(r => r.Similarity).First())
+                .OrderByDescending(r => r.Similarity)
+                .Take(topK)
+                .ToList();
+            
+            var movieIds1 = sortedResults.Select(r => r.MovieId).ToList();
+            var allMovies1 = await MovieRepo.GetAllAsync();
+            
+            return movieIds1
+                .Join(allMovies1, id => id, movie => movie.Id, (id, movie) => movie)
+                .Distinct()
+                .ToList();
+        }
+        
+        var vectorResults = await VectorDb.SearchAsync(query, topK);
+        var movieIds = vectorResults.Select(r => r.MovieId).ToList();
+        var allMovies = await MovieRepo.GetAllAsync();
+        
+        return movieIds
+            .Join(allMovies, id => id, movie => movie.Id, (id, movie) => movie)
+            .Distinct()
+            .ToList();
+    }
+
+    /// <summary>
+    /// 关键词检索 - 支持关键词拆分
+    /// </summary>
+    private async Task<List<Movie>> SearchKeywordWithSplit(string query)
+    {
+        var keywords = SplitKeywords(query);
+        
+        if (keywords.Count > 1)
+        {
+            Console.WriteLine($"[SemanticSearch] Keyword search split '{query}' into {keywords.Count} keywords");
+            var allResults = new List<Movie>();
+            
+            foreach (var keyword in keywords)
+            {
+                var results = await MovieRepo.SearchAsync(keyword);
+                allResults.AddRange(results);
+            }
+            
+            // 去重并保持首次出现顺序
+            return allResults
+                .GroupBy(m => m.Id)
+                .Select(g => g.First())
+                .ToList();
+        }
+        
+        return await MovieRepo.SearchAsync(query);
+    }
+
+    /// <summary>
+    /// 拆分关键词 - 支持多种分隔符
+    /// </summary>
+    private List<string> SplitKeywords(string query)
+    {
+        char[] separators = { ' ', ',', '，', '、', ';', '；', '|', '\\', '/', '\t' };
+        return query.Split(separators, StringSplitOptions.RemoveEmptyEntries)
+                    .Select(k => k.Trim())
+                    .Where(k => !string.IsNullOrWhiteSpace(k))
+                    .Distinct(StringComparer.OrdinalIgnoreCase)
+                    .ToList();
     }
 
     private async Task BuildIndex()
@@ -239,7 +328,7 @@
             {
                 try
                 {
-                    var text = $"{m.Title}. {m.Overview ?? string.Empty}";
+                    var text = BuildEmbeddingText(m);
                     var vector = await VectorDb.GenerateEmbeddingAsync(text);
                     if (vector != null && vector.Length > 0)
                     {
@@ -263,7 +352,166 @@
             StateHasChanged();
         }
     }
+    private string BuildEmbeddingText(Movie movie)
+    {
+        var parts = new List<string>();
 
+        // 基本信息 - 使用中文标签
+        if (!string.IsNullOrWhiteSpace(movie.Title))
+            parts.Add($"电影标题：{movie.Title}");
+
+        if (!string.IsNullOrWhiteSpace(movie.OriginalTitle))
+            parts.Add($"原名：{movie.OriginalTitle}");
+
+        if (!string.IsNullOrWhiteSpace(movie.Tagline))
+            parts.Add($"标语：{movie.Tagline}");
+
+        // 上映信息
+        if (movie.ReleaseDate.HasValue)
+            parts.Add($"上映日期：{movie.ReleaseDate.Value:yyyy年MM月dd日}");
+
+        if (movie.ReleaseYear.HasValue)
+            parts.Add($"上映年份：{movie.ReleaseYear.Value}年");
+
+        if (!string.IsNullOrWhiteSpace(movie.Status))
+            parts.Add($"状态：{movie.Status}");
+
+        // 制片信息
+        if (!string.IsNullOrWhiteSpace(movie.ProductionCompanies))
+            parts.Add($"制片公司：{ParseJsonList(movie.ProductionCompanies)}");
+
+        if (!string.IsNullOrWhiteSpace(movie.ProductionCountries))
+            parts.Add($"制片国家：{ParseJsonList(movie.ProductionCountries)}");
+
+        if (!string.IsNullOrWhiteSpace(movie.OriginCountry))
+            parts.Add($"原产国：{movie.OriginCountry}");
+
+        if (!string.IsNullOrWhiteSpace(movie.Country))
+            parts.Add($"国家：{movie.Country}");
+
+        // 财务信息
+        if (movie.Budget.HasValue && movie.Budget > 0)
+            parts.Add($"预算：{movie.Budget.Value:N0}美元");
+
+        if (movie.Revenue.HasValue && movie.Revenue > 0)
+            parts.Add($"票房：{movie.Revenue.Value:N0}美元");
+
+        // 语言信息
+        if (!string.IsNullOrWhiteSpace(movie.OriginalLanguage))
+            parts.Add($"原始语言：{GetLanguageName(movie.OriginalLanguage)}");
+
+        if (!string.IsNullOrWhiteSpace(movie.Language))
+            parts.Add($"语言：{movie.Language}");
+
+        if (!string.IsNullOrWhiteSpace(movie.AudioLanguages))
+            parts.Add($"音频语言：{movie.AudioLanguages}");
+
+        // 类型和关键词
+        if (!string.IsNullOrWhiteSpace(movie.Genres))
+            parts.Add($"类型：{ParseJsonList(movie.Genres)}");
+
+        if (!string.IsNullOrWhiteSpace(movie.Keywords))
+            parts.Add($"关键词：{ParseJsonList(movie.Keywords)}");
+
+        if (!string.IsNullOrWhiteSpace(movie.AlternativeTitles))
+            parts.Add($"别名：{movie.AlternativeTitles}");
+
+        // 演职人员
+        if (!string.IsNullOrWhiteSpace(movie.Director))
+            parts.Add($"导演：{movie.Director}");
+
+        if (!string.IsNullOrWhiteSpace(movie.Writer))
+            parts.Add($"编剧：{movie.Writer}");
+
+        if (!string.IsNullOrWhiteSpace(movie.Cast))
+            parts.Add($"演员：{movie.Cast}");
+
+        // 视频技术信息
+        if (!string.IsNullOrWhiteSpace(movie.VideoCodec))
+            parts.Add($"视频编码：{movie.VideoCodec}");
+
+        if (!string.IsNullOrWhiteSpace(movie.Resolution))
+            parts.Add($"分辨率：{movie.Resolution}");
+
+        if (movie.Width.HasValue && movie.Height.HasValue)
+            parts.Add($"尺寸：{movie.Width}x{movie.Height}");
+
+        if (movie.FrameRate.HasValue)
+            parts.Add($"帧率：{movie.FrameRate}");
+
+        if (!string.IsNullOrWhiteSpace(movie.AspectRatio))
+            parts.Add($"画幅比例：{movie.AspectRatio}");
+
+        if (!string.IsNullOrWhiteSpace(movie.HdrType))
+            parts.Add($"HDR类型：{movie.HdrType}");
+
+        if (!string.IsNullOrWhiteSpace(movie.ColorSpace))
+            parts.Add($"色彩空间：{movie.ColorSpace}");
+
+        if (!string.IsNullOrWhiteSpace(movie.BitDepth))
+            parts.Add($"位深：{movie.BitDepth}");
+
+        // 音频技术信息
+        if (!string.IsNullOrWhiteSpace(movie.AudioCodec))
+            parts.Add($"音频编码：{movie.AudioCodec}");
+
+        if (!string.IsNullOrWhiteSpace(movie.AudioChannels))
+            parts.Add($"音频声道：{movie.AudioChannels}");
+
+        if (!string.IsNullOrWhiteSpace(movie.SubtitleFormats))
+            parts.Add($"字幕格式：{movie.SubtitleFormats}");
+
+        // 评分和收藏
+        if (movie.Rating.HasValue)
+            parts.Add($"评分：{movie.Rating:F1}分");
+
+        if (movie.VoteCount.HasValue)
+            parts.Add($"投票数：{movie.VoteCount.Value:N0}");
+
+        if (movie.Popularity.HasValue)
+            parts.Add($"人气：{movie.Popularity:F1}");
+
+        if (movie.Runtime.HasValue)
+        {
+            var hours = movie.Runtime.Value / 60;
+            var minutes = movie.Runtime.Value % 60;
+            var runtimeStr = hours > 0 ? $"{hours}小时{minutes}分钟" : $"{minutes}分钟";
+            parts.Add($"时长：{runtimeStr}");
+        }
+
+        // 简介
+        if (!string.IsNullOrWhiteSpace(movie.Overview))
+            parts.Add($"简介：{movie.Overview}");
+
+        return string.Join("。", parts);
+    }
+    private string ParseJsonList(string? json)
+    {
+        if (string.IsNullOrEmpty(json)) return "";
+
+        try
+        {
+            var list = System.Text.Json.JsonSerializer.Deserialize<List<string>>(json);
+            return list != null && list.Any() ? string.Join("、", list) : json;
+        }
+        catch
+        {
+            return json;
+        }
+    }
+
+    private string GetLanguageName(string code)
+    {
+        var languageMap = new Dictionary<string, string>
+        {
+            { "en", "英语" }, { "zh", "中文" }, { "ja", "日语" },
+            { "ko", "韩语" }, { "fr", "法语" }, { "de", "德语" },
+            { "it", "意大利语" }, { "es", "西班牙语" }, { "ru", "俄语" },
+            { "hi", "印地语" }, { "th", "泰语" }, { "pt", "葡萄牙语" }
+        };
+
+        return languageMap.TryGetValue(code.ToLower(), out var name) ? name : code.ToUpper();
+    }
     private async Task RebuildIndex()
     {
         if (_isBuilding) return;
@@ -282,7 +530,7 @@
             {
                 try
                 {
-                    var text = $"{m.Title}. {m.Overview ?? string.Empty}";
+                    var text = BuildEmbeddingText(m);
                     var vector = await VectorDb.GenerateEmbeddingAsync(text);
                     if (vector != null && vector.Length > 0)
                     {
@@ -314,16 +562,18 @@
 
     private async Task PlayMovie(int movieId)
     {
-        var movie = await MovieRepo.GetByIdAsync(movieId);
-        if (movie == null) return;
-        try
-        {
-            await PlayerService.PlayAsync(movie.FilePath);
-        }
-        catch (Exception ex)
-        {
-            Console.WriteLine($"[SemanticSearch] 播放失败: {ex.Message}");
-        }
+        NavigationManager.NavigateTo($"/movie/{movieId}/videos");
+
+        // var movie = await MovieRepo.GetByIdAsync(movieId);
+        // if (movie == null) return;
+        // try
+        // {
+        //     await PlayerService.PlayAsync(movie.FilePath);
+        // }
+        // catch (Exception ex)
+        // {
+        //     Console.WriteLine($"[SemanticSearch] 播放失败: {ex.Message}");
+        // }
     }
 
     public async ValueTask DisposeAsync()

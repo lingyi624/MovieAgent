@@ -23,6 +23,7 @@ public class TagService : ITagService
 {
     private readonly IMovieRepository _movieRepo;
     private readonly IAgentService _agentService;
+    private readonly IMovieUpdateService? _movieUpdateService;
 
     private static readonly List<string> EmotionTags = new List<string>
     {
@@ -44,10 +45,11 @@ public class TagService : ITagService
         "写实", "夸张", "细腻", "粗犷", "唯美", "暗黑", "清新", "厚重"
     };
 
-    public TagService(IMovieRepository movieRepo, IAgentService agentService)
+    public TagService(IMovieRepository movieRepo, IAgentService agentService, IMovieUpdateService? movieUpdateService = null)
     {
         _movieRepo = movieRepo;
         _agentService = agentService;
+        _movieUpdateService = movieUpdateService;
     }
 
     public async Task AddTagAsync(int movieId, string tag)
@@ -60,7 +62,16 @@ public class TagService : ITagService
         {
             tags.Add(tag);
             movie.Tags = JsonSerializer.Serialize(tags);
-            await _movieRepo.UpdateAsync(movie);
+            
+            // 使用统一更新服务，同步向量数据库
+            if (_movieUpdateService != null)
+            {
+                await _movieUpdateService.UpdateMovieWithVectorAsync(movie);
+            }
+            else
+            {
+                await _movieRepo.UpdateAsync(movie);
+            }
         }
     }
 
@@ -72,7 +83,16 @@ public class TagService : ITagService
         var tags = GetTagsFromMovie(movie);
         tags.RemoveAll(t => t.Equals(tag, StringComparison.OrdinalIgnoreCase));
         movie.Tags = tags.Any() ? JsonSerializer.Serialize(tags) : null;
-        await _movieRepo.UpdateAsync(movie);
+        
+        // 使用统一更新服务，同步向量数据库
+        if (_movieUpdateService != null)
+        {
+            await _movieUpdateService.UpdateMovieWithVectorAsync(movie);
+        }
+        else
+        {
+            await _movieRepo.UpdateAsync(movie);
+        }
     }
 
     public async Task<List<string>> GetTagsAsync(int movieId)

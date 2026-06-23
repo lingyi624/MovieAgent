@@ -10,12 +10,16 @@
     <ApplicationTitle>Movie Agent</ApplicationTitle>
     <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
     <ApplicationIcon>Resources\appicon.ico</ApplicationIcon>
+    <StartupObject>MovieAgent.Program</StartupObject>
   </PropertyGroup>
 
   <ItemGroup>
     <PackageReference Include="Microsoft.AspNetCore.Components.WebView.Wpf" Version="10.0.0-preview.3.25171.1" />
     <PackageReference Include="MudBlazor" Version="9.5.0" />
     <PackageReference Include="Microsoft.Extensions.Hosting" Version="10.0.0-preview.3.25171.1" />
+    <PackageReference Include="SQLitePCLRaw.lib.e_sqlite3" Version="2.1.11" />
+    <PackageReference Include="Vortice.Direct3D11" Version="3.8.3" />
+    <PackageReference Include="Vortice.D3DCompiler" Version="3.8.3" />
     <PackageReference Include="System.Drawing.Common" Version="9.0.0" />
     <PackageReference Include="System.Management" Version="8.0.0" />
     <PackageReference Include="FFmpeg.AutoGen" Version="8.1.0" />
@@ -32,11 +36,24 @@
   </ItemGroup>
 
   <ItemGroup>
+    <Compile Remove="Controls\VideoAudioSync\AdaptiveSyncManager.cs" />
+    <Compile Remove="Controls\VideoAudioSync\MLAdaptiveSync.cs" />
+    <Compile Remove="Controls\VideoAudioSync\MultiStrategySyncEngine.cs" />
+    <Compile Remove="Controls\VideoAudioSync\SmartPlayer.cs" />
+    <Compile Remove="Controls\VideoAudioSync\SyncMonitor.cs" />
+    <Compile Remove="Controls\VideoAudioSync\VideoAnalyzer.cs" />
+  </ItemGroup>
+
+  <ItemGroup>
     <None Update="appsettings.json" CopyToOutputDirectory="PreserveNewest" />
     <None Update="share.json" CopyToOutputDirectory="PreserveNewest" />
   </ItemGroup>
 
-  <Target Name="GenerateIcon" BeforeTargets="Build">
+  <ItemGroup>
+    <Folder Include="Controls\VideoAudioSync\" />
+  </ItemGroup>
+
+  <Target Name="GenerateIcon" BeforeTargets="Build" Condition="!Exists('Resources\appicon.ico')">
     <Exec Command="powershell.exe -ExecutionPolicy Bypass -File generate-icon.ps1" WorkingDirectory="$(ProjectDir)" />
   </Target>
 

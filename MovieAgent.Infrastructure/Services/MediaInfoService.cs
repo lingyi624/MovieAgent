@@ -167,9 +167,9 @@ public class MediaInfoService : IMediaInfoService
             }
 
             result.Success = true;
-            Debug.WriteLine($"[MediaInfo] Parsed: {filePath}");
-            Debug.WriteLine($"  Video: {result.VideoCodec}, {result.Resolution} ({result.Width}x{result.Height}), HDR: {result.HdrType}, {result.FrameRate:F2} fps, {result.VideoBitrate:F0} kbps");
-            Debug.WriteLine($"  Audio: {result.AudioCodec}, {result.AudioBitrate:F0} kbps, Duration: {result.Duration}ms");
+            //Debug.WriteLine($"[MediaInfo] Parsed: {filePath}");
+           // Debug.WriteLine($"  Video: {result.VideoCodec}, {result.Resolution} ({result.Width}x{result.Height}), HDR: {result.HdrType}, {result.FrameRate:F2} fps, {result.VideoBitrate:F0} kbps");
+           // Debug.WriteLine($"  Audio: {result.AudioCodec}, {result.AudioBitrate:F0} kbps, Duration: {result.Duration}ms");
         }
         finally
         {

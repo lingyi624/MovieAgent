@@ -1,9 +1,11 @@
 @page "/movies"
 @inject IMovieRepository MovieRepo
 @inject ITagService TagService
+@inject IMovieUpdateService MovieUpdateService
 @inject NavigationManager NavigationManager
 @inject MovieAgent.Core.Interfaces.ITmdbService TmdbService
 @inject ILoggerService Logger
+@inject IVectorDatabaseService _vectorDb
 
 <PageTitle>电影库</PageTitle>
 
@@ -26,15 +28,18 @@
                       DebounceInterval="300" Style="margin-bottom: 12px;" />
     </MudItem>
     <MudItem xs="6" sm="3" md="2">
-        <MudSelect @bind-Value="_sortBy" Label="排序" Variant="Variant.Outlined" T="string" Margin="Margin.Dense">
+        <MudSelect @bind-Value="_sortBy" @bind-Value:after="ApplyFilters" Label="排序" Variant="Variant.Outlined" T="string" Margin="Margin.Dense">
             <MudSelectItem T="string" Value="@("created")">添加时间</MudSelectItem>
+            <MudSelectItem T="string" Value="@("unwatched")">未观看</MudSelectItem>
+            <MudSelectItem T="string" Value="@("recent")">最近</MudSelectItem>
+            <MudSelectItem T="string" Value="@("filesize")">文件大小</MudSelectItem>
             <MudSelectItem T="string" Value="@("title")">标题</MudSelectItem>
             <MudSelectItem T="string" Value="@("year")">年份</MudSelectItem>
             <MudSelectItem T="string" Value="@("rating")">评分</MudSelectItem>
         </MudSelect>
     </MudItem>
     <MudItem xs="6" sm="3" md="2">
-        <MudSwitch @bind-Value="_sortDesc" Label="降序" Color="Color.Primary" />
+        <MudSwitch @bind-Value="_sortDesc" @bind-Value:after="ApplyFilters" Label="降序" Color="Color.Primary" />
     </MudItem>
 </MudGrid> 
 
@@ -146,12 +151,59 @@
     </MudStack>
 
     <MudStack Row="true" Spacing="1" AlignItems="AlignItems.Center">
-        <MudText Typo="Typo.body2" Style="color: #888; width: 50px;">语言</MudText>
+        <MudText Typo="Typo.body2" Style="color: #888; width: 32px;">语言</MudText>
         <MudChip T="string" Color="@(_selectedLanguages.Count == 0 ? Color.Primary : Color.Default)" Size="Size.Small" OnClick="ClearLanguages" Class="filter-chip-sm">全部</MudChip>
         @foreach (var language in _allLanguages)
         {
             <MudChip T="string" Color="@(_selectedLanguages.Contains(language) ? Color.Primary : Color.Default)" Size="Size.Small" OnClick="async () => await ToggleLanguage(language)" Class="filter-chip-sm">@language</MudChip>
         }
+    </MudStack>
+
+    <MudStack Row="true" Spacing="4" AlignItems="AlignItems.Center" Style="margin-top: 8px;">
+        <MudStack Row="true" Spacing="1" AlignItems="AlignItems.Center" Style="flex: 1;">
+            <MudText Typo="Typo.body2" Style="color: #888; width: 32px;">导演</MudText>
+            <MudChip T="string" Color="@(_selectedDirectors.Count == 0 ? Color.Primary : Color.Default)" Size="Size.Small" OnClick="async () => await ClearDirectors()" Class="filter-chip-sm">全部</MudChip>
+            @foreach (var dir in _allDirectors.Take(6))
+            {
+                <MudChip T="string" Color="@(_selectedDirectors.Contains(dir) ? Color.Primary : Color.Default)" Size="Size.Small" OnClick="async () => await ToggleDirector(dir)" Class="filter-chip-sm">@dir</MudChip>
+            }
+            @if (_allDirectors.Count > 6)
+            {
+                <MudMenu Icon="@Icons.Material.Filled.MoreHoriz" Size="Size.Small" Color="Color.Default">
+                    @foreach (var dir in _allDirectors.Skip(6))
+                    {
+                        <MudMenuItem OnClick="async () => await ToggleDirector(dir)">@dir</MudMenuItem>
+                    }
+                </MudMenu>
+            }
+        </MudStack>
+    </MudStack>
+    <MudStack Row="true" Spacing="4" AlignItems="AlignItems.Center">
+        <MudStack Row="true" Spacing="1" AlignItems="AlignItems.Center" Style="flex: 1;">
+            <MudText Typo="Typo.body2" Style="color: #888; width: 32px;">演员</MudText>
+            <MudChip T="string" Color="@(_selectedCasts.Count == 0 ? Color.Primary : Color.Default)" Size="Size.Small" OnClick="async () => await ClearCasts()" Class="filter-chip-sm">全部</MudChip>
+            @foreach (var cast in _allCasts.Take(6))
+            {
+                <MudChip T="string" Color="@(_selectedCasts.Contains(cast) ? Color.Primary : Color.Default)" Size="Size.Small" OnClick="async () => await ToggleCast(cast)" Class="filter-chip-sm">@cast</MudChip>
+            }
+            @if (_allCasts.Count > 6)
+            {
+                <MudMenu Icon="@Icons.Material.Filled.MoreHoriz" Size="Size.Small" Color="Color.Default">
+                    @foreach (var cast in _allCasts.Skip(6))
+                    {
+                        <MudMenuItem OnClick="async () => await ToggleCast(cast)">@cast</MudMenuItem>
+                    }
+                </MudMenu>
+            }
+        </MudStack>
+    </MudStack>
+    <MudStack Row="true" Spacing="4" AlignItems="AlignItems.Center" Style="margin-top: 8px;">
+        <MudStack Row="true" Spacing="1" AlignItems="AlignItems.Center">
+            <MudText Typo="Typo.body2" Style="color: #888;">类型</MudText>
+            <MudChip T="string" Color="@(_selectedTVSeries == null ? Color.Primary : Color.Default)" Size="Size.Small" OnClick="async () => await ClearTVSeries()" Class="filter-chip-sm">全部</MudChip>
+            <MudChip T="string" Color="@(_selectedTVSeries == false ? Color.Primary : Color.Default)" Size="Size.Small" OnClick="async () => await SelectTVSeries(false)" Class="filter-chip-sm">电影</MudChip>
+            <MudChip T="string" Color="@(_selectedTVSeries == true ? Color.Primary : Color.Default)" Size="Size.Small" OnClick="async () => await SelectTVSeries(true)" Class="filter-chip-sm">电视剧</MudChip>
+        </MudStack>
     </MudStack>
 </MudPaper>
 
@@ -171,6 +223,8 @@ else
         <HeaderContent>
             <MudTh>海报</MudTh>
             <MudTh>标题</MudTh>
+            <MudTh>导演</MudTh>
+            <MudTh>演员</MudTh>
             <MudTh>年份</MudTh>
             <MudTh>评分</MudTh>
             <MudTh>类型</MudTh>
@@ -189,6 +243,18 @@ else
                     <MudText Typo="Typo.caption" Style="color: #888;">@context.OriginalTitle</MudText>
                 }
             </MudTd>
+            <MudTd>
+                <MudText Typo="Typo.caption"  >@context.Director</MudText>
+
+            </MudTd> 
+            <MudTd>
+                                <div style="display: flex; flex-wrap: wrap; gap: 4px; width:150px;">
+
+                <MudText Typo="Typo.caption"  >@context.Cast</MudText>
+                </div>
+
+            </MudTd>
+           
             <MudTd>@context.ReleaseYear</MudTd>
             <MudTd>
                 @if (context.Rating.HasValue)
@@ -303,6 +369,8 @@ else
     private List<string> _allResolutions = new();
     private List<string> _allCountries = new();
     private List<string> _allLanguages = new();
+    private List<string> _allDirectors = new();
+    private List<string> _allCasts = new();
     private List<string> _selectedGenres = new();
     private string _selectedResolution = "";
     private bool? _selectedWatched;
@@ -313,11 +381,16 @@ else
     private double _maxRating = 10;
     private List<string> _selectedCountries = new();
     private List<string> _selectedLanguages = new();
+    private List<string> _selectedDirectors = new();
+    private List<string> _selectedCasts = new();
+    private string _directorFilter = "";
+    private string _castFilter = "";
+    private bool? _selectedTVSeries;
 
     protected override async Task OnInitializedAsync()
     { 
-       ParseQueryParameters();
-       NavigationManager.LocationChanged += OnLocationChanged;
+        ParseQueryParameters();
+        NavigationManager.LocationChanged += OnLocationChanged;
 
         await LoadTags();
         await LoadFilterOptions();
@@ -404,6 +477,8 @@ else
         _allResolutions = await MovieRepo.GetAllResolutionsAsync();
         _allCountries = await MovieRepo.GetAllCountriesAsync();
         _allLanguages = await MovieRepo.GetAllLanguagesAsync();
+        _allDirectors = await MovieRepo.GetAllDirectorsAsync();
+        _allCasts = await MovieRepo.GetAllCastsAsync();
     }
 
     private async Task ToggleTag(string tag)
@@ -460,7 +535,10 @@ else
                 MaxRating = _maxRating < 10 ? _maxRating : null,
                 IsWatched = _selectedWatched,
                 IsFavorite = _selectedFavorite,
-                Tags = _selectedTags.Any() ? _selectedTags : null
+                Tags = _selectedTags.Any() ? _selectedTags : null,
+                Director = _selectedDirectors.Any() ? _selectedDirectors : null,
+                Cast = _selectedCasts.Any() ? _selectedCasts : null,
+                IsTVSeries = _selectedTVSeries
             };
 
             _movies = await MovieRepo.GetUniqueMoviesAsync(filter);
@@ -488,7 +566,7 @@ else
 
     private void PlayMovie(Movie movie)
     {
-        NavigationManager.NavigateTo($"/play/{movie.Id}");
+        NavigationManager.NavigateTo($"/movie/{movie.Id}/videos"); 
     }
 
     private void GoToDetail(int id) => NavigationManager.NavigateTo($"/movie/{id}");
@@ -536,39 +614,103 @@ else
         try
         {
             _editingMovie.Title = _editTitle;
-            await MovieRepo.UpdateAsync(_editingMovie);
 
             var tmdbInfo = await TmdbService.SearchMovieAsync(_editTitle, _editingMovie.ReleaseYear);
             if (tmdbInfo != null)
             {
+                // 保存用户数据
+                var userRating = _editingMovie.UserRating;
+                var isFavorite = _editingMovie.IsFavorite;
+                var isWatched = _editingMovie.IsWatched;
+                var watchedAt = _editingMovie.WatchedAt;
+                var playbackPosition = _editingMovie.PlaybackPosition;
+                var tags = _editingMovie.Tags;
+                var createdAt = _editingMovie.CreatedAt;
+
+                // 基本信息
+                _editingMovie.TmdbId = tmdbInfo.Id.ToString();
+                _editingMovie.Title = tmdbInfo.Title;
+                _editingMovie.OriginalTitle = tmdbInfo.OriginalTitle;
+                _editingMovie.Overview = tmdbInfo.Overview;
+                _editingMovie.Tagline = tmdbInfo.Tagline;
+                _editingMovie.PosterPath = tmdbInfo.PosterPath;
+                _editingMovie.BackdropPath = tmdbInfo.BackdropPath;
+                _editingMovie.ReleaseDate = tmdbInfo.ReleaseDate;
+                if (tmdbInfo.ReleaseYear.HasValue)
+                    _editingMovie.ReleaseYear = tmdbInfo.ReleaseYear;
+
+                // 评分和人气
                 if (tmdbInfo.Rating.HasValue)
                     _editingMovie.Rating = tmdbInfo.Rating.Value;
-                if (tmdbInfo.ReleaseYear.HasValue)
-                    _editingMovie.ReleaseYear = tmdbInfo.ReleaseYear.Value;
-                if (!string.IsNullOrEmpty(tmdbInfo.Director))
-                    _editingMovie.Director = tmdbInfo.Director;
+                if (tmdbInfo.VoteCount.HasValue)
+                    _editingMovie.VoteCount = tmdbInfo.VoteCount;
+                if (tmdbInfo.Popularity.HasValue)
+                    _editingMovie.Popularity = tmdbInfo.Popularity;
+
+                // 内容信息
+                if (tmdbInfo.Runtime.HasValue)
+                    _editingMovie.Runtime = tmdbInfo.Runtime;
                 if (tmdbInfo.Genres.Any())
                     _editingMovie.Genres = System.Text.Json.JsonSerializer.Serialize(tmdbInfo.Genres);
+                _editingMovie.Homepage = tmdbInfo.Homepage;
+                _editingMovie.Status = tmdbInfo.Status;
+                _editingMovie.IsAdult = tmdbInfo.IsAdult;
+                _editingMovie.BelongsToCollection = tmdbInfo.BelongsToCollection;
+
+                // 财务信息
+                if (tmdbInfo.Budget.HasValue)
+                    _editingMovie.Budget = tmdbInfo.Budget;
+                if (tmdbInfo.Revenue.HasValue)
+                    _editingMovie.Revenue = tmdbInfo.Revenue;
+
+                // 语言制片
+                _editingMovie.OriginalLanguage = tmdbInfo.OriginalLanguage;
+                if (tmdbInfo.ProductionCompanies.Any())
+                    _editingMovie.ProductionCompanies = System.Text.Json.JsonSerializer.Serialize(tmdbInfo.ProductionCompanies);
                 if (tmdbInfo.Countries.Any())
-                    _editingMovie.Country = string.Join(", ", tmdbInfo.Countries);
+                    _editingMovie.ProductionCountries = System.Text.Json.JsonSerializer.Serialize(tmdbInfo.Countries);
+                if (tmdbInfo.Countries.Any())
+                    _editingMovie.OriginCountry = string.Join(", ", tmdbInfo.Countries);
+                if (tmdbInfo.Keywords.Any())
+                    _editingMovie.Keywords = System.Text.Json.JsonSerializer.Serialize(tmdbInfo.Keywords);
+
+                // 演职人员
+                _editingMovie.Director = tmdbInfo.Director;
+                _editingMovie.Writer = tmdbInfo.Writer;
+                _editingMovie.Cast = tmdbInfo.Cast;
                 if (tmdbInfo.Languages.Any())
                     _editingMovie.Language = string.Join(", ", tmdbInfo.Languages);
-                if (!string.IsNullOrEmpty(tmdbInfo.PosterPath))
-                    _editingMovie.PosterPath = tmdbInfo.PosterPath;
-                if (!string.IsNullOrEmpty(tmdbInfo.Overview))
-                    _editingMovie.Overview = tmdbInfo.Overview;
-                if (!string.IsNullOrEmpty(tmdbInfo.OriginalTitle))
-                    _editingMovie.OriginalTitle = tmdbInfo.OriginalTitle;
-                if (tmdbInfo.Runtime.HasValue)
-                    _editingMovie.Runtime = tmdbInfo.Runtime.Value;
-                _editingMovie.TmdbId = tmdbInfo.Id.ToString();
+                if (tmdbInfo.Countries.Any())
+                    _editingMovie.Country = string.Join(", ", tmdbInfo.Countries);
 
-                await MovieRepo.UpdateAsync(_editingMovie);
+                // 标识
+                _editingMovie.ImdbId = tmdbInfo.ImdbId;
+
+                // 恢复用户数据
+                _editingMovie.UserRating = userRating;
+                _editingMovie.IsFavorite = isFavorite;
+                _editingMovie.IsWatched = isWatched;
+                _editingMovie.WatchedAt = watchedAt;
+                _editingMovie.PlaybackPosition = playbackPosition;
+                _editingMovie.Tags = tags;
+                _editingMovie.CreatedAt = createdAt;
+                _editingMovie.UpdatedAt = DateTime.UtcNow;
+                var text = BuildEmbeddingText(_editingMovie);
+                if (!string.IsNullOrWhiteSpace(text))
+                {
+                    _editingMovie.EmbeddingText = text;
+                    _editingMovie.EmbeddingAt = DateTime.UtcNow;
+                }
+                // 使用统一更新服务，同步向量数据库
+                await MovieUpdateService.UpdateMovieWithVectorAsync(_editingMovie);
             }
             else
             {
                 await MovieRepo.UpdatePosterFromDirectoryAsync(_editingMovie);
                 await MovieRepo.UpdateMediaInfoFromDirectoryAsync(_editingMovie);
+                
+                // 使用统一更新服务，同步向量数据库
+                await MovieUpdateService.UpdateMovieWithVectorAsync(_editingMovie);
             }
 
             await LoadMovies();
@@ -622,6 +764,25 @@ else
 
     private async Task ClearLanguages() { _selectedLanguages.Clear(); await ApplyFilters(); }
 
+    private async Task ToggleDirector(string director)
+    {
+        if (_selectedDirectors.Contains(director)) _selectedDirectors.Remove(director);
+        else _selectedDirectors.Add(director);
+        await ApplyFilters();
+    }
+    private async Task ClearDirectors() { _selectedDirectors.Clear(); await ApplyFilters(); }
+
+    private async Task ToggleCast(string cast)
+    {
+        if (_selectedCasts.Contains(cast)) _selectedCasts.Remove(cast);
+        else _selectedCasts.Add(cast);
+        await ApplyFilters();
+    }
+    private async Task ClearCasts() { _selectedCasts.Clear(); await ApplyFilters(); }
+
+    private async Task SelectTVSeries(bool? value) { _selectedTVSeries = _selectedTVSeries == value ? null : value; await ApplyFilters(); }
+    private async Task ClearTVSeries() { _selectedTVSeries = null; await ApplyFilters(); }
+
     private async Task ResetFilters()
     {
         _selectedGenres.Clear();
@@ -634,6 +795,11 @@ else
         _maxRating = 10;
         _selectedCountries.Clear();
         _selectedLanguages.Clear();
+        _selectedDirectors.Clear();
+        _selectedCasts.Clear();
+        _directorFilter = "";
+        _castFilter = "";
+        _selectedTVSeries = null;
         await ApplyFilters();
     }
 
@@ -641,5 +807,90 @@ else
     {
         _currentPage = 1;
         await LoadMovies();
+    } 
+
+    private string BuildEmbeddingText(Movie movie)
+    {
+        var parts = new List<string>();
+
+        // 基本信息
+        if (!string.IsNullOrEmpty(movie.Title))
+            parts.Add($"电影标题：{movie.Title}");
+        if (!string.IsNullOrEmpty(movie.OriginalTitle))
+            parts.Add($"原名：{movie.OriginalTitle}");
+        if (!string.IsNullOrEmpty(movie.Tagline))
+            parts.Add($"标语：{movie.Tagline}");
+        if (movie.ReleaseYear.HasValue)
+            parts.Add($"上映年份：{movie.ReleaseYear}年");
+        if (movie.ReleaseDate.HasValue)
+            parts.Add($"上映日期：{movie.ReleaseDate:yyyy-MM-dd}");
+
+        // 评分和人气
+        if (movie.Rating.HasValue)
+            parts.Add($"评分：{movie.Rating}分");
+        if (movie.VoteCount.HasValue)
+            parts.Add($"投票数：{movie.VoteCount}");
+        if (movie.Popularity.HasValue)
+            parts.Add($"人气：{movie.Popularity}");
+
+        // 内容信息
+        if (!string.IsNullOrEmpty(movie.Overview))
+            parts.Add($"简介：{movie.Overview}");
+        if (!string.IsNullOrEmpty(movie.Genres))
+        {
+            try
+            {
+                var genres = System.Text.Json.JsonSerializer.Deserialize<List<string>>(movie.Genres);
+                if (genres != null && genres.Any())
+                    parts.Add($"类型：{string.Join("、", genres)}");
+            }
+            catch { parts.Add($"类型：{movie.Genres}"); }
+        }
+        if (movie.Runtime.HasValue)
+            parts.Add($"时长：{movie.Runtime}分钟");
+
+        // 财务信息
+        if (movie.Budget.HasValue && movie.Budget > 0)
+            parts.Add($"预算：{movie.Budget:N0}美元");
+        if (movie.Revenue.HasValue && movie.Revenue > 0)
+            parts.Add($"票房：{movie.Revenue:N0}美元");
+
+        // 演职人员
+        if (!string.IsNullOrEmpty(movie.Director))
+            parts.Add($"导演：{movie.Director}");
+        if (!string.IsNullOrEmpty(movie.Writer))
+            parts.Add($"编剧：{movie.Writer}");
+        if (!string.IsNullOrEmpty(movie.Cast))
+            parts.Add($"演员：{movie.Cast}");
+
+        // 制片信息
+        if (!string.IsNullOrEmpty(movie.Country))
+            parts.Add($"国家：{movie.Country}");
+        if (!string.IsNullOrEmpty(movie.Language))
+            parts.Add($"语言：{movie.Language}");
+        if (!string.IsNullOrEmpty(movie.ProductionCompanies))
+        {
+            try
+            {
+                var companies = System.Text.Json.JsonSerializer.Deserialize<List<string>>(movie.ProductionCompanies);
+                if (companies != null && companies.Any())
+                    parts.Add($"制片公司：{string.Join("、", companies.Take(3))}");
+            }
+            catch { }
+        }
+
+        // 关键词
+        if (!string.IsNullOrEmpty(movie.Keywords))
+        {
+            try
+            {
+                var keywords = System.Text.Json.JsonSerializer.Deserialize<List<string>>(movie.Keywords);
+                if (keywords != null && keywords.Any())
+                    parts.Add($"关键词：{string.Join("、", keywords.Take(5))}");
+            }
+            catch { }
+        }
+
+        return string.Join("。", parts);
     }
 }

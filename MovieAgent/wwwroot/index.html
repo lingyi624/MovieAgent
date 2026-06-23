@@ -8,6 +8,14 @@
     <link rel="icon" href="logo.svg" type="image/svg+xml" />
     <link href="_content/MudBlazor/MudBlazor.min.css" rel="stylesheet" />
     <link href="css/app.css" rel="stylesheet" />
+    <script>
+        // 全局滚动到底部函数
+        window.scrollToBottom = function(element) {
+            if (element) {
+                element.scrollTop = element.scrollHeight;
+            }
+        };
+    </script>
 </head>
 <body>
     <div id="app">Loading...</div>

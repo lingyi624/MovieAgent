@@ -80,7 +80,7 @@ namespace MovieAgent.FFmpegDecoder
 
             try
             {
-                if (!_dataConsumedEvent.WaitOne(100))
+                if (!_dataConsumedEvent.WaitOne(10))
                 {
                     return false;
                 }
@@ -113,7 +113,7 @@ namespace MovieAgent.FFmpegDecoder
 
             try
             {
-                if (!_dataReadyEvent.WaitOne(100))
+                if (!_dataReadyEvent.WaitOne(10))
                 {
                     return false;
                 }

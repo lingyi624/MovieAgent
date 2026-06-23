@@ -98,7 +98,7 @@
             <MudTextField @bind-Value="_modelUrl" Label="Ollama 地址" Variant="Variant.Outlined"
                           Placeholder="http://localhost:11434" Style="margin-bottom: 16px; background: #2D2D44;" />
             <MudTextField @bind-Value="_modelName" Label="模型名称" Variant="Variant.Outlined"
-                          Placeholder="llama3:latest" Style="margin-bottom: 16px; background: #2D2D44;" />
+                          Placeholder="phi3.5:3.8b-mini-instruct-q4_K_M" Style="margin-bottom: 16px; background: #2D2D44;" />
             <MudButton Variant="Variant.Filled" Color="Color.Primary" OnClick="SaveAiSettings" Style="background: #E94560;">保存</MudButton>
         </MudPaper>
     </MudTabPanel>
@@ -188,7 +188,7 @@
     private string _tmdbApiKey = "";
     private string _subtitleApiKey = "";
     private string _modelUrl = "http://localhost:11434";
-    private string _modelName = "llama3:latest";
+    private string _modelName = string.Empty;
     private List<BackupInfo> _backups = new();
     private string _backupDirectory = "";
     private bool _exporting = false;
@@ -205,7 +205,7 @@
         _tmdbApiKey = Config["TMDB:ApiKey"] ?? "";
         _subtitleApiKey = Config["Subtitle:ApiKey"] ?? "";
         _modelUrl = Config["AI:ModelUrl"] ?? "http://localhost:11434";
-        _modelName = Config["AI:ModelName"] ?? "llama3:latest";
+        _modelName = Config["AI:ModelName"] ?? "phi3.5:3.8b-mini-instruct-q4_K_M";
         LoadBackups();
     }
 

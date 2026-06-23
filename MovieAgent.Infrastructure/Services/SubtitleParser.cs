@@ -25,7 +25,34 @@ public class SubtitleItem
 
 public static class SubtitleParser
 {
-    private static readonly ILoggerService _logger = new LoggerService();
+    private static ILoggerService? _logger;
+    private static readonly object _loggerLock = new object();
+    
+    private static ILoggerService Logger
+    {
+        get
+        {
+            if (_logger == null)
+            {
+                lock (_loggerLock)
+                {
+                    if (_logger == null)
+                    {
+                        try
+                        {
+                            _logger = new LoggerService();
+                        }
+                        catch
+                        {
+                            _logger = new SimpleLogger();
+                        }
+                    }
+                }
+            }
+            return _logger;
+        }
+    }
+    
     private static readonly Regex SrtTimeRegex = new Regex(
         @"(\d{2}):(\d{2}):(\d{2}),(\d{3}) --> (\d{2}):(\d{2}):(\d{2}),(\d{3})",
         RegexOptions.Compiled);
@@ -104,7 +131,7 @@ public static class SubtitleParser
         }
         catch (Exception ex)
         {
-            _logger.Debug($"[Subtitle] ParseSrt error: {ex.Message}");
+            Logger.Debug($"[Subtitle] ParseSrt error: {ex.Message}");
             return subtitles;
         }
     }
@@ -162,7 +189,7 @@ public static class SubtitleParser
         }
         catch (Exception ex)
         {
-            _logger.Debug($"[Subtitle] ParseAss error: {ex.Message}");
+            Logger.Debug($"[Subtitle] ParseAss error: {ex.Message}");
             return subtitles;
         }
     }
@@ -225,3 +252,5 @@ public static class SubtitleParser
         }
     }
 }
+
+// ==================== 简单日志类 - 使用公共的 SimpleLogger ====================

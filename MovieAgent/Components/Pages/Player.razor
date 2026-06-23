@@ -49,11 +49,11 @@
                     <MudButton Variant="Variant.Filled" Color="Color.Primary" OnClick="TogglePlay" Size="Size.Large"
                                StartIcon="@(_isPlaying ? Icons.Material.Filled.Pause : Icons.Material.Filled.PlayArrow)"
                                Style="background:#E94560;">
-                        @(_isPlaying ? "暂停" : "播放")
+                        @("播放")
                     </MudButton>
-                    <MudButton Variant="Variant.Outlined" Color="Color.Secondary" OnClick="StopPlayback" StartIcon="@Icons.Material.Filled.Stop">
+                 @*    <MudButton Variant="Variant.Outlined" Color="Color.Secondary" OnClick="StopPlayback" StartIcon="@Icons.Material.Filled.Stop">
                         停止
-                    </MudButton>
+                    </MudButton> *@
                     <MudButton Variant="Variant.Outlined" Color="Color.Secondary" OnClick="PlayExternal" StartIcon="@Icons.Material.Filled.OpenInNew">
                         外置播放器
                     </MudButton>
@@ -199,20 +199,20 @@
         {
             await StartPlayback();
         }
-        else if (_isPlaying)
-        {
-            PlayerService.Pause();
-            _isPlaying = false;
-            _isPaused = true;
-            _playStatus = "已暂停";
-        }
-        else if (_isPaused)
-        {
-            PlayerService.Resume();
-            _isPlaying = true;
-            _isPaused = false;
-            _playStatus = "正在播放";
-        }
+        // else if (_isPlaying)
+        // {
+        //     PlayerService.Pause();
+        //     _isPlaying = false;
+        //     _isPaused = true;
+        //     _playStatus = "已暂停";
+        // }
+        // else if (_isPaused)
+        // {
+        //     PlayerService.Resume();
+        //     _isPlaying = true;
+        //     _isPaused = false;
+        //     _playStatus = "正在播放";
+        // }
     }
 
     private async Task StartPlayback()

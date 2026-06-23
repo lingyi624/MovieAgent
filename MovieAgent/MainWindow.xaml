@@ -139,14 +139,24 @@
                               Visibility="Visible" Panel.ZIndex="0" />
 
         <!-- 视频播放层 - 覆盖在 BlazorWebView 上面 -->
-        <Grid x:Name="VideoOverlay" Background="Black" Visibility="Collapsed" 
+        <Grid x:Name="VideoOverlay" Background="Black" Visibility="Collapsed"
               Panel.ZIndex="100" MouseMove="VideoOverlay_MouseMove">
-            
+    
+
             <!-- 视频渲染控件 -->
-            <controls:VideoRenderer x:Name="VideoRendererControl" 
-                                    HorizontalAlignment="Stretch"
-                                    VerticalAlignment="Stretch"
-                                    Stretch="Uniform" />
+            <controls:VideoRenderer x:Name="VideoRendererControl"  
+                            HorizontalAlignment="Stretch" 
+                            VerticalAlignment="Stretch" />
+
+        </Grid>
+
+        <!-- 控制层 Popup (渲染在 HwndHost 之上) -->
+        <Popup x:Name="ControlsPopup" AllowsTransparency="True" 
+               Placement="Relative" PlacementTarget="{Binding ElementName=VideoOverlay}"
+               IsOpen="False" PopupAnimation="Fade" StaysOpen="False"
+               Panel.ZIndex="200">
+            <Grid Width="{Binding ActualWidth, ElementName=VideoOverlay}"
+                  Height="{Binding ActualHeight, ElementName=VideoOverlay}">
 
             <!-- 字幕显示控件 -->
             <TextBlock x:Name="SubtitleTextBlock" 
@@ -160,11 +170,10 @@
                        TextAlignment="Center"
                        Padding="15,10"
                        Background="Transparent"
-                        
                        Visibility="Collapsed"
                        MaxWidth="800" />
 
-            <!-- 顶部信息面板 - 显示电影标题、播放状态、音效和字幕信息 -->
+            <!-- 顶部信息面板 -->
             <Border x:Name="TopBar" Background="#E6000000" Visibility="Collapsed"
                     CornerRadius="10" Margin="20" HorizontalAlignment="Stretch" VerticalAlignment="Top"
                     Padding="10">
@@ -236,28 +245,7 @@
         LargeChange="5000" SmallChange="1000"
         TickPlacement="None"
         VerticalAlignment="Center"/>
-                        <!--<StackPanel Grid.Column="1" Margin="15,0" VerticalAlignment="Center">
-                            --><!-- 时间显示标签（鼠标拖动时显示） --><!--
-                            <TextBlock x:Name="SeekTimeLabel" 
-               Text="00:00:00"         
-               Foreground="White" 
-               FontSize="12"
-               HorizontalAlignment="Center"
-               Visibility="Collapsed"
-               Margin="0,-20,0,0"/>
-
-                            --><!-- 进度条 --><!--
-                            <Slider x:Name="ProgressSlider" Height="24"   
-            Foreground="#E94560" Background="Transparent" BorderBrush="Transparent"
-            ValueChanged="ProgressSlider_ValueChanged"    Style="{StaticResource CircleSliderStyle}" 
-            PreviewMouseLeftButtonDown="ProgressSlider_PreviewMouseLeftButtonDown"
-            PreviewMouseLeftButtonUp="ProgressSlider_PreviewMouseLeftButtonUp"
-            PreviewMouseMove="ProgressSlider_PreviewMouseMove"
-            IsMoveToPointEnabled="True"
-            LargeChange="5000" SmallChange="1000"
-            TickPlacement="None"
-            VerticalAlignment="Center"/>
-                        </StackPanel>--> 
+                        
                         <TextBlock x:Name="TotalTimeText" Grid.Column="2" Foreground="White" FontSize="13" 
                                    VerticalAlignment="Center" Width="55" TextAlignment="Right" Text="00:00"/>
                     </Grid>
@@ -305,6 +293,14 @@
                         <Button x:Name="SubtitleButton" Content="📝 字幕" Click="SubtitleButton_Click" 
                                 Style="{StaticResource ControlButtonStyle}" ToolTip="字幕选项"/>
                         
+                        <!-- 截图按钮 -->
+                        <Button x:Name="ScreenshotButton" Content="📷 截图" Click="ScreenshotButton_Click" 
+                                Style="{StaticResource ControlButtonStyle}" ToolTip="保存当前画面截图"/>
+                        
+                        <!-- 播放速度按钮 -->
+                        <Button x:Name="SpeedButton" Content="⚡ 速度" Click="SpeedButton_Click" 
+                                Style="{StaticResource ControlButtonStyle}" ToolTip="调整播放速度"/>
+                        
                         <!-- 分隔线 -->
                         <Border Width="1" Background="#555" Margin="15,5"/>
                         
@@ -318,25 +314,48 @@
                         <!-- 全屏按钮 -->
                         <Button x:Name="FullscreenButton" Content="⛶" Click="FullscreenButton_Click" 
                                 Style="{StaticResource ControlButtonStyle}" FontFamily="Segoe UI Symbol"
-                                ToolTip="全屏/退出全屏" Width="65"/>
+                                ToolTip="全屏/退出全屏"/>
                     </StackPanel>
                 </Grid>
             </Border>
-            
-            <!-- 音频流选择弹窗 -->
-            <Popup x:Name="AudioPopup" StaysOpen="False" Placement="Top" 
-                   PlacementTarget="{Binding ElementName=AudioButton}"
-                   AllowsTransparency="True" PopupAnimation="Fade">
-                <Border Background="#E6000000" BorderBrush="#555" BorderThickness="1" 
+            </Grid>
+        </Popup>
+
+        <!-- 音频流选择弹窗 -->
+        <Popup x:Name="AudioPopup" StaysOpen="False" Placement="Top" 
+               PlacementTarget="{Binding ElementName=AudioButton}"
+               AllowsTransparency="True" PopupAnimation="Fade" Panel.ZIndex="200">
+                <Border Background="#E6000000" BorderBrush="#555" BorderThickness="1" HorizontalAlignment="Stretch"
                         CornerRadius="8" Padding="5" MinWidth="250">
-                    <StackPanel>
+                    <StackPanel HorizontalAlignment="Stretch"> 
                         <TextBlock Text="选择音频轨道" Foreground="White" FontSize="14" 
                                    FontWeight="Bold" Margin="10,8"/>
                         <Separator Background="#555" Margin="5,0"/>
-                        <StackPanel x:Name="AudioTrackListPanel"/>
+                        <StackPanel x:Name="AudioTrackListPanel" HorizontalAlignment="Stretch"/>
                         <TextBlock x:Name="NoAudioTracksText" Text="未检测到音频轨道" 
                                    Foreground="Gray" FontSize="12" Margin="10,8" 
                                    Visibility="Collapsed"/>
+                    </StackPanel>
+                </Border>
+            </Popup>
+            
+            <!-- 播放速度选择弹窗 -->
+            <Popup x:Name="SpeedPopup" StaysOpen="False" Placement="Top"
+                   PlacementTarget="{Binding ElementName=SpeedButton}"
+                   AllowsTransparency="True" PopupAnimation="Fade">
+                <Border Background="#E6000000" BorderBrush="#555" BorderThickness="1" 
+                        CornerRadius="8" Padding="5" MinWidth="180">
+                    <StackPanel>
+                        <TextBlock Text="播放速度" Foreground="White" FontSize="14" 
+                                   FontWeight="Bold" Margin="10,8"/>
+                        <Separator Background="#555" Margin="5,0"/>
+                        <Button Content="0.5x" Click="SpeedOption_Click" Tag="0.5" Style="{StaticResource ListButtonStyle}"/>
+                        <Button Content="0.75x" Click="SpeedOption_Click" Tag="0.75" Style="{StaticResource ListButtonStyle}"/>
+                        <Button Content="1.0x (正常)" Click="SpeedOption_Click" Tag="1.0" Style="{StaticResource ListButtonStyle}"
+                                Background="#E94560"/>
+                        <Button Content="1.25x" Click="SpeedOption_Click" Tag="1.25" Style="{StaticResource ListButtonStyle}"/>
+                        <Button Content="1.5x" Click="SpeedOption_Click" Tag="1.5" Style="{StaticResource ListButtonStyle}"/>
+                        <Button Content="2.0x" Click="SpeedOption_Click" Tag="2.0" Style="{StaticResource ListButtonStyle}"/>
                     </StackPanel>
                 </Border>
             </Popup>
@@ -354,7 +373,7 @@
                         
                         <!-- 内嵌字幕 -->
                         <TextBlock Text="内嵌字幕" Foreground="#AAA" FontSize="12" Margin="10,8,10,4"/>
-                        <StackPanel x:Name="SubtitleTrackListPanel"/>
+                        <StackPanel x:Name="SubtitleTrackListPanel"    HorizontalAlignment="Stretch"/>
                         <TextBlock x:Name="NoSubtitleTracksText" Text="无内嵌字幕" 
                                    Foreground="Gray" FontSize="12" Margin="10,8" 
                                    Visibility="Collapsed"/>
@@ -373,6 +392,27 @@
                                 Style="{StaticResource ListButtonStyle}"
                                 Click="UnloadSubtitleButton_Click"
                                 Visibility="Collapsed"/>
+                        
+                        <Separator Background="#555" Margin="5,8"/>
+                        
+                        <!-- 字幕延迟调整 -->
+                        <TextBlock Text="字幕同步" Foreground="#AAA" FontSize="12" Margin="10,4,10,4"/>
+                        <StackPanel Orientation="Horizontal" Margin="10,4,10,8">
+                            <Button Content="◀◀ -1s" Click="SubtitleDelayButton_Click" Tag="-1000" 
+                                    Style="{StaticResource ControlButtonStyle}" Width="70" Height="28" FontSize="11"/>
+                            <Button Content="◀ -0.5s" Click="SubtitleDelayButton_Click" Tag="-500" 
+                                    Style="{StaticResource ControlButtonStyle}" Width="70" Height="28" FontSize="11"/>
+                            <Button Content="重置" Click="SubtitleDelayButton_Click" Tag="0" 
+                                    Style="{StaticResource ControlButtonStyle}" Width="55" Height="28" FontSize="11"
+                                    Background="#E94560"/>
+                            <Button Content="+0.5s ▶" Click="SubtitleDelayButton_Click" Tag="500" 
+                                    Style="{StaticResource ControlButtonStyle}" Width="70" Height="28" FontSize="11"/>
+                            <Button Content="+1s ▶▶" Click="SubtitleDelayButton_Click" Tag="1000" 
+                                    Style="{StaticResource ControlButtonStyle}" Width="70" Height="28" FontSize="11"/>
+                        </StackPanel>
+                        <TextBlock x:Name="SubtitleDelayText" Text="延迟: 0ms" 
+                                   Foreground="#888" FontSize="11" Margin="10,0,10,8"/>
+                        
                         <TextBlock x:Name="CurrentSubtitleText" Text="" 
                                    Foreground="#888" FontSize="11" Margin="12,4,10,8"
                                    TextWrapping="Wrap"/>
@@ -468,7 +508,7 @@
                     <StackPanel>
                         <!-- 标题栏 -->
                         <StackPanel Orientation="Horizontal" HorizontalAlignment="Stretch" Margin="0,5,0,10">
-                            <TextBlock Text="⬇️ 字幕下载" Foreground="White" FontSize="16" 
+                            <TextBlock Text="⬇️ 字幕下载" Foreground="White"   FontSize="16" 
                                        FontWeight="Bold" Margin="10,0"/>
                             <Button x:Name="CloseSubtitleDownloadButton" Content="✕" 
                                     Style="{StaticResource ListButtonStyle}"
@@ -493,7 +533,7 @@
                                         Style="{StaticResource ControlButtonStyle}"
                                         Click="SearchSubtitleButton_Click" Width="80"/>
                                 <ComboBox x:Name="SubtitleLanguageCombo" Margin="10,0,0,0" Width="120"
-                                          Foreground="White" Background="#3D3D5C" BorderBrush="#555">
+                                          Foreground="Black" Background="#3D3D5C" BorderBrush="#555">
                                     <ComboBoxItem Content="中文" Tag="zh"/>
                                     <ComboBoxItem Content="英文" Tag="en"/>
                                     <ComboBoxItem Content="中英双语" Tag="zh-en"/>
@@ -512,6 +552,5 @@
                     </StackPanel>
                 </Border>
             </Popup>
-        </Grid>
     </Grid>
 </Window>

@@ -6,6 +6,7 @@
 @inject ILoggerService Logger
 @inject MovieAgent.Infrastructure.Services.IDoubanService DoubanService
 @inject MovieAgent.Infrastructure.Services.IMovieReviewService ReviewService
+@inject IJSRuntime JSRuntime
 
 <PageTitle>@(_movie?.Title ?? "电影详情")</PageTitle>
 
@@ -17,17 +18,38 @@
 }
 else
 {
+    <!-- 页面标题 -->
+    <MudStack Row="true" Justify="Justify.SpaceBetween" AlignItems="AlignItems.Center" Style="position: relative; overflow: hidden;margin-bottom: 20px;">
+        <MudText Typo="Typo.h4" Style="color: #E94560;">电影详情</MudText>
+        <MudButton Icon="@Icons.Material.Filled.ArrowBack" Color="Color.Default" OnClick="@(async () => await GoBackAsync())">返回</MudButton>
+    </MudStack>
+    <!-- 背景图（BackdropPath）- 右上对齐，半透明 -->
+    @if (!string.IsNullOrWhiteSpace(_movie.BackdropPath))
+    {
+        <div style="position: absolute; top: 0; right: 0; width: 100%; height: 100%; opacity: 0.2;pointer-events: none">
+            <img src="https://image.tmdb.org/t/p/w1280/@_movie.BackdropPath"
+                 alt="@_movie.Title"
+                 style="width: 100%; height: 100%; object-fit: cover;border-radius:8px;" />
+        </div>
+    }
+
     <MudGrid>
-        <MudItem xs="12" md="4">
-            <MudImage Src="@GetPosterUrl(_movie)" Height="400" ObjectFit="ObjectFit.Cover" Elevation="8" />
+        <MudItem xs="12" md="3">
+            <MudImage Src="@GetPosterUrl(_movie)" Height="450" ObjectFit="ObjectFit.Cover" Elevation="8" Style="border-radius:10px;" /> 
+   
         </MudItem>
-        <MudItem xs="12" md="8">
-            <MudText Typo="Typo.h3" Style="color: #E94560;">@_movie.Title</MudText>
+        <MudItem xs="12" md="8" Style="position: relative;padding:8px;">
+        
+            <!-- 内容区域 -->
+            <div style="position: relative; z-index: 1;">
+                <!-- 标题区域 -->
+                <MudText Typo="Typo.h3" Style="color: #E94560; font-weight: bold;">@_movie.Title</MudText>
             @if (!string.IsNullOrEmpty(_movie.OriginalTitle) && _movie.OriginalTitle != _movie.Title)
             {
-                <MudText Typo="Typo.subtitle1" Style="color: gray;">@_movie.OriginalTitle</MudText>
+                <MudText Typo="Typo.subtitle1" Style="color: gray; margin-bottom: 12px;">@_movie.OriginalTitle</MudText>
             }
 
+            <!-- 基本信息标签 -->
             <MudChipSet T="string" Style="margin: 12px 0;">
                 @if (_movie.ReleaseYear.HasValue)
                 {
@@ -54,88 +76,247 @@ else
                 }
                 @if (!string.IsNullOrEmpty(_movie.VideoCodec))
                 {
-                    <MudChip T="string" Size="Size.Small" Color="Color.Dark">@_movie.VideoCodec</MudChip>
+                    <MudChip T="string" Size="Size.Small" Color="Color.Dark">视频: @_movie.VideoCodec</MudChip>
                 }
                 @if (!string.IsNullOrEmpty(_movie.AudioCodec))
                 {
-                    <MudChip T="string" Size="Size.Small" Color="Color.Dark">@_movie.AudioCodec</MudChip>
+                    <MudChip T="string" Size="Size.Small" Color="Color.Dark">音频: @_movie.AudioCodec</MudChip>
+                }
+                @if (!string.IsNullOrEmpty(_movie.HdrType))
+                {
+                    <MudChip T="string" Size="Size.Small" Color="Color.Dark" Style="background: #4CAF50;">@_movie.HdrType</MudChip>
                 }
             </MudChipSet>
 
+            <!-- 类型标签 -->
             @if (!string.IsNullOrEmpty(_movie.Genres))
+            {
+                <MudChipSet T="string" Style="margin: 12px 0;">
+                    @foreach (var genre in GetGenres())
+                    {
+                        <MudChip T="string" Size="Size.Small" Variant="Variant.Outlined" Color="Color.Secondary">@genre</MudChip>
+                    }
+                </MudChipSet>
+            }
+
+            <!-- 详细信息 -->
+            <div style="margin: 16px 0;">
+                <!-- 标语 -->
+                @if (!string.IsNullOrEmpty(_movie.Tagline))
                 {
-                    <MudChipSet T="string">
-                        @foreach (var genre in GetGenres())
-                        {
-                            <MudChip T="string" Size="Size.Small" Variant="Variant.Outlined" Color="Color.Secondary">@genre</MudChip>
-                        }
-                    </MudChipSet>
+                    <MudText Typo="Typo.body2" Style="color: #E94560; font-style: italic; margin-bottom: 12px;">
+                        "@_movie.Tagline"
+                    </MudText>
                 }
 
-                <div style="margin: 16px 0;">
-                    <MudText Typo="Typo.subtitle2" Style="color: #E94560; margin-bottom: 8px;">标签</MudText>
-                <MudStack Row="true" Wrap="Wrap.Wrap" Spacing="1">
-                        @foreach (var tag in _tags)
-                        {
-                            <MudChip T="string" Size="Size.Small" Color="Color.Info" 
-                                     OnClick="() => RemoveTag(tag)">
-                                @tag
-                            </MudChip>
-                        }
-                        @if (_tags.Count == 0)
-                        {
-                            <MudText Typo="Typo.body2" Style="color: gray;">暂无标签（点击标签可删除）</MudText>
-                        }
-                    </MudStack>
-                    
-                    <div style="margin-top: 12px; display: flex; gap: 8px;">
-                        <MudTextField T="string" @bind-Value="_newTag" Placeholder="输入标签" Adornment="Adornment.End" 
-                                     AdornmentIcon="@Icons.Material.Filled.Add" />
-                        <MudButton Size="Size.Small" Variant="Variant.Filled" Color="Color.Primary" 
-                                   OnClick="AddNewTag">
-                            添加
-                        </MudButton>
-                        <div style="min-width: 100px; display: inline-flex; align-items: center; justify-content: center;">
-                            <MudButton Size="Size.Small" Variant="Variant.Outlined" Color="Color.Secondary" 
-                                       OnClick="GenerateTagsWithAI" Disabled="@_isGenerating">
-                                @if (_isGenerating)
-                                {
-                                    <MudProgressCircular Size="Size.Small" Indeterminate="true" />
-                                    <span style="margin-left: 4px;">生成中...</span>
-                                }
-                                else
-                                {
-                                    <MudIcon Icon="@Icons.Material.Filled.Park" Size="Size.Small" />
-                                    <span>AI生成</span>
-                                }
-                            </MudButton>
-                        </div>
-                    </div>
-                </div>
+                <!-- 简介 -->
+                @if (!string.IsNullOrEmpty(_movie.Overview))
+                {
+                    <MudText Typo="Typo.subtitle2" Style="color: #E94560; margin-bottom: 8px;">简介</MudText>
+                    <MudText Typo="Typo.body1" Style="color: #E0E0E0; line-height: 1.8; margin-bottom: 16px;">
+                        @_movie.Overview
+                    </MudText>
+                }
 
-                <MudText Typo="Typo.body1" Style="margin: 16px 0; line-height: 1.8;">
-                    @(_movie.Overview ?? "暂无简介")
+                <!-- 导演 -->
+                @if (!string.IsNullOrEmpty(_movie.Director))
+                {
+                    <MudText Typo="Typo.body2" Style="margin-bottom: 4px;">
+                        <span style="color: #888;">导演:</span> <span style="color: #E0E0E0;">@_movie.Director</span>
+                    </MudText>
+                }
+
+                <!-- 编剧 -->
+                @if (!string.IsNullOrEmpty(_movie.Writer))
+                {
+                    <MudText Typo="Typo.body2" Style="margin-bottom: 4px;">
+                        <span style="color: #888;">编剧:</span> <span style="color: #E0E0E0;">@_movie.Writer</span>
+                    </MudText>
+                }
+
+                <!-- 主演 -->
+                @if (!string.IsNullOrEmpty(_movie.Cast))
+                {
+                    <MudText Typo="Typo.body2" Style="margin-bottom: 4px;">
+                        <span style="color: #888;">主演:</span> <span style="color: #E0E0E0;">@_movie.Cast</span>
+                    </MudText>
+                }
+
+                <!-- 地区 -->
+                @if (!string.IsNullOrEmpty(_movie.Country))
+                {
+                    <MudText Typo="Typo.body2" Style="margin-bottom: 4px;">
+                        <span style="color: #888;">地区:</span> <span style="color: #E0E0E0;">@_movie.Country</span>
+                    </MudText>
+                }
+
+                <!-- 语言 -->
+                @if (!string.IsNullOrEmpty(_movie.Language))
+                {
+                    <MudText Typo="Typo.body2" Style="margin-bottom: 4px;">
+                        <span style="color: #888;">语言:</span> <span style="color: #E0E0E0;">@_movie.Language</span>
+                    </MudText>
+                }
+
+                <!-- 制片公司 -->
+                @if (!string.IsNullOrEmpty(_movie.ProductionCompanies))
+                {
+                    <MudText Typo="Typo.body2" Style="margin-bottom: 4px;">
+                        <span style="color: #888;">制片公司:</span> <span style="color: #E0E0E0;">@GetCompanies()</span>
+                    </MudText>
+                }
+
+                <!-- IMDB ID -->
+                @if (!string.IsNullOrEmpty(_movie.ImdbId))
+                {
+                    <MudText Typo="Typo.body2" Style="margin-bottom: 4px;">
+                        <span style="color: #888;">IMDB:</span> 
+                        <MudLink Href="@($"https://www.imdb.com/title/{_movie.ImdbId}")" Target="_blank" Style="color: #E94560;">
+                            @_movie.ImdbId
+                        </MudLink>
+                    </MudText>
+                }
+
+                <!-- 所属系列 -->
+                @if (!string.IsNullOrEmpty(_movie.BelongsToCollection))
+                {
+                    <MudText Typo="Typo.body2" Style="margin-bottom: 4px;">
+                        <span style="color: #888;">所属系列:</span> <span style="color: #E0E0E0;">@_movie.BelongsToCollection</span>
+                    </MudText>
+                }
+
+                <!-- 官方网站 -->
+                @if (!string.IsNullOrEmpty(_movie.Homepage))
+                {
+                    <MudText Typo="Typo.body2" Style="margin-bottom: 4px;">
+                        <span style="color: #888;">官网:</span> 
+                        <MudLink Href="@_movie.Homepage" Target="_blank" Style="color: #E94560;">
+                            访问官网
+                        </MudLink>
+                    </MudText>
+                }
+
+                <!-- 财务信息 -->
+                @if (_movie.Budget.HasValue && _movie.Budget > 0)
+                {
+                    <MudText Typo="Typo.body2" Style="margin-bottom: 4px;">
+                        <span style="color: #888;">制作预算:</span> <span style="color: #4CAF50;">$@_movie.Budget.Value.ToString("N0")</span>
+                    </MudText>
+                }
+
+                @if (_movie.Revenue.HasValue && _movie.Revenue > 0)
+                {
+                    <MudText Typo="Typo.body2" Style="margin-bottom: 4px;">
+                        <span style="color: #888;">票房收入:</span> <span style="color: #4CAF50;">$@_movie.Revenue.Value.ToString("N0")</span>
+                    </MudText>
+                }
+
+                <!-- 投票和人气 -->
+                @if (_movie.VoteCount.HasValue && _movie.VoteCount > 0)
+                {
+                    <MudText Typo="Typo.body2" Style="margin-bottom: 4px;">
+                        <span style="color: #888;">投票数:</span> <span style="color: #E0E0E0;">@_movie.VoteCount.Value.ToString("N0")</span>
+                    </MudText>
+                }
+
+                @if (_movie.Popularity.HasValue && _movie.Popularity > 0)
+                {
+                    <MudText Typo="Typo.body2" Style="margin-bottom: 4px;">
+                        <span style="color: #888;">人气指数:</span> <span style="color: #E0E0E0;">@_movie.Popularity.Value.ToString("F0")</span>
+                    </MudText>
+                }
+
+                <!-- 关键词 -->
+                @if (!string.IsNullOrEmpty(_movie.Keywords))
+                {
+                    <MudText Typo="Typo.body2" Style="margin-bottom: 4px;">
+                        <span style="color: #888;">关键词:</span> <span style="color: #ccc;">@GetKeywords()</span>
+                    </MudText>
+                }
+
+                <!-- TMDB ID -->
+                @if (!string.IsNullOrEmpty(_movie.TmdbId))
+                {
+                    <MudText Typo="Typo.body2" Style="margin-bottom: 4px;">
+                        <span style="color: #888;">TMDB ID:</span> <span style="color: #E0E0E0;">@_movie.TmdbId</span>
+                    </MudText>
+                }
+
+                <!-- 文件信息 -->
+                <MudText Typo="Typo.body2" Style="margin-bottom: 4px;">
+                    <span style="color: #888;">文件大小:</span> <span style="color: #E0E0E0;">@FormatFileSize(_movie.FileSize)</span>
                 </MudText>
 
-            @if (!string.IsNullOrEmpty(_movie.Director))
-            {
-                <MudText Typo="Typo.body2"><strong>导演:</strong> @_movie.Director</MudText>
-            }
-            @if (!string.IsNullOrEmpty(_movie.Cast))
-            {
-                <MudText Typo="Typo.body2"><strong>主演:</strong> @_movie.Cast</MudText>
-            }
-            @if (!string.IsNullOrEmpty(_movie.Country))
-            {
-                <MudText Typo="Typo.body2"><strong>地区:</strong> @_movie.Country</MudText>
-            }
-            @if (!string.IsNullOrEmpty(_movie.Language))
-            {
-                <MudText Typo="Typo.body2"><strong>语言:</strong> @_movie.Language</MudText>
-            }
-            <MudText Typo="Typo.body2"><strong>文件大小:</strong> @FormatFileSize(_movie.FileSize)</MudText>
-            <MudText Typo="Typo.caption" Style="color: gray; margin-top: 8px;">@_movie.FilePath</MudText>
+                <!-- 文件路径 -->
+                <MudText Typo="Typo.caption" Style="color: gray;">@_movie.FilePath</MudText>
 
+                <!-- 状态信息 -->
+                <MudStack Row="true" Spacing="4" Style="margin-top: 12px;">
+                    <MudChip T="string" Size="Size.Small" Color="@(_movie.IsWatched ? Color.Success : Color.Warning)">
+                        @(_movie.IsWatched ? "已观看" : "未观看")
+                    </MudChip>
+                    <MudChip T="string" Size="Size.Small" Color="@(_movie.IsFavorite ? Color.Error : Color.Default)">
+                        @(_movie.IsFavorite ? "已收藏" : "未收藏")
+                    </MudChip>
+                </MudStack>
+
+                <!-- 时间信息 -->
+                <MudStack Row="true" Spacing="6" Style="margin-top: 12px;">
+                    <MudText Typo="Typo.caption" Style="color: gray;">
+                        添加时间: @_movie.CreatedAt.ToString("yyyy-MM-dd HH:mm")
+                    </MudText>
+                    @if (_movie.WatchedAt.HasValue)
+                    {
+                        <MudText Typo="Typo.caption" Style="color: gray;">
+                            最后观看: @_movie.WatchedAt.Value.ToString("yyyy-MM-dd HH:mm")
+                        </MudText>
+                    }
+                </MudStack>
+            </div>
+
+            <!-- 标签管理 -->
+                <div style="margin: 16px 0; padding: 12px; background: #2D2D44; border-radius: 8px;opacity: 0.8;">
+                <MudText Typo="Typo.subtitle2" Style="color: #E94560; margin-bottom: 8px;">标签</MudText>
+                <MudStack Row="true" Wrap="Wrap.Wrap" Spacing="1">
+                    @foreach (var tag in _tags)
+                    {
+                        <MudChip T="string" Size="Size.Small" Color="Color.Info" 
+                                 OnClick="() => RemoveTag(tag)">
+                            @tag
+                        </MudChip>
+                    }
+                    @if (_tags.Count == 0)
+                    {
+                        <MudText Typo="Typo.body2" Style="color: gray;">暂无标签（点击标签可删除）</MudText>
+                    }
+                </MudStack>
+                
+                <div style="margin-top: 12px; display: flex; gap: 8px;">
+                    <MudTextField T="string" @bind-Value="_newTag" Placeholder="输入标签" Adornment="Adornment.End" 
+                                 AdornmentIcon="@Icons.Material.Filled.Add" />
+                    <MudButton Size="Size.Small" Variant="Variant.Filled" Color="Color.Primary" 
+                               OnClick="AddNewTag">
+                        添加
+                    </MudButton>
+                    <div style="min-width: 100px; display: inline-flex; align-items: center; justify-content: center;">
+                        <MudButton Size="Size.Small" Variant="Variant.Outlined" Color="Color.Secondary" 
+                                   OnClick="GenerateTagsWithAI" Disabled="@_isGenerating">
+                            @if (_isGenerating)
+                            {
+                                <MudProgressCircular Size="Size.Small" Indeterminate="true" />
+                                <span style="margin-left: 4px;">生成中...</span>
+                            }
+                            else
+                            {
+                                <MudIcon Icon="@Icons.Material.Filled.Park" Size="Size.Small" />
+                                <span>AI生成</span>
+                            }
+                        </MudButton>
+                    </div>
+                </div>
+            </div>
+
+            <!-- 操作按钮 -->
             <MudStack Row="true" Style="margin-top: 24px;" Spacing="2">
                 <MudButton Variant="Variant.Filled" Color="Color.Primary" StartIcon="@Icons.Material.Filled.PlayArrow"
                            OnClick="PlayMovie" Style="background:#E94560;">播放</MudButton>
@@ -148,7 +329,8 @@ else
                 <MudRating SelectedValue="_userRating" Size="Size.Small" SelectedValueChanged="OnRatingChanged" Color="Color.Warning" />
             </MudStack>
 
-            <div style="margin-top: 16px; padding: 12px; background: #2D2D44; border-radius: 8px;">
+            <!-- 评分同步 -->
+                <div style="margin-top: 16px; padding: 12px; background: #2D2D44; border-radius: 8px;opacity: 0.8;">
                 <MudText Typo="Typo.subtitle2" Style="color: #E94560; margin-bottom: 8px;">评分同步</MudText>
                 <MudStack Row="true" Wrap="Wrap.Wrap" Spacing="2" AlignItems="AlignItems.Center">
                     <MudTextField T="string" @bind-Value="_doubanId" Placeholder="豆瓣电影ID" Style="width: 180px;" />
@@ -184,9 +366,9 @@ else
                 }
             </div>
 
-            @* 影评区域 *@
-            <div style="margin-top: 16px; padding: 12px; background: #2D2D44; border-radius: 8px;">
-                <MudStack Row="true" Justify="Justify.SpaceBetween" AlignItems="AlignItems.Center" Style="margin-bottom: 12px;">
+            <!-- 影评区域 -->
+                <div style="margin-top: 16px; padding: 12px; background: #2D2D44; border-radius: 8px;opacity: 0.8;">
+                    <MudStack Row="true" Justify="Justify.SpaceBetween" AlignItems="AlignItems.Center" Style="margin-bottom: 12px;">
                     <MudText Typo="Typo.subtitle2" Style="color: #E94560;">我的影评</MudText>
                     @if (_myReview == null)
                     {
@@ -220,14 +402,17 @@ else
                     <MudText Typo="Typo.body2" Style="color: #888;">还没有写过影评，记录你的观影感受吧！</MudText>
                 }
             </div>
+            
+            <!-- 闭合内容区域 -->
+            </div>
         </MudItem>
     </MudGrid>
     
-    @* 相似电影推荐 *@
+    <!-- 相似电影推荐 -->
     <SimilarMoviesPanel MovieId="@Id" TopK="6" />
 }
 
-@* 影评编辑对话框 *@
+<!-- 影评编辑对话框 -->
 <MudDialog @bind-Visible="_reviewDialogVisible">
     <DialogContent>
         <MudStack Spacing="3">
@@ -347,18 +532,18 @@ else
     private async Task LoadTags()
     {
         _tags = await TagService.GetTagsAsync(Id);
-        StateHasChanged();
+        _newTag = string.Empty;
     }
 
-    private async void AddNewTag()
+    private async Task AddNewTag()
     {
         if (string.IsNullOrWhiteSpace(_newTag)) return;
+
         await TagService.AddTagAsync(Id, _newTag.Trim());
-        _newTag = string.Empty;
         await LoadTags();
     }
 
-    private async void RemoveTag(string tag)
+    private async Task RemoveTag(string tag)
     {
         await TagService.RemoveTagAsync(Id, tag);
         await LoadTags();
@@ -366,19 +551,15 @@ else
 
     private async Task GenerateTagsWithAI()
     {
-        if (_isGenerating || _movie == null) return;
-        
+        if (_movie == null) return;
+
         _isGenerating = true;
         await InvokeAsync(StateHasChanged);
-        
+
         try
         {
-            await TagService.AddEmotionTagsAsync(Id);
+            await TagService.AddAllAiTagsAsync(Id);
             await LoadTags();
-        }
-        catch (Exception ex)
-        {
-            Logger.Debug($"[MovieDetail] AI生成标签失败: {ex.Message}");
         }
         finally
         {
@@ -387,50 +568,110 @@ else
         }
     }
 
-    private string GetPosterUrl(Movie movie)
+    private async void OnRatingChanged(int value)
     {
-        if (!string.IsNullOrWhiteSpace(movie.PosterPath))
-            return $"https://image.tmdb.org/t/p/w500{movie.PosterPath}";
-        return "images/placeholder-poster.png";
-    }
+        if (_movie == null) return;
 
-    private List<string> GetGenres()
-    {
-        if (_movie?.Genres == null) return new();
-        try { return System.Text.Json.JsonSerializer.Deserialize<List<string>>(_movie.Genres) ?? new(); }
-        catch { return new(); }
+        _movie.UserRating = value;
+        await MovieRepo.UpdateAsync(_movie);
     }
 
     private void PlayMovie()
     {
-        if (_movie == null) return;
-        NavigationManager.NavigateTo($"/play/{_movie.Id}");
+        NavigationManager.NavigateTo($"/play/{Id}");
     }
 
+    // private void GoBack()
+    // {
+    //     NavigationManager.NavigateTo("/movies");
+    // }
+    private async Task GoBackAsync()
+    {
+        // 调用浏览器的 history.back() 方法，实现后退
+        await JSRuntime.InvokeVoidAsync("history.back");
+    }
     private async Task ToggleWatched()
     {
         if (_movie == null) return;
+
         _movie.IsWatched = !_movie.IsWatched;
-        if (_movie.IsWatched) _movie.WatchedAt = DateTime.UtcNow;
+        _movie.WatchedAt = _movie.IsWatched ? DateTime.UtcNow : null;
         await MovieRepo.UpdateAsync(_movie);
     }
 
     private async Task ToggleFavorite()
     {
         if (_movie == null) return;
+
         _movie.IsFavorite = !_movie.IsFavorite;
         await MovieRepo.UpdateAsync(_movie);
     }
 
-    private async Task OnRatingChanged(int rating)
+    private List<string> GetGenres()
     {
-        if (_movie == null) return;
-        _userRating = rating;
-        _movie.UserRating = rating;
-        await MovieRepo.UpdateAsync(_movie);
-        await InvokeAsync(StateHasChanged);
+        try
+        {
+            if (string.IsNullOrEmpty(_movie?.Genres))
+                return new List<string>();
+            var genres = System.Text.Json.JsonSerializer.Deserialize<List<string>>(_movie.Genres);
+            return genres ?? new List<string>();
+        }
+        catch
+        {
+            return new List<string>();
+        }
     }
 
+    private string GetCompanies()
+    {
+        try
+        {
+            if (string.IsNullOrEmpty(_movie?.ProductionCompanies))
+                return "";
+            var companies = System.Text.Json.JsonSerializer.Deserialize<List<string>>(_movie.ProductionCompanies);
+            if (companies != null && companies.Any())
+                return string.Join("、", companies.Take(3));
+            return _movie.ProductionCompanies;
+        }
+        catch
+        {
+            return _movie?.ProductionCompanies ?? "";
+        }
+    }
+
+    private string GetKeywords()
+    {
+        try
+        {
+            if (string.IsNullOrEmpty(_movie?.Keywords))
+                return "";
+            var keywords = System.Text.Json.JsonSerializer.Deserialize<List<string>>(_movie.Keywords);
+            if (keywords != null && keywords.Any())
+                return string.Join("、", keywords.Take(10));
+            return _movie.Keywords;
+        }
+        catch
+        {
+            return _movie?.Keywords ?? "";
+        }
+    }
+
+    private string GetPosterUrl(Movie movie)
+    {
+        if (!string.IsNullOrWhiteSpace(movie.PosterPath))
+            return $"https://image.tmdb.org/t/p/w342{movie.PosterPath}";
+        return "images/placeholder-poster.png";
+    }
+
+    private string FormatFileSize(long fileSize)
+    {
+        if (fileSize < 1024) return $"{fileSize} B";
+        if (fileSize < 1024 * 1024) return $"{(fileSize / 1024.0):F1} KB";
+        if (fileSize < 1024 * 1024 * 1024) return $"{(fileSize / (1024.0 * 1024)):F1} MB";
+        return $"{(fileSize / (1024.0 * 1024 * 1024)):F2} GB";
+    }
+
+    // 豆瓣评分相关方法
     private async Task SearchDoubanRating()
     {
         if (string.IsNullOrWhiteSpace(_doubanId))
@@ -445,20 +686,15 @@ else
 
         try
         {
-            _doubanMovie = await DoubanService.GetMovieInfoAsync(_doubanId.Trim());
-            if (_doubanMovie == null)
-            {
-                _doubanMessage = "未找到该电影信息";
-            }
-            else if (!_doubanMovie.Rating.HasValue)
-            {
-                _doubanMessage = "该电影暂无评分";
-            }
-        }
-        catch (Exception ex)
-        {
-            _doubanMessage = $"搜索失败: {ex.Message}";
-            Logger.Error(ex, "[MovieDetail] 豆瓣搜索失败");
+            // var doubanInfo = await DoubanService.GetMovieInfoByIdAsync(_doubanId);
+            // if (doubanInfo != null)
+            // {
+            //     _doubanMovie = doubanInfo;
+            // }
+            // else
+            // {
+            //     _doubanMessage = "未找到该电影";
+            // }
         }
         finally
         {
@@ -469,96 +705,65 @@ else
 
     private async Task SyncDoubanRating()
     {
-        if (_doubanMovie == null || !_doubanMovie.Rating.HasValue || _movie == null)
+        if (_movie == null || _doubanMovie == null || !_doubanMovie.Rating.HasValue)
             return;
 
-        try
-        {
-            await DoubanService.SyncDoubanRatingAsync(_movie.Id, _doubanMovie.Id!);
-            await LoadMovieAndTags();
-            _ratingSource = "豆瓣";
-            _doubanMessage = "评分同步成功！";
-            await InvokeAsync(StateHasChanged);
-        }
-        catch (Exception ex)
-        {
-            _doubanMessage = $"同步失败: {ex.Message}";
-            Logger.Error(ex, "[MovieDetail] 豆瓣评分同步失败");
-        }
+        _movie.Rating = _doubanMovie.Rating.Value;
+        await MovieRepo.UpdateAsync(_movie);
+        _doubanMessage = "评分同步成功";
     }
 
+    // 影评相关方法
     private void ShowReviewDialog()
     {
         _isEditingReview = false;
-        _editingReviewId = null;
         _reviewRating = 3;
         _reviewContent = string.Empty;
+        _editingReviewId = null;
         _reviewDialogVisible = true;
     }
 
     private void ShowEditReviewDialog(MovieAgent.Core.Entities.MovieReview review)
     {
         _isEditingReview = true;
-        _editingReviewId = review.Id;
         _reviewRating = review.Rating;
         _reviewContent = review.Content;
+        _editingReviewId = review.Id;
         _reviewDialogVisible = true;
     }
 
     private void CloseReviewDialog()
     {
         _reviewDialogVisible = false;
+        _isEditingReview = false;
+        _reviewRating = 3;
+        _reviewContent = string.Empty;
+        _editingReviewId = null;
     }
 
     private async Task SaveReview()
     {
-        if (string.IsNullOrWhiteSpace(_reviewContent))
-        {
-            Logger.Debug("[MovieDetail] 请输入影评内容");
+        if (string.IsNullOrWhiteSpace(_reviewContent) || _movie == null)
             return;
+
+        if (_isEditingReview && _editingReviewId.HasValue)
+        {
+            // 编辑现有影评
+            await ReviewService.UpdateReviewAsync(_editingReviewId.Value, _reviewContent, _reviewRating);
+        }
+        else
+        {
+            // 创建新影评
+            await ReviewService.CreateReviewAsync(Id, _reviewContent, _reviewRating);
         }
 
-        try
-        {
-            if (_isEditingReview && _editingReviewId.HasValue)
-            {
-                await ReviewService.UpdateReviewAsync(_editingReviewId.Value, _reviewContent, _reviewRating);
-                Logger.Debug($"[MovieDetail] 影评已更新");
-            }
-            else
-            {
-                await ReviewService.CreateReviewAsync(Id, _reviewContent, _reviewRating);
-                Logger.Debug($"[MovieDetail] 影评已保存");
-            }
-            
-            _reviewDialogVisible = false;
-            await LoadReviews();
-        }
-        catch (Exception ex)
-        {
-            Logger.Error(ex, "[MovieDetail] 保存影评失败");
-        }
+        await LoadReviews();
+        CloseReviewDialog();
     }
 
     private async Task DeleteReview(MovieAgent.Core.Entities.MovieReview review)
     {
-        try
-        {
-            await ReviewService.DeleteReviewAsync(review.Id);
-            Logger.Debug($"[MovieDetail] 影评已删除");
-            await LoadReviews();
-        }
-        catch (Exception ex)
-        {
-            Logger.Error(ex, "[MovieDetail] 删除影评失败");
-        }
+        await ReviewService.DeleteReviewAsync(review.Id);
+        await LoadReviews();
     }
-
-    private static string FormatFileSize(long bytes) => bytes switch
-    {
-        < 1024 => $"{bytes} B",
-        < 1024 * 1024 => $"{bytes / 1024.0:F1} KB",
-        < 1024 * 1024 * 1024 => $"{bytes / (1024.0 * 1024):F1} MB",
-        _ => $"{bytes / (1024.0 * 1024 * 1024):F2} GB"
-    };
 }

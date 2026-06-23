@@ -45,7 +45,7 @@ public class MovieRecommendationService : IMovieRecommendationService
             if (targetMovie == null) return new List<MovieRecommendation>();
 
             // 2. 生成查询向量
-            var queryText = $"{targetMovie.Title} {targetMovie.Overview ?? ""} {targetMovie.Genres ?? ""}";
+            var queryText = $"{targetMovie.Title} {targetMovie.Director} {targetMovie.Cast} {targetMovie.Overview ?? ""} {targetMovie.Genres ?? ""}";
             var queryVector = await _vectorDb.GenerateEmbeddingAsync(queryText);
 
             // 3. 向量检索

@@ -96,6 +96,18 @@ public interface IMovieRepository
     Task<List<string>> GetAllCountriesAsync();
 
     /// <summary>
+    /// 获取所有导演列表
+    /// </summary>
+    /// <returns>导演列表</returns>
+    Task<List<string>> GetAllDirectorsAsync();
+
+    /// <summary>
+    /// 获取所有演员列表
+    /// </summary>
+    /// <returns>演员列表</returns>
+    Task<List<string>> GetAllCastsAsync();
+
+    /// <summary>
     /// 获取所有语言列表
     /// </summary>
     /// <returns>语言列表</returns>

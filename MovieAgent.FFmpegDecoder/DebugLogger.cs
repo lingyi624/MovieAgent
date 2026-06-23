@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Collections.Generic;
 using System.Text;
 using System;
@@ -14,6 +14,8 @@ namespace MovieAgent.FFmpegDecoder
             private static string _logDirectory;
             private static readonly object _lock = new object();
             private static string _currentLogPath;
+            private static bool _initialized = false;
+        public static bool Initialized { get { return _initialized; } }
 
         /// <summary>
         /// 初始化日志（可选，不调用则使用默认临时目录）
@@ -21,21 +23,31 @@ namespace MovieAgent.FFmpegDecoder
         /// <param name="logDirectory">日志目录，默认使用系统临时目录</param>
         public static void Initialize(string logDirectory = null)
         {
-            _logDirectory = logDirectory ?? Path.GetTempPath();
-            _logDirectory = Path.Combine(_logDirectory, "logs");
-            if (!Directory.Exists(_logDirectory))
+            if (_initialized) return;
+            
+            try
             {
-                Directory.CreateDirectory(_logDirectory);
+                _logDirectory = logDirectory ?? Path.GetTempPath();
+                _logDirectory = Path.Combine(_logDirectory, "logs");
+                if (!Directory.Exists(_logDirectory))
+                {
+                    Directory.CreateDirectory(_logDirectory);
+                }
+                var prefix = System.Diagnostics.Process.GetCurrentProcess().ProcessName;
+                var pid = Environment.ProcessId;
+                var timestamp = DateTime.Now.ToString("yyyyMMdd_HHmmss");
+                _currentLogPath = Path.Combine(_logDirectory, $"{prefix}_{pid}_{timestamp}.log");
+               
+                WriteLine($"=== 日志初始化 ===");
+                WriteLine($"进程: {prefix}, PID: {pid}");
+                WriteLine($"启动时间: {DateTime.Now}");
+                WriteLine($"日志路径: {_currentLogPath}");
+                _initialized = true;
             }
-            var prefix = System.Diagnostics.Process.GetCurrentProcess().ProcessName;
-            var pid = Environment.ProcessId;
-            var timestamp = DateTime.Now.ToString("yyyyMMdd_HHmmss");
-            _currentLogPath = Path.Combine(_logDirectory, $"{prefix}_{pid}_{timestamp}.log");
-           
-            WriteLine($"=== 日志初始化 ===");
-            WriteLine($"进程: {prefix}, PID: {pid}");
-            WriteLine($"启动时间: {DateTime.Now}");
-
+            catch (Exception ex)
+            {
+                Console.WriteLine($"DebugLogger初始化失败: {ex.Message}");
+            }
         }
 
         /// <summary>
@@ -43,25 +55,37 @@ namespace MovieAgent.FFmpegDecoder
         /// </summary>
         public static void WriteLine(string message)
             {
-                if (string.IsNullOrEmpty(_currentLogPath))
+                try
                 {
-                    Initialize();
+                 
+                    var logEntry = $"[{DateTime.Now:HH:mm:ss.fff}] {message}";
+                    
+                    // 首先输出到控制台
+                    Console.WriteLine(logEntry);
+                    
+                    // 然后写入文件
+                    if (!string.IsNullOrEmpty(_currentLogPath))
+                    {
+                        lock (_lock)
+                        {
+                            try
+                            {
+                                using (var writer = new StreamWriter(_currentLogPath, true))
+                                {
+                                    writer.WriteLine(logEntry);
+                                    writer.Flush();
+                                }
+                            }
+                            catch (Exception ex)
+                            {
+                                Console.WriteLine($"日志写入文件失败: {ex.Message}");
+                            }
+                        }
+                    }
                 }
-
-                lock (_lock)
+                catch (Exception ex)
                 {
-                    try
-                    {
-                        var logEntry = $"[{DateTime.Now:HH:mm:ss.fff}] {message}";
-                        File.AppendAllText(_currentLogPath, logEntry + Environment.NewLine);
-
-                        // 同时输出到控制台（如果存在）
-                        Console.WriteLine(logEntry);
-                    }
-                    catch (Exception ex)
-                    {
-                        Console.WriteLine($"日志写入失败: {ex.Message}");
-                    }
+                    Console.WriteLine($"DebugLogger.WriteLine异常: {ex.Message}");
                 }
             }
 

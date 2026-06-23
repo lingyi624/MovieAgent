@@ -1,3 +1,5 @@
+using MovieAgent.Core.Entities;
+
 namespace MovieAgent.Core.Interfaces;
 
 /// <summary>
@@ -29,6 +31,21 @@ public interface IMovieScannerService
     /// <param name="ct">取消令牌</param>
     /// <returns>成功导入的电影数量</returns>
     Task<int> ImportNewMoviesAsync(List<string> filePaths, CancellationToken ct = default);
+
+    /// <summary>
+    /// 批量更新向量数据库（推荐使用，性能更高）
+    /// </summary>
+    /// <param name="movies">电影列表</param>
+    /// <param name="progress">进度回调</param>
+    /// <returns>成功更新的数量</returns>
+    Task<int> BatchUpdateVectorDatabaseAsync(List<Movie> movies, IProgress<(int Current, int Total)>? progress = null);
+
+    /// <summary>
+    /// 重新生成所有电影的向量
+    /// </summary>
+    /// <param name="progress">进度回调</param>
+    /// <returns>成功更新的数量</returns>
+    Task<int> RegenerateAllVectorsAsync(IProgress<(int Current, int Total)>? progress = null);
 }
 
 /// <summary>
@@ -53,19 +70,34 @@ public class ScanProgressEventArgs : EventArgs
 
     /// <summary>总文件数</summary>
     public int TotalFiles { get; set; }
+
+    /// <summary>数据库已导入数量</summary>
+    public int DbImported { get; set; }
+
+    /// <summary>向量库已更新数量</summary>
+    public int VectorUpdated { get; set; }
+
+    /// <summary>嵌入文本已生成数量</summary>
+    public int EmbeddingGenerated { get; set; }
+
+    /// <summary>当前处理阶段：Scanning, Processing, Completed</summary>
+    public string Stage { get; set; } = "Scanning";
 }
 
 /// <summary>
 /// 扫描完成事件参数
 /// </summary>
 public class ScanCompletedEventArgs : EventArgs
-{
-    /// <summary>扫描的总文件数</summary>
-    public int TotalFiles { get; set; }
+    {
+        /// <summary>扫描的总文件数</summary>
+        public int TotalFiles { get; set; }
 
-    /// <summary>新导入的电影数</summary>
-    public int NewMovies { get; set; }
+        /// <summary>新导入的电影数</summary>
+        public int NewMovies { get; set; }
 
-    /// <summary>跳过的文件数（已存在）</summary>
-    public int Skipped { get; set; }
-}
+        /// <summary>更新的电影数</summary>
+        public int UpdatedMovies { get; set; }
+
+        /// <summary>跳过的文件数（解析失败等）</summary>
+        public int Skipped { get; set; }
+    }

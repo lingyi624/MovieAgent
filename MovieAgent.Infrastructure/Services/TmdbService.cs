@@ -36,13 +36,17 @@ public class TmdbService : ITmdbService
             if (search.Results.Count == 0) return null;
 
             var best = search.Results[0];
-            var movie = await _client.GetMovieAsync(best.Id, TmdbMovieMethods.Credits);
+            // 获取完整的电影信息，包括 Credits 和 Keywords
+            var movie = await _client.GetMovieAsync(best.Id, TmdbMovieMethods.Credits | TmdbMovieMethods.Keywords);
 
             var genres = movie.Genres.Select(g => g.Name).ToList();
             var director = movie.Credits?.Crew?.FirstOrDefault(c => c.Job == "Director")?.Name;
-            var cast = movie.Credits?.Cast?.Take(5).Select(c => c.Name).ToList();
+            var writers = movie.Credits?.Crew?.Where(c => c.Job == "Writer" || c.Job == "Screenplay").Select(c => c.Name).ToList();
+            var cast = movie.Credits?.Cast?.Take(8).Select(c => c.Name).ToList();
             var countries = movie.ProductionCountries?.Select(p => p.Name).ToList() ?? new List<string>();
             var languages = movie.SpokenLanguages?.Select(l => l.Name).ToList() ?? new List<string>();
+            var productionCompanies = movie.ProductionCompanies?.Select(p => p.Name).ToList() ?? new List<string>();
+            var keywords = movie.Keywords?.Keywords?.Select(k => k.Name).ToList() ?? new List<string>();
 
             return new TmdbSearchResult
             {
@@ -50,16 +54,31 @@ public class TmdbService : ITmdbService
                 Title = movie.Title,
                 OriginalTitle = movie.OriginalTitle,
                 Overview = movie.Overview,
+                Tagline = movie.Tagline,
                 PosterPath = movie.PosterPath,
                 BackdropPath = movie.BackdropPath,
+                ReleaseDate = movie.ReleaseDate,
                 ReleaseYear = movie.ReleaseDate?.Year,
                 Rating = movie.VoteAverage,
+                VoteCount = movie.VoteCount,
+                Popularity = movie.Popularity,
                 Genres = genres,
                 Runtime = movie.Runtime,
                 Director = director,
+                Writer = writers != null && writers.Any() ? string.Join(", ", writers) : null,
                 Cast = cast != null ? string.Join(", ", cast) : null,
                 Countries = countries,
-                Languages = languages
+                Languages = languages,
+                Homepage = movie.Homepage,
+                Status = movie.Status,
+                IsAdult = movie.Adult,
+                BelongsToCollection = movie.BelongsToCollection?.Name,
+                Budget = movie.Budget,
+                Revenue = movie.Revenue,
+                OriginalLanguage = movie.OriginalLanguage,
+                ProductionCompanies = productionCompanies,
+                Keywords = keywords,
+                ImdbId = movie.ImdbId
             };
         }
         catch
@@ -77,22 +96,55 @@ public class TmdbService : ITmdbService
             var result = await SearchMovieAsync(title, year);
             if (result == null) return null;
 
+            // 基本信息
             movie.TmdbId = result.Id.ToString();
             movie.Title = result.Title;
             movie.OriginalTitle = result.OriginalTitle;
             movie.Overview = result.Overview;
+            movie.Tagline = result.Tagline;
             movie.PosterPath = result.PosterPath;
             movie.BackdropPath = result.BackdropPath;
+            movie.ReleaseDate = result.ReleaseDate;
             movie.ReleaseYear ??= result.ReleaseYear;
+            
+            // 评分和人气
             movie.Rating ??= result.Rating;
+            movie.VoteCount ??= result.VoteCount;
+            movie.Popularity ??= result.Popularity;
+            
+            // 内容信息
             movie.Runtime ??= result.Runtime;
             movie.Genres = JsonSerializer.Serialize(result.Genres);
+            movie.Homepage = result.Homepage;
+            movie.Status = result.Status;
+            movie.IsAdult = result.IsAdult;
+            movie.BelongsToCollection = result.BelongsToCollection;
+            
+            // 财务信息
+            movie.Budget ??= result.Budget;
+            movie.Revenue ??= result.Revenue;
+            
+            // 语言和制片信息
+            movie.OriginalLanguage = result.OriginalLanguage;
+            movie.ProductionCompanies = JsonSerializer.Serialize(result.ProductionCompanies);
+            movie.ProductionCountries = JsonSerializer.Serialize(result.Countries);
+            movie.OriginCountry = result.Countries != null && result.Countries.Any() ? string.Join(", ", result.Countries) : null;
+            movie.Keywords = JsonSerializer.Serialize(result.Keywords);
+            
+            // 演职人员
             movie.Director = result.Director;
+            movie.Writer = result.Writer;
             movie.Cast = result.Cast;
-            movie.Country = result.Countries != null && result.Countries.Any() ? string.Join(", ", result.Countries) : null;
             movie.Language = result.Languages != null && result.Languages.Any() ? string.Join(", ", result.Languages) : null;
+            movie.Country = result.Countries != null && result.Countries.Any() ? string.Join(", ", result.Countries) : null;
+            
+            // IMDB ID
+            movie.ImdbId = result.ImdbId;
+            
+            // 更新时间
             movie.UpdatedAt = DateTime.UtcNow;
 
+       
             return movie;
         }
         catch

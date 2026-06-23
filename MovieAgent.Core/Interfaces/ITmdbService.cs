@@ -44,46 +44,91 @@ public interface ITmdbService
 /// TMDB搜索结果 - 电影基本信息
 /// </summary>
 public class TmdbSearchResult
-{
-    /// <summary>TMDB电影ID</summary>
-    public long Id { get; set; }
+    {
+        /// <summary>TMDB电影ID</summary>
+        public long Id { get; set; }
 
-    /// <summary>电影标题</summary>
-    public string Title { get; set; } = string.Empty;
+        /// <summary>电影标题</summary>
+        public string Title { get; set; } = string.Empty;
 
-    /// <summary>原始标题（非英语电影）</summary>
-    public string? OriginalTitle { get; set; }
+        /// <summary>原始标题（非英语电影）</summary>
+        public string? OriginalTitle { get; set; }
 
-    /// <summary>电影简介</summary>
-    public string? Overview { get; set; }
+        /// <summary>电影简介</summary>
+        public string? Overview { get; set; }
 
-    /// <summary>海报图片路径</summary>
-    public string? PosterPath { get; set; }
+        /// <summary>电影标语/tagline</summary>
+        public string? Tagline { get; set; }
 
-    /// <summary>背景图片路径</summary>
-    public string? BackdropPath { get; set; }
+        /// <summary>海报图片路径</summary>
+        public string? PosterPath { get; set; }
 
-    /// <summary>上映年份</summary>
-    public int? ReleaseYear { get; set; }
+        /// <summary>背景图片路径</summary>
+        public string? BackdropPath { get; set; }
 
-    /// <summary>TMDB评分（1-10分）</summary>
-    public double? Rating { get; set; }
+        /// <summary>上映日期</summary>
+        public DateTime? ReleaseDate { get; set; }
 
-    /// <summary>电影类型列表</summary>
-    public List<string> Genres { get; set; } = new();
+        /// <summary>上映年份</summary>
+        public int? ReleaseYear { get; set; }
 
-    /// <summary>电影时长（分钟）</summary>
-    public int? Runtime { get; set; }
+        /// <summary>TMDB评分（1-10分）</summary>
+        public double? Rating { get; set; }
 
-    /// <summary>导演</summary>
-    public string? Director { get; set; }
+        /// <summary>投票数量</summary>
+        public int? VoteCount { get; set; }
 
-    /// <summary>主演列表</summary>
-    public string? Cast { get; set; }
+        /// <summary>人气指数</summary>
+        public double? Popularity { get; set; }
 
-    /// <summary>制片国家/地区列表</summary>
-    public List<string> Countries { get; set; } = new();
+        /// <summary>电影类型列表</summary>
+        public List<string> Genres { get; set; } = new();
 
-    /// <summary>语言列表</summary>
-    public List<string> Languages { get; set; } = new();
-}
+        /// <summary>电影时长（分钟）</summary>
+        public int? Runtime { get; set; }
+
+        /// <summary>导演</summary>
+        public string? Director { get; set; }
+
+        /// <summary>编剧列表</summary>
+        public string? Writer { get; set; }
+
+        /// <summary>主演列表</summary>
+        public string? Cast { get; set; }
+
+        /// <summary>制片国家/地区列表</summary>
+        public List<string> Countries { get; set; } = new();
+
+        /// <summary>语言列表</summary>
+        public List<string> Languages { get; set; } = new();
+
+        /// <summary>官方网站</summary>
+        public string? Homepage { get; set; }
+
+        /// <summary>电影状态 (Released, Post Production, etc.)</summary>
+        public string? Status { get; set; }
+
+        /// <summary>是否成人内容</summary>
+        public bool IsAdult { get; set; }
+
+        /// <summary>所属系列/集合</summary>
+        public string? BelongsToCollection { get; set; }
+
+        /// <summary>制作预算（美元）</summary>
+        public long? Budget { get; set; }
+
+        /// <summary>票房收入（美元）</summary>
+        public long? Revenue { get; set; }
+
+        /// <summary>原始语言代码</summary>
+        public string? OriginalLanguage { get; set; }
+
+        /// <summary>制片公司列表</summary>
+        public List<string> ProductionCompanies { get; set; } = new();
+
+        /// <summary>关键词列表</summary>
+        public List<string> Keywords { get; set; } = new();
+
+        /// <summary>IMDB ID</summary>
+        public string? ImdbId { get; set; }
+    }

@@ -25,6 +25,8 @@ namespace MovieAgent.FFmpegDecoder
             _decoder.PlaybackEnded += OnPlaybackEnded;
             _decoder.PlaybackError += OnPlaybackError;
             _decoder.PerformanceWarning += OnPerformanceWarning;
+            _decoder.ResolutionDownscale += OnResolutionDownscale;
+            _decoder.SubtitleDecoded += OnSubtitleDecoded;
         }
 
         public async Task RunAsync()
@@ -194,6 +196,23 @@ namespace MovieAgent.FFmpegDecoder
                         _decoder.SetSubtitleTrack(command.SubtitleTrack);
                         break;
 
+                    case "SetSpeed":
+                        _decoder.SetSpeed(command.Speed);
+                        break;
+
+                    case "Screenshot":
+                        string? screenshotPath = _decoder.SaveScreenshot(command.ScreenshotPath);
+                        await SendScreenshotResultAsync(screenshotPath);
+                        break;
+
+                    case "GetSubtitleDelay":
+                        await SendSubtitleDelayAsync();
+                        break;
+
+                    case "SetSubtitleDelay":
+                        _decoder.SetSubtitleDelay(command.SubtitleDelay);
+                        break;
+
                     case "Quit":
                         _isRunning = false;
                         break;
@@ -204,7 +223,11 @@ namespace MovieAgent.FFmpegDecoder
                 await SendErrorAsync(ex.Message);
             }
         }
-
+        /// <summary>
+        /// 接收解码后的帧数据，并通过共享内存或管道发送给主进程
+        /// </summary>
+        /// <param name="sender"></param>
+        /// <param name="frame"></param>
         private void OnFrameDecoded(object? sender, FrameData frame)
         {
             try
@@ -217,7 +240,7 @@ namespace MovieAgent.FFmpegDecoder
                         // 4. 减少日志
                         if (_decoder.FrameCount % 100 == 0)
                         {
-                            DebugLogger.WriteLine($"[SharedMemory] Frame sent: {frame.Width}x{frame.Height}, VideoTimestamp:{frame.VideoTimestamp}ms, AudioTimestamp:{frame.AudioTimestamp}ms, AudioPlayPosition:{frame.AudioPlayPosition}"); 
+                            DebugLogger.WriteLine($"[SharedMemory]Write  Frame sent: {frame.Width}x{frame.Height}, VideoTimestamp:{frame.VideoTimestamp} ms, AudioTimestamp:{frame.AudioTimestamp} ms, AudioPlayPosition:{frame.AudioPlayPosition} ms"); 
                         }
                     }
                 }
@@ -236,7 +259,7 @@ namespace MovieAgent.FFmpegDecoder
 
                     string json = JsonSerializer.Serialize(frameMessage);
                     _writer.WriteLine(json);
-                    DebugLogger.WriteLine($"[IPC] Frame sent: {frame.Width}x{frame.Height}, VideoTimestamp:{frame.VideoTimestamp}ms, AudioTimestamp:{frame.AudioTimestamp}ms, AudioPlayPosition:{frame.AudioPlayPosition}");
+                    DebugLogger.WriteLine($"[IPC] Frame sent: {frame.Width}x{frame.Height}, VideoTimestamp:{frame.VideoTimestamp} ms, AudioTimestamp:{frame.AudioTimestamp} ms, AudioPlayPosition:{frame.AudioPlayPosition} ms");
                 }
                 else
                 {
@@ -431,6 +454,100 @@ namespace MovieAgent.FFmpegDecoder
                 DebugLogger.WriteLine($"[IPC] Error sending performance warning: {ex.Message}");
             }
         }
+
+        private void OnResolutionDownscale(object? sender, ResolutionDownscaleInfo info)
+        {
+            try
+            {
+                if (_writer != null && _pipeServer?.IsConnected == true)
+                {
+                    var downscaleMessage = new
+                    {
+                        Type = "ResolutionDownscale",
+                        info.Message,
+                        info.OriginalWidth,
+                        info.OriginalHeight,
+                        info.TargetWidth,
+                        info.TargetHeight,
+                        info.Reason
+                    };
+
+                    string json = JsonSerializer.Serialize(downscaleMessage);
+                    _writer.WriteLine(json);
+                    DebugLogger.WriteLine($"[IPC] Resolution downscale sent: {info.Message}");
+                }
+            }
+            catch (Exception ex)
+            {
+                DebugLogger.WriteLine($"[IPC] Error sending resolution downscale: {ex.Message}");
+            }
+        }
+
+        private void OnSubtitleDecoded(object? sender, SubtitleData subtitle)
+        {
+            try
+            {
+                if (_writer != null && _pipeServer?.IsConnected == true)
+                {
+                    var subtitleMessage = new
+                    {
+                        Type = "SubtitleDecoded",
+                        subtitle.Text,
+                        subtitle.StartTime,
+                        subtitle.EndTime
+                    };
+
+                    string json = JsonSerializer.Serialize(subtitleMessage);
+                    _writer.WriteLine(json);
+                    DebugLogger.WriteLine($"[IPC] Subtitle decoded sent: {subtitle.Text}");
+                }
+            }
+            catch (Exception ex)
+            {
+                DebugLogger.WriteLine($"[IPC] Error sending subtitle decoded: {ex.Message}");
+            }
+        }
+
+        private async Task SendScreenshotResultAsync(string? filePath)
+        {
+            try
+            {
+                var result = new ScreenshotResultMessage
+                {
+                    Type = "ScreenshotResult",
+                    FilePath = filePath,
+                    Success = !string.IsNullOrEmpty(filePath)
+                };
+
+                string json = JsonSerializer.Serialize(result);
+                if (_writer != null)
+                    await _writer.WriteLineAsync(json);
+            }
+            catch (Exception ex)
+            {
+                DebugLogger.WriteLine($"[IPC] Error sending screenshot result: {ex.Message}");
+            }
+        }
+
+        private async Task SendSubtitleDelayAsync()
+        {
+            try
+            {
+                var msg = new SubtitleDelayMessage
+                {
+                    Type = "SubtitleDelay",
+                    DelayMs = _decoder.SubtitleDelayMs
+                };
+
+                string json = JsonSerializer.Serialize(msg);
+                if (_writer != null)
+                    await _writer.WriteLineAsync(json);
+            }
+            catch (Exception ex)
+            {
+                DebugLogger.WriteLine($"[IPC] Error sending subtitle delay: {ex.Message}");
+            }
+        }
     }
 
     public class DecoderCommand
@@ -442,6 +559,9 @@ namespace MovieAgent.FFmpegDecoder
         public int AudioTrack { get; set; }
         public int SubtitleTrack { get; set; }
         public string? DecodeMode { get; set; }
+        public double Speed { get; set; } = 1.0;
+        public string? ScreenshotPath { get; set; }
+        public double SubtitleDelay { get; set; }
     }
 
     public class FrameMessage
@@ -480,5 +600,18 @@ namespace MovieAgent.FFmpegDecoder
     {
         public string Type { get; set; } = "Error";
         public string Message { get; set; } = string.Empty;
+    }
+
+    public class ScreenshotResultMessage
+    {
+        public string Type { get; set; } = "ScreenshotResult";
+        public string? FilePath { get; set; }
+        public bool Success { get; set; }
+    }
+
+    public class SubtitleDelayMessage
+    {
+        public string Type { get; set; } = "SubtitleDelay";
+        public double DelayMs { get; set; }
     }
 }

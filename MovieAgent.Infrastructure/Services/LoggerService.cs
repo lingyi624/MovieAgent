@@ -10,7 +10,7 @@ public class LoggerService : ILoggerService
 
     public LoggerService()
     {
-        var logPath = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "logs", "movieagent-.log");
+        var logPath = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "logs", "Main-MovieAgent-.log");
         
         _logger = new LoggerConfiguration()
             .MinimumLevel.Debug()
