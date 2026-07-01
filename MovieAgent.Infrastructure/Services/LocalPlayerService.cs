@@ -1,11 +1,16 @@
-using MovieAgent.Core.Interfaces;
+ using MovieAgent.Core.Interfaces;
 using MovieAgent.FFmpegDecoder;
 using System;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.IO;
+using System.Text;
 using System.Threading.Tasks;
-
+using Vortice.Direct3D11;
+using Vortice.Direct3D12;
+using Vortice.Direct3D9;
+using static MovieAgent.FFmpegDecoder.FFmpegDecoderEngine;
+ 
 namespace MovieAgent.Infrastructure.Services
 {
     /// <summary>
@@ -18,15 +23,19 @@ namespace MovieAgent.Infrastructure.Services
 
         private readonly ILoggerService _logger;
         private FFmpegDecoderEngine? _decoder;
+        private ID3D11Device? _d3d11Device;
+        private IDirect3DDevice9Ex? _d3d9Device;
         private bool _disposed;
         private string? _currentRequestedFilePath;
         private bool _playbackRequestedByBlazor;
+        private ID3D12Device? _d3d12Device;
 
         #endregion
 
         #region 属性
 
         public bool IsPlaying => _decoder?.IsPlaying ?? false;
+        public D3DMode? CurrentD3dModel => _decoder?.CurrentD3dModel;
 
         public bool IsPaused => _decoder?.IsPaused ?? false;
 
@@ -65,7 +74,21 @@ namespace MovieAgent.Infrastructure.Services
 
         /// <summary>当前解码器名称</summary>
         public string? CurrentDecoder => _decoder?.CurrentDecoder;
+        public ID3D11Device? D3dDevice => _d3d11Device;
 
+ 
+        public void SetD3d11Device(Vortice.Direct3D11.ID3D11Device d3d11Device)
+        {
+            _d3d11Device=d3d11Device;
+        }
+        public void SetD3d9Device(IDirect3DDevice9Ex d3d9Device)
+        {
+            _d3d9Device = d3d9Device;
+        }
+        public void SetD3d12Device(ID3D12Device d3d12Device)
+        {
+            _d3d12Device = d3d12Device;
+        }
         #endregion
 
         #region 事件
@@ -90,7 +113,7 @@ namespace MovieAgent.Infrastructure.Services
 
         public LocalPlayerService(ILoggerService logger)
         {
-            _logger = logger;
+            _logger = logger; 
         }
 
         #endregion
@@ -129,9 +152,20 @@ namespace MovieAgent.Infrastructure.Services
                 _logger.Debug("[LocalPlayer] 创建 FFmpegDecoderEngine 实例...");
                 try
                 {
-                    _decoder = new FFmpegDecoderEngine(); 
+                    _decoder = new FFmpegDecoderEngine(DecodeMode.Auto,D3DMode.D3D12);
+                     _logger.Debug("[LocalPlayer] FFmpegDecoderEngine 实例创建成功");
+                    if (_decoder.CurrentD3dModel == D3DMode.D3D9)
+                    {
+                        _decoder.SetD3d9dDevice(_d3d9Device);
+                    }
+                    else if (_decoder.CurrentD3dModel == D3DMode.D3D11)
+                    {
 
-                    _logger.Debug("[LocalPlayer] FFmpegDecoderEngine 实例创建成功");
+                        _decoder.SetD311dDevice(_d3d11Device);
+                    } else if (_decoder.CurrentD3dModel == D3DMode.D3D12)
+                    { 
+                        _decoder.SetD3d12dDevice(_d3d12Device); 
+                    }
                 }
                 catch (Exception ex)
                 {
@@ -250,6 +284,7 @@ namespace MovieAgent.Infrastructure.Services
         public void ToggleFullscreen()
         {
             // 全屏切换由UI层处理
+           
         }
 
         public void SetAudioTrack(int trackIndex)
@@ -257,7 +292,7 @@ namespace MovieAgent.Infrastructure.Services
             try
             {
                 _decoder?.SetAudioTrack(trackIndex);
-                _logger.Debug($"[LocalPlayer] Audio track set to {trackIndex}");
+                 _logger.Debug($"[LocalPlayer] Audio track set to {trackIndex}");
             }
             catch (Exception ex)
             {
@@ -325,6 +360,7 @@ namespace MovieAgent.Infrastructure.Services
         {
             try
             {
+                //_logger.Debug($"[LocalPlayer] OnFrameDecoded: IsHardwareFrame={frame.IsHardwareFrame}, NV12Ptr=0x{frame.NV12TexturePtr:X8}");
                 FrameUpdated?.Invoke(this, frame);
             }
             catch (Exception ex)
@@ -475,4 +511,5 @@ namespace MovieAgent.Infrastructure.Services
         public long SizeBytes { get; set; }
         public string DisplayName { get; set; } = string.Empty;
     }
+
 }

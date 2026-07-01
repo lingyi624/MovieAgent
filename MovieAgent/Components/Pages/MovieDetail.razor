@@ -480,33 +480,33 @@ else
                 if (string.IsNullOrEmpty(_movie.PosterPath))
                 {
                     // 先尝试从豆瓣获取
-                    var doubanInfo = await DoubanService.SearchMovieAsync(_movie.Title, _movie.ReleaseYear);
-                    if (doubanInfo != null)
-                    {
-                        if (!string.IsNullOrEmpty(doubanInfo.Poster))
-                            _movie.PosterPath = doubanInfo.Poster;
-                        if (doubanInfo.Rating.HasValue)
-                            _movie.Rating = doubanInfo.Rating.Value;
-                        if (!string.IsNullOrEmpty(doubanInfo.Director))
-                            _movie.Director = doubanInfo.Director;
-                        if (!string.IsNullOrEmpty(doubanInfo.Genres))
-                            _movie.Genres = doubanInfo.Genres;
-                        if (!string.IsNullOrEmpty(doubanInfo.Country))
-                            _movie.Country = doubanInfo.Country;
-                        if (!string.IsNullOrEmpty(doubanInfo.Language))
-                            _movie.Language = doubanInfo.Language;
-                        if (!string.IsNullOrEmpty(doubanInfo.Summary))
-                            _movie.Overview = doubanInfo.Summary;
+                    // var doubanInfo = await DoubanService.SearchMovieAsync(_movie.Title, _movie.ReleaseYear);
+                    // if (doubanInfo != null)
+                    // {
+                    //     if (!string.IsNullOrEmpty(doubanInfo.Poster))
+                    //         _movie.PosterPath = doubanInfo.Poster;
+                    //     if (doubanInfo.Rating.HasValue)
+                    //         _movie.Rating = doubanInfo.Rating.Value;
+                    //     if (!string.IsNullOrEmpty(doubanInfo.Director))
+                    //         _movie.Director = doubanInfo.Director;
+                    //     if (!string.IsNullOrEmpty(doubanInfo.Genres))
+                    //         _movie.Genres = doubanInfo.Genres;
+                    //     if (!string.IsNullOrEmpty(doubanInfo.Country))
+                    //         _movie.Country = doubanInfo.Country;
+                    //     if (!string.IsNullOrEmpty(doubanInfo.Language))
+                    //         _movie.Language = doubanInfo.Language;
+                    //     if (!string.IsNullOrEmpty(doubanInfo.Summary))
+                    //         _movie.Overview = doubanInfo.Summary;
 
-                        await MovieRepo.UpdateAsync(_movie);
-                    }
-                    else
-                    {
-                        // 如果豆瓣没有找到，尝试从本地目录获取
-                        await MovieRepo.UpdatePosterFromDirectoryAsync(_movie);
-                        await MovieRepo.UpdateMediaInfoFromDirectoryAsync(_movie);
-                        _movie = await MovieRepo.GetByIdAsync(Id); // 重新加载
-                    }
+                    //     await MovieRepo.UpdateAsync(_movie);
+                    // }
+                    // else
+                    // {
+                    //     // 如果豆瓣没有找到，尝试从本地目录获取
+                    //     await MovieRepo.UpdatePosterFromDirectoryAsync(_movie);
+                    //     await MovieRepo.UpdateMediaInfoFromDirectoryAsync(_movie);
+                    //     _movie = await MovieRepo.GetByIdAsync(Id); // 重新加载
+                    // }
                 }
 
                 _userRating = _movie?.UserRating ?? 0;

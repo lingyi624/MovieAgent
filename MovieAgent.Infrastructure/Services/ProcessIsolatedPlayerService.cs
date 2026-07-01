@@ -14,6 +14,9 @@ using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Threading;
 using TMDbLib.Objects.Authentication;
+using Vortice.Direct3D11;
+using Vortice.Direct3D12;
+using Vortice.Direct3D9;
 
 namespace MovieAgent.Infrastructure.Services
 {
@@ -176,6 +179,12 @@ namespace MovieAgent.Infrastructure.Services
         /// 获取当前解码模式
         /// </summary>
         public string CurrentDecodeMode => _currentDecodeMode;
+
+ 
+        public FFmpegDecoderEngine.D3DMode CurrentD3dModel => throw new NotImplementedException();
+
+        FFmpegDecoderEngine.D3DMode? IPlayerService.CurrentD3dModel => CurrentD3dModel;
+
 
         #endregion
 
@@ -1231,6 +1240,26 @@ namespace MovieAgent.Infrastructure.Services
                 StopInternalAsync().GetAwaiter().GetResult();
                 _disposed = true;
             }
+        }
+
+        public void SetD3dDevice(ID3D11Device device)
+        {
+            throw new NotImplementedException();
+        }
+
+        public void SetD3d11Device(ID3D11Device device)
+        {
+            throw new NotImplementedException();
+        }
+
+        public void SetD3d9Device(IDirect3DDevice9Ex device)
+        {
+            throw new NotImplementedException();
+        }
+
+        public void SetD3d12Device(ID3D12Device device)
+        {
+            throw new NotImplementedException();
         }
 
         #endregion

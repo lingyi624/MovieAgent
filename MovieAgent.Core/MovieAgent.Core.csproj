@@ -7,6 +7,10 @@
   </PropertyGroup>
 
   <ItemGroup>
+    <PackageReference Include="Vortice.Direct3D9" Version="3.8.3" />
+  </ItemGroup>
+
+  <ItemGroup>
     <ProjectReference Include="..\MovieAgent.FFmpegDecoder\MovieAgent.FFmpegDecoder.csproj" />
   </ItemGroup>
 

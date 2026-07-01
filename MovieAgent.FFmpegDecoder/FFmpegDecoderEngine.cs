@@ -1,7 +1,9 @@
 using FFmpeg.AutoGen;
 using NAudio.CoreAudioApi;
 using NAudio.Wave;
+using SharpGen.Runtime;
 using System;
+using System.Collections;
 using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.Diagnostics;
@@ -13,8 +15,9 @@ using System.Threading;
 using System.Threading.Channels;
 using System.Threading.Tasks;
 using System.Timers;
-using static MovieAgent.FFmpegDecoder.FFmpegDecoderEngine;
-
+using Vortice.Direct3D12;
+using Vortice.Direct3D9;
+ 
 namespace MovieAgent.FFmpegDecoder
 {
     /// <summary>
@@ -26,7 +29,10 @@ namespace MovieAgent.FFmpegDecoder
         #region FFmpeg原生上下文指针
         private double _audioFirstPtsMs = -1;
         private double _lastAudioClock = -1;
-
+        private Vortice.Direct3D11.ID3D11Device? _d3d11Device;
+        private Vortice.Direct3D9.IDirect3DDevice9Ex? _d3d9Device;
+        private  ID3D12Device? _d3d12Device;
+ 
         /// <summary>
         /// 格式上下文，用于读取媒体文件
         /// </summary>
@@ -129,7 +135,7 @@ namespace MovieAgent.FFmpegDecoder
         /// 显示队列，用于解码线程和显示线程之间的帧传递
         /// 容量为2帧，最小化内存占用（4K降级到1080p后每帧约6MB，2帧约12MB）
         /// </summary>
-        private BlockingCollection<FrameData> _displayQueue = new BlockingCollection<FrameData>(2);
+        private BlockingCollection<FrameData> _displayQueue = new BlockingCollection<FrameData>(50);
 
         /// <summary>
         /// 显示线程，负责从队列中获取帧并触发FrameDecoded事件
@@ -260,6 +266,11 @@ namespace MovieAgent.FFmpegDecoder
         /// 已解码帧数计数器
         /// </summary>
         private int _frameCount = 0;
+        
+        /// <summary>
+        /// 是否已保存调试帧（只保存一次）
+        /// </summary>
+        private bool _debugFrameSaved = false;
 
         #endregion
 
@@ -392,6 +403,7 @@ namespace MovieAgent.FFmpegDecoder
         /// 当前解码模式（自动/硬件/软件），决定使用硬件还是软件解码
         /// </summary>
         private DecodeMode _decodeMode = DecodeMode.Auto;
+        private D3DMode _d3DMode = D3DMode.D3D12;
 
         /// <summary>
         /// 当前解码器名称，记录实际使用的解码器标识
@@ -485,6 +497,18 @@ namespace MovieAgent.FFmpegDecoder
 
         #region 属性
 
+        public void SetD311dDevice(Vortice.Direct3D11.ID3D11Device device)
+        {
+            _d3d11Device = device;
+        }
+        public void SetD3d9dDevice(IDirect3DDevice9Ex device)
+        {
+            _d3d9Device = device;
+        }
+        public void SetD3d12dDevice(ID3D12Device device)
+        {
+            _d3d12Device = device;
+        }
         /// <summary>
         /// 是否正在播放
         /// </summary>
@@ -535,7 +559,7 @@ namespace MovieAgent.FFmpegDecoder
         /// 当前解码模式
         /// </summary>
         public DecodeMode CurrentDecodeMode => _decodeMode;
-
+        public D3DMode? CurrentD3dModel => _d3DMode;
         /// <summary>
         /// 已解码帧数
         /// </summary>
@@ -576,6 +600,12 @@ namespace MovieAgent.FFmpegDecoder
             Software
         }
 
+        public enum D3DMode
+        {
+
+            D3D9, D3D10, D3D11, D3D12, D3D13
+        }
+
         #endregion
 
         #region 构造函数
@@ -584,9 +614,10 @@ namespace MovieAgent.FFmpegDecoder
         /// 构造函数
         /// </summary>
         /// <param name="mode">解码模式，默认为自动选择</param>
-        public FFmpegDecoderEngine(DecodeMode mode = DecodeMode.Auto)
+        public FFmpegDecoderEngine(DecodeMode mode = DecodeMode.Auto, D3DMode d3dModel= D3DMode.D3D12)
         {
             _decodeMode = mode;
+            _d3DMode = d3dModel;
             InitializeFFmpeg();
         }
 
@@ -603,7 +634,12 @@ namespace MovieAgent.FFmpegDecoder
             _decodeMode = mode;
             DebugLogger.WriteLine($"[FFmpeg] Decode mode set to: {mode}");
         }
-
+        public void SetD3d9Model(D3DMode mode)
+        {
+            _d3DMode = mode;
+            DebugLogger.WriteLine($"[FFmpeg] D3DMode mode set to: {mode}"); 
+        }
+      
         #endregion
 
         #region 硬件加速检测
@@ -616,8 +652,8 @@ namespace MovieAgent.FFmpegDecoder
         private async Task<(bool, AVHWDeviceType?)> CheckHardwareAccelerationSupport(AVCodecID codecId)
         {
             try
-            { 
-
+            {
+                
                 // 检测 H.264 硬件解码
                 var hwType = await _detector.GetBestHardwareTypeAsync(codecId);
 
@@ -1117,9 +1153,11 @@ namespace MovieAgent.FFmpegDecoder
         {
             DebugLogger.WriteLine($"[FFmpeg] ===== PlayAsync 开始 ===== ");
             DebugLogger.WriteLine($"[FFmpeg] Starting playback for file: {filePath}");
+            DebugLogger.WriteLine($"[FFmpeg] 当前线程ID: {System.Threading.Thread.CurrentThread.ManagedThreadId}");
             
             try
             {
+                DebugLogger.WriteLine($"[FFmpeg] 调用 StopInternalAsync...");
                 await StopInternalAsync();
                 DebugLogger.WriteLine($"[FFmpeg] StopInternalAsync 完成");
 
@@ -1142,6 +1180,7 @@ namespace MovieAgent.FFmpegDecoder
                 _clockBase = 0;
                 _clockStartTicks = Stopwatch.GetTimestamp();
                 _frameCount = 0;
+                _debugFrameSaved = false;
 
                 // 重新初始化解码取消令牌源（可能在上一次播放停止时被释放）
                 _decodeCts = new CancellationTokenSource();
@@ -1230,130 +1269,91 @@ namespace MovieAgent.FFmpegDecoder
                 DebugLogger.WriteLine($"[FFmpeg] 启动显示线程...");
                 _displayThread = new Thread(() =>
                 {
-                    DebugLogger.WriteLine($"[FFmpeg] 显示线程已启动，线程ID: {Thread.CurrentThread.ManagedThreadId}");
+                    DebugLogger.WriteLine("[FFmpeg] 显示线程启动（VSync 驱动）");
                     try
                     {
-                        double fps = _fps;   // 你的视频帧率
-                        long frameIntervalMs = (long)(1000.0 / fps);
-                        long nextRenderTime = 0;
-                        bool isSeeking = false;
+                        bool audioOffsetInitialized = false;
+                        double audioStartOffset = 0;
 
                         while (!_displayCts.Token.IsCancellationRequested)
                         {
-                            if (!_isPlaying)
+                            if (!_isPlaying || _isSeeking)
                             {
                                 Thread.Sleep(10);
                                 continue;
                             }
 
-                            if (_displayQueue.TryTake(out var frame, 50, _displayCts.Token))
+                            // 从队列取一帧（不设超时，反复尝试直到取到）
+                            if (!_displayQueue.TryTake(out var frame, 1, _displayCts.Token))
+                                continue;
+
+                            double speed = _playbackSpeed; // 线程安全的播放速度
+                            bool isFastForward = Math.Abs(speed - 1.0) > 0.01;
+
+                            // ========== 快进模式：直接渲染，不处理音频同步 ==========
+                            if (isFastForward)
                             {
- 
-                              
-                                // ========== 音视频同步 ==========
-                                double audioClock = GetPlaybackClock();
-
-                                // 检测音频时钟回跳
-                                if (_lastAudioClock > 0 && audioClock < _lastAudioClock - 0.1)
-                                {
-                                    audioClock = _lastAudioClock;
-                                }
-                                _lastAudioClock = audioClock; 
-                            
-
-                                double videoPts = frame.VideoTimestamp / 1000.0;
-                                double diff = videoPts - audioClock;
-                                // DebugLogger.WriteLine($"[同步] video={videoPts:F3}s, audio={audioClock:F3}s, diff={diff:F3}s");
-                                const double TOLERANCE_MS = 0.030;
-                                const double MAX_WAIT_MS = 0.300;
-                                const double SKIP_THRESHOLD_MS = -0.100;
-
-                                // Seek 检测：如果 diff 突然变化很大，说明 Seek 了
-                                if (Math.Abs(diff) > 5)
-                                {
-                                    isSeeking = true;
-                                    nextRenderTime = 0;  // 重置帧率控制
-                                }
-
-                                // Seek 稳定期
-                                if (isSeeking && Math.Abs(diff) < 0.200)
-                                {
-                                    isSeeking = false;
-                                }
-
-                                // 同步逻辑
-                                bool shouldRender = false;
-
-                                if (diff > TOLERANCE_MS && diff < MAX_WAIT_MS)
-                                {
-                                    // 视频快了，等待音频
-                                    int waitMs = (int)(diff * 1000);
-                                    if (waitMs > 0 && waitMs < 200)
-                                    {
-                                        Thread.Sleep(waitMs);
-                                    }
-                                    shouldRender = true;
-                                }
-                                else if (diff >= MAX_WAIT_MS)
-                                {
-                                    // 快太多，丢帧
-                                    continue;
-                                }
-                                else if (diff < SKIP_THRESHOLD_MS)
-                                {
-                                    // 慢太多，丢帧
-                                    continue;
-                                }
-                                else
-                                {
-                                    // 同步良好
-                                    shouldRender = true;
-                                }
-
-                                if (!shouldRender) continue;
-
-                                // ========== 帧率控制（Seek 时跳过帧率控制） ==========
-                                if (!isSeeking)
-                                {
-                                    long now = Environment.TickCount64;
-                                    if (now < nextRenderTime)
-                                    {
-                                        int waitMs = (int)(nextRenderTime - now);
-                                        if (waitMs > 0 && waitMs < 50)
-                                        {
-                                            Thread.Sleep(waitMs);
-                                        }
-                                        else if (waitMs >= 50)
-                                        {
-                                            // 等待太久，直接显示
-                                            FrameDecoded?.Invoke(this, frame);
-                                            nextRenderTime = now + frameIntervalMs;
-                                            continue;
-                                        }
-                                    }
-                                }
-
-                                // ========== 渲染 ==========
                                 FrameDecoded?.Invoke(this, frame);
-                                nextRenderTime = Environment.TickCount64 + frameIntervalMs;
+                                // 不再手动限制帧率，让 Present(1) 的 VSync 自然控制节奏
+                                continue;
                             }
+
+                            // ========== 正常播放模式：音画同步（只做必要的音频等待/丢帧） ==========
+                            // 1. 初始化音频偏移（首次）
+                            if (!audioOffsetInitialized)
+                            {
+                                audioStartOffset = GetPlaybackClock();
+                                audioOffsetInitialized = true;
+                            }
+
+                            double effectiveAudioClock = GetPlaybackClock() - audioStartOffset;
+                            double videoPts = frame.VideoTimestamp / 1000.0;
+                            double diff = videoPts - effectiveAudioClock;
+
+                            // 2. Seek 跳变检测 → 重置偏移，直接渲染
+                            if (Math.Abs(diff) > 5)
+                            {
+                                audioOffsetInitialized = false;  // 下次重新对齐
+                                                                 // 直接渲染，不等
+                                FrameDecoded?.Invoke(this, frame);
+                                continue;
+                            }
+
+                            // 3. 正常同步逻辑
+                            const double TOLERANCE = 0.030;
+                            const double DROP_THRESHOLD = 1.0;
+
+                            if (diff > DROP_THRESHOLD)          // 领先超过 1 秒，丢帧
+                                continue;
+                            else if (diff > TOLERANCE)          // 视频稍快，等待音频（仅此处可能 Sleep）
+                            {
+                                int waitMs = (int)(diff * 1000);
+                                if (waitMs > 200) waitMs = 200; // 最多等 200ms
+                                if (waitMs > 0) Thread.Sleep(waitMs);
+                                // 等待后立即渲染
+                                FrameDecoded?.Invoke(this, frame);
+                            }
+                            else if (diff < -TOLERANCE)         // 视频落后，丢帧追赶
+                                continue;
+                            else                                // 同步良好，直接渲染
+                                FrameDecoded?.Invoke(this, frame);
                         }
                     }
                     catch (OperationCanceledException)
                     {
-                        DebugLogger.WriteLine("[FFmpeg] Display thread  _displayThread 正常停止");
+                        DebugLogger.WriteLine("[FFmpeg] 显示线程正常停止");
                     }
                     catch (Exception ex)
                     {
-                        DebugLogger.WriteLine($"[FFmpeg] Display thread _displayThread error: {ex.Message}");
+                        DebugLogger.WriteLine($"[FFmpeg] 显示线程异常: {ex.Message}");
                     }
                 });
 
                 _displayThread.IsBackground = true;
                 _displayThread.Start();
 
-                await Task.Delay(3000);
-                DiagnoseAudio();
+                // await Task.Delay(3000);
+                // DiagnoseAudio();
             }
             catch (Exception ex)
             {
@@ -1882,7 +1882,7 @@ namespace MovieAgent.FFmpegDecoder
             try
             {
                 ffmpeg.avcodec_parameters_to_context(vCodecCtx, codecParams);
-                vCodecCtx->thread_count = Math.Max(1, Environment.ProcessorCount - 1);
+                vCodecCtx->thread_count =  Math.Max(1, Environment.ProcessorCount - 1);
 
                 // 如果需要硬件缩放，可以尝试设置输出尺寸（取决于硬件支持）
                 if (width != codecParams->width)
@@ -2292,137 +2292,177 @@ namespace MovieAgent.FFmpegDecoder
 
             DebugLogger.WriteLine($"[FFmpeg] Video codec ID: {codecParams->codec_id}, Resolution: {codecParams->width}x{codecParams->height}");
 
-            // 目标分辨率（如果需要降级）
             int targetWidth = codecParams->width;
             int targetHeight = codecParams->height;
-            bool needDownscale = false;
-                //ShouldDownscaleResolution(codecParams->width, codecParams->height);
+            bool needDownscale = false; // 你的降分辨率逻辑
 
-            //if (needDownscale)
-            //{
-            //    targetWidth = 1920;
-            //    targetHeight = 1080;
-            //    DebugLogger.WriteLine($"[FFmpeg] Will downscale to {targetWidth}x{targetHeight}");
-            //}
-
-            // 检测硬件支持
+            // 1. 检测硬件加速支持
             var hwSupport = CheckHardwareAccelerationSupport(codecParams->codec_id).GetAwaiter().GetResult();
-            bool hwAvailable = hwSupport.Item1;
+            bool hwAvailable = hwSupport.Item1 && (_decodeMode == DecodeMode.Auto || _decodeMode == DecodeMode.Hardware);
             AVHWDeviceType? hwType = hwSupport.Item2;
-
-            // 用于存储硬件设备上下文（新式方式）
+            DebugLogger.WriteLine($"[FFmpeg] 硬件加速可用: {hwSupport.Item1}, 硬件类型: {hwSupport.Item2}");
+            // 硬件设备上下文（所有路径统一使用）
             AVBufferRef* hwDeviceCtx = null;
 
             if (hwAvailable && hwType.HasValue)
             {
-                _cachedDeviceType = hwType.Value;
-
-                // 使用新式 hwaccel 方式：软件解码器 + 硬件设备
+                // 必须使用软件解码器 + 硬件设备上下文（新式 hwaccel）
                 codec = ffmpeg.avcodec_find_decoder(codecParams->codec_id);
-
                 if (codec != null)
                 {
-                    // 创建硬件设备上下文
-                    int ret = ffmpeg.av_hwdevice_ctx_create(&hwDeviceCtx, hwType.Value, null, null, 0);
-                    if (ret >= 0)
-                    {
-                        _decodeMode = DecodeMode.Hardware;
-                        DebugLogger.WriteLine($"[FFmpeg] ✅ Hardware device created: {ffmpeg.av_hwdevice_get_type_name(hwType.Value)}");
+                    try
+                    { 
+                        if (CurrentD3dModel == D3DMode.D3D11)
+                        {
+                            // 2. 分配硬件设备上下文缓冲区
+                            hwDeviceCtx = ffmpeg.av_hwdevice_ctx_alloc(AVHWDeviceType.AV_HWDEVICE_TYPE_D3D11VA);
+                            if (hwDeviceCtx == null)
+                                throw new Exception("av_hwdevice_ctx_alloc 失败");
+
+                            var hwCtx = (AVHWDeviceContext*)hwDeviceCtx->data;
+                            var d3dCtx = (AVD3D11VADeviceContext*)hwCtx->hwctx;
+
+                            // 3. 获取共享的 D3D11 设备（必须与 VideoRenderer 同一设备）
+                            var  device = _d3d11Device; // 你之前通过 VideoRenderer.GetDevice() 获取并存储到 _d3dDevice
+
+                            if (device == null)
+                                DebugLogger.WriteLine("[FFmpeg] 共享 D3D11 设备为 null，无法初始化硬件");
+                            // 正确增加引用计数（COM 方式）
+                            Marshal.AddRef(device.NativePointer);
+                            d3dCtx->device = (ID3D11Device*)device.NativePointer;
+
+                            // 同样对 device_context 增加引用 d3d11用
+                            var ctx = device.ImmediateContext;
+                            Marshal.AddRef(ctx.NativePointer);
+                            d3dCtx->device_context = (ID3D11DeviceContext*)ctx.NativePointer;
+                            // 4. 初始化硬件设备上下文
+                            int ret = ffmpeg.av_hwdevice_ctx_init(hwDeviceCtx);
+                            if (ret < 0)
+                            {
+                                // 如果失败，别忘了释放引用（因为我们已经 AddRef 了）
+                                //  Marshal.Release(device.NativePointer);
+                                ffmpeg.av_buffer_unref(&hwDeviceCtx);
+                                throw new Exception($"av_hwdevice_ctx_init 失败: {ret}");
+                            }
+                        }
+                        else if (CurrentD3dModel == D3DMode.D3D9)
+                        { 
+                           var   device = _d3d9Device;  
+                            if (device == null)
+                                DebugLogger.WriteLine("[FFmpeg] 共享 D3D9 设备为 null，无法初始化硬件");
+                            var _decoderInit = new D3D9DecoderInitializer();
+                            _decoderInit.Initialize(device);
+                            hwDeviceCtx = _decoderInit.HardwareDeviceContext;
+
+                            _decoderInit.Dispose();
+                        }
+                        if (CurrentD3dModel == D3DMode.D3D12)
+                        {
+
+                            // 1. 分配硬件设备上下文
+                            // 注意：设备类型常量应为 AV_HWDEVICE_TYPE_D3D12VA
+                            hwDeviceCtx = ffmpeg.av_hwdevice_ctx_alloc(AVHWDeviceType.AV_HWDEVICE_TYPE_D3D12VA);
+                            if (hwDeviceCtx == null)
+                                throw new Exception("Failed to alloc D3D12 HW device context");
+
+                            // 2. 获取 AVHWDeviceContext 并填入设备指针
+                            AVHWDeviceContext* deviceCtx = (AVHWDeviceContext*)hwDeviceCtx->data;
+                            // 注意：上下文结构体类型应为 AVD3D12VADeviceContext
+                            var d3d12Ctx = (AVD3D12VADeviceContext*)deviceCtx->hwctx;
+                            // 设置 device 字段（必须）
+                            var device = _d3d12Device; // 你之前通过 VideoRenderer.GetDevice() 获取并存储到 _d3dDevice 
+                            if (device == null)
+                                DebugLogger.WriteLine("[FFmpeg] 共享 D3D12 设备为 null，无法初始化硬件");
+                            if (device != null && device.DeviceRemovedReason.Failure)
+                            {
+                                DebugLogger.WriteLine($"设备移除原因: 0x{device.DeviceRemovedReason.Code:X8}");
+                            }
+                            d3d12Ctx->device = device.NativePointer;
+                             d3d12Ctx->resource_flags = 0;
+                            d3d12Ctx->heap_flags = 0;                            // 注意：不需要也不能设置 command_queue 字段
+                            // video_device 字段可以留空，让 FFmpeg 在初始化时自动填充
+
+                            // 3. 初始化设备上下文
+                            int ret = ffmpeg.av_hwdevice_ctx_init(hwDeviceCtx);
+                            if (ret < 0)
+                            {
+                                ffmpeg.av_buffer_unref(&hwDeviceCtx);
+                                throw new Exception($"Failed to init D3D12 HW device context: {ret}");
+                            }
+
+                            DebugLogger.WriteLine("FFmpeg D3D12 硬件设备上下文已创建");
+                        }
+
+                        // 硬件设备上下文创建成功
+                        if (_decodeMode == DecodeMode.Auto)
+                            _decodeMode = DecodeMode.Hardware;
+                        DebugLogger.WriteLine($"[FFmpeg] ✅ D3D11VA 硬件设备就绪，解码模式: {_decodeMode}");
                     }
-                    else
+                    catch (Exception ex)
                     {
-                        DebugLogger.WriteLine($"[FFmpeg] ❌ Failed to create hardware device");
-                        hwDeviceCtx = null;
+                        DebugLogger.WriteLine($"[FFmpeg] ❌ 硬件初始化失败: {ex.Message}，回退到软件解码");
+                        // 清理已分配的资源
+                        if (hwDeviceCtx != null)
+                        {
+                            ffmpeg.av_buffer_unref(&hwDeviceCtx);
+                            hwDeviceCtx = null;
+                        }
                         codec = null;
                     }
                 }
             }
 
-            // 如果没有硬件或创建失败，回退到软件
+            // 5. 如果硬件不可用或创建失败，回退到软件解码
             if (codec == null)
             {
                 _decodeMode = DecodeMode.Software;
                 codec = ffmpeg.avcodec_find_decoder(codecParams->codec_id);
-                DebugLogger.WriteLine("[FFmpeg] Using software decoding");
+                DebugLogger.WriteLine("[FFmpeg] 使用软件解码");
             }
 
             if (codec == null)
             {
-                DebugLogger.WriteLine("[FFmpeg] Video codec not found");
+                DebugLogger.WriteLine("[FFmpeg] 未找到视频解码器");
                 return;
             }
 
-            // 分配解码器上下文
-            var vCodecCtx = ffmpeg.avcodec_alloc_context3(codec); 
+            // 6. 分配解码器上下文
+            var vCodecCtx = ffmpeg.avcodec_alloc_context3(codec);
             if (vCodecCtx == null)
             {
-                DebugLogger.WriteLine("[FFmpeg] Failed to allocate video codec context");
-                return;
+                DebugLogger.WriteLine("[FFmpeg] 分配解码器上下文失败");
+                goto cleanup_hwdevice;
             }
-            //_videoCodecContext = (IntPtr)vCodecCtx;
 
             ffmpeg.avcodec_parameters_to_context(vCodecCtx, codecParams);
             vCodecCtx->thread_count = Math.Max(1, Environment.ProcessorCount - 1);
 
-            // 设置输出分辨率（如果硬件支持缩放）
-            if (needDownscale && hwDeviceCtx != null)
-            {
-                // 某些硬件支持设置输出尺寸
-                vCodecCtx->width = targetWidth;
-                vCodecCtx->height = targetHeight;
-            }
-
-            // 绑定硬件设备（新式方式的关键步骤）
-            AVDictionary* options = null;
-            int openRet = -1;
-
-            if (hwDeviceCtx != null)
+            // 硬件加速绑定
+            if (hwDeviceCtx != null && (_decodeMode == DecodeMode.Auto || _decodeMode == DecodeMode.Hardware))
             {
                 vCodecCtx->hw_device_ctx = ffmpeg.av_buffer_ref(hwDeviceCtx);
-
-                // 可以传递额外的硬件加速参数
-                ffmpeg.av_dict_set(&options, "hwaccel", ffmpeg.av_hwdevice_get_type_name(hwType.Value), 0);
-
-                // 如果需要降分辨率，尝试传递缩放参数
-                if (needDownscale)
-                {
-                    ffmpeg.av_dict_set(&options, "width", targetWidth.ToString(), 0);
-                    ffmpeg.av_dict_set(&options, "height", targetHeight.ToString(), 0);
-                }
-
-                openRet = ffmpeg.avcodec_open2(vCodecCtx, codec, &options);
-
-                // 如果硬件解码打开失败，清理硬件上下文，回退到软件
-                if (openRet < 0)
-                {
-                    DebugLogger.WriteLine("[FFmpeg] Hardware decoder open failed, falling back to software");
-                    ffmpeg.av_buffer_unref(&hwDeviceCtx);
-                    vCodecCtx->hw_device_ctx = null;
-
-                    // 重新打开软件解码器
-                    openRet = ffmpeg.avcodec_open2(vCodecCtx, codec, null);
-                }
-              
-            }
-            else
-            {
-                openRet = ffmpeg.avcodec_open2(vCodecCtx, codec, null); 
+                // 不需要额外设置 "hwaccel" 选项
             }
 
-            if (options != null)
-                ffmpeg.av_dict_free(&options);
+            // 打开解码器
+            AVDictionary* options = null;
+            int openRet = ffmpeg.avcodec_open2(vCodecCtx, codec, &options);
+            ffmpeg.av_dict_free(&options);
 
             if (openRet < 0)
             {
-                DebugLogger.WriteLine("[FFmpeg] Failed to open video codec");
-                return;
+                DebugLogger.WriteLine("[FFmpeg] 打开视频解码器失败");
+                ffmpeg.avcodec_free_context(&vCodecCtx);
+                goto cleanup_hwdevice;
             }
+
             _videoCodecContext = (IntPtr)vCodecCtx;
-            // 保存硬件设备上下文供后续使用
-            if (hwDeviceCtx != null && vCodecCtx->hw_device_ctx != null)
-            {
-                _hwDeviceContext  = (IntPtr)hwDeviceCtx;
-            }
+
+            // 保存硬件设备上下文引用（可能后续用到）
+            if (hwDeviceCtx != null)
+                _hwDeviceContext = (IntPtr)hwDeviceCtx;
+            else
+                _hwDeviceContext = IntPtr.Zero;
 
             _currentDecoder = Marshal.PtrToStringAnsi((IntPtr)codec->name) ?? "unknown";
             int decoderWidth = vCodecCtx->width;
@@ -2430,7 +2470,7 @@ namespace MovieAgent.FFmpegDecoder
 
             DebugLogger.WriteLine($"[FFmpeg] Decoder: {_currentDecoder}, Output: {decoderWidth}x{decoderHeight}");
 
-            // 设置 FPS
+            // FPS 设置
             if (vCodecCtx->framerate.num > 0 && vCodecCtx->framerate.den > 0)
                 _fps = (double)vCodecCtx->framerate.num / vCodecCtx->framerate.den;
             else if (stream->avg_frame_rate.num > 0)
@@ -2438,34 +2478,22 @@ namespace MovieAgent.FFmpegDecoder
             else
                 _fps = 30.0;
 
-            // 创建缩放上下文（如果输出分辨率不是目标分辨率）
-            int swsWidth = decoderWidth;
-            int swsHeight = decoderHeight;
+            _videoWidth = decoderWidth;
+            _videoHeight = decoderHeight;
 
-            if (needDownscale && (decoderWidth != targetWidth || decoderHeight != targetHeight))
-            {
-                swsWidth = targetWidth;
-                swsHeight = targetHeight;
-            }
-            
-            // 使用缩放宽高作为输出分辨率（减少内存占用）
-            _videoWidth = swsWidth;
-            _videoHeight = swsHeight;
-            DebugLogger.WriteLine($"[FFmpeg] Output resolution: {_videoWidth}x{_videoHeight}");
-            // 创建缩放上下文（使用正确的像素格式）
-            AVPixelFormat outputFormat = AVPixelFormat.AV_PIX_FMT_BGR24;
-            //_swsContext = (IntPtr)ffmpeg.sws_getContext(
-            //    _videoWidth, _videoHeight, vCodecCtx->pix_fmt,
-            //    swsWidth, swsHeight, AVPixelFormat.AV_PIX_FMT_BGR24,
-            //    1, null, null, null);
-            // 注意：硬件解码时，vCodecCtx->pix_fmt 可能是硬件格式（如 AV_PIX_FMT_CUDA）
-            // 需要先转换到软件格式再缩放
-            _swsContext = (IntPtr)ffmpeg.sws_getContext(
-        _videoWidth, _videoHeight, AVPixelFormat.AV_PIX_FMT_YUV420P,  // 使用 YUV420P 作为中间格式
-        swsWidth, swsHeight, outputFormat,
-        1, null, null, null);
-            _rgbBuffer = new byte[swsWidth * swsHeight * 3];
+            DebugLogger.WriteLine($"[FFmpeg] 输出分辨率: {_videoWidth}x{_videoHeight}");
+
+            // 分配 RGB 缓冲区（如果后续需要）
+            _rgbBuffer = new byte[decoderWidth * decoderHeight * 3];
             UpdateBufferSize(_rgbBuffer.Length);
+            return;
+
+        cleanup_hwdevice:
+            if (hwDeviceCtx != null)
+            {
+                ffmpeg.av_buffer_unref(&hwDeviceCtx);
+                _hwDeviceContext = IntPtr.Zero;
+            }
         }
         private unsafe AVFrame* GetHwFrame(AVFrame* hwFrame)
         {
@@ -3272,6 +3300,11 @@ namespace MovieAgent.FFmpegDecoder
                     {
                         if (!_isPlaying)
                             break;
+                        if (_audioTrackSwitchInProgress)
+                        {
+                            Thread.Sleep(10);
+                            continue;
+                        }
 
                         ret = ffmpeg.avcodec_receive_frame(aCodecCtx, aFrm);
                         if (ret == ffmpeg.AVERROR(ffmpeg.EAGAIN) || ret == ffmpeg.AVERROR_EOF) break;
@@ -3287,6 +3320,7 @@ namespace MovieAgent.FFmpegDecoder
                                 if (_audioClock > 0)
                                 {
                                     _audioClock = 0;
+                                    _isClockInitialized = false; 
                                 }
                             }
                             _audioFirstPtsMs++;
@@ -3306,7 +3340,7 @@ namespace MovieAgent.FFmpegDecoder
                                 _audioBuffer.AddSamples(outBuffer, 0, outBuffer.Length);
                             }
                         }
-
+                        if(aFrm!=null)
                         ffmpeg.av_frame_unref(aFrm);
                     }
                 }
@@ -3334,6 +3368,7 @@ namespace MovieAgent.FFmpegDecoder
                 DebugLogger.WriteLine("[FFmpeg] Video decode loop started");
                 int framesDropped = 0;
                 const int MAX_CONSECUTIVE_DROPS = 5;
+                int packetsProcessed = 0;
 
                 while (!ct.IsCancellationRequested && _isPlaying)
                 {
@@ -3345,11 +3380,19 @@ namespace MovieAgent.FFmpegDecoder
                     }
                
                     // 从队列获取数据包
+                    DebugLogger.WriteLine("[FFmpeg] Waiting for video packets...");
                     if (!await _videoPacketQueue.Reader.WaitToReadAsync(ct).ConfigureAwait(false))
+                    {
+                        DebugLogger.WriteLine("[FFmpeg] Video packet queue completed");
                         break;
+                    }
 
+                    DebugLogger.WriteLine("[FFmpeg] Video packets available");
                     while (_videoPacketQueue.Reader.TryRead(out var packetData))
                     {
+                        packetsProcessed++;
+                       // DebugLogger.WriteLine($"[FFmpeg] Processing video packet {packetsProcessed}, size={packetData.Size}");
+                        
                         // ✅ 添加停止检查
                         if (!_isPlaying || ct.IsCancellationRequested)
                         {
@@ -3466,11 +3509,10 @@ namespace MovieAgent.FFmpegDecoder
             Marshal.FreeHGlobal((IntPtr)pkt.data);
         }
     }
-
-    /// <summary>
-    /// 处理解码后的字幕数据
-    /// </summary>
-    private unsafe void ProcessDecodedSubtitle(AVSubtitle* sub, double timeBase)
+        /// <summary>
+        /// 处理解码后的字幕数据
+        /// </summary>
+        private unsafe void ProcessDecodedSubtitle(AVSubtitle* sub, double timeBase)
     {
         if (sub->num_rects <= 0) return;
 
@@ -3505,19 +3547,24 @@ namespace MovieAgent.FFmpegDecoder
             });
         }
     }
+        private IDirect3DTexture9 _cachedTexture;
 
-    /// <summary>
-    /// 处理视频数据包（适配新的PacketData格式）
-    /// </summary>
-    private unsafe void ProcessVideoPacket(PacketData packetData, ref int framesDropped, int maxConsecutiveDrops)
-    {
-            if (_videoCodecContext == IntPtr.Zero || _videoFrame == IntPtr.Zero) return;
-            //DebugLogger.WriteLine($"[视频] 线程: {Thread.CurrentThread.ManagedThreadId}");
+        /// <summary>
+        /// 处理视频数据包（适配新的PacketData格式）
+        /// </summary>
+        private unsafe void ProcessVideoPacket(PacketData packetData, ref int framesDropped, int maxConsecutiveDrops)
+        {
+            if (_videoCodecContext == IntPtr.Zero || _videoFrame == IntPtr.Zero)
+            {
+                DebugLogger.WriteLine($"[FFmpeg] ProcessVideoPacket 失败: codec或frame指针为空");
+                return;
+            }
 
             var vCodecCtx = (AVCodecContext*)_videoCodecContext;
             var frm = (AVFrame*)_videoFrame;
+            if (frm == null) return;
 
-            // 创建AVPacket并填充数据
+            // 准备数据包
             AVPacket pkt;
             ffmpeg.av_init_packet(&pkt);
             pkt.data = (byte*)Marshal.AllocHGlobal(packetData.Size);
@@ -3534,211 +3581,916 @@ namespace MovieAgent.FFmpegDecoder
 
                 while (true)
                 {
-                    var decodeStartTime = Stopwatch.GetTimestamp();
-                    
-
                     ret = ffmpeg.avcodec_receive_frame(vCodecCtx, frm);
-                    var decodeTimeMs = Stopwatch.GetElapsedTime(decodeStartTime).TotalMilliseconds;
-
                     if (ret == ffmpeg.AVERROR(ffmpeg.EAGAIN) || ret == ffmpeg.AVERROR_EOF)
                         break;
                     if (ret < 0) break;
 
-                    //UpdateDecodePerformance(decodeTimeMs);
-
-                    //if (CheckPerformanceDegradation())
-                    //{
-                    //    Pause();
-                    //    SendPerformanceWarning();
-                    //    continue;
-                    //}
-                   
+                    // 更新时间戳（不强制修改）
                     if (frm->pts != ffmpeg.AV_NOPTS_VALUE)
                     {
                         _currentTimeMs = (long)(frm->pts * _videoTimeBase * 1000);
                         if (_frameCount == 1)
-                        {
                             DebugLogger.WriteLine($"[视频] 第一帧 PTS: {_currentTimeMs}ms");
-                            _currentTimeMs = 0;
-                            _videoClock = _currentTimeMs;
-                        }
-                        else
-                        {
-                            _videoClock = _currentTimeMs;
-                        }
+                        _videoClock = _currentTimeMs;
                     }
 
-                    var currentClock = GetPlaybackClock();
-                    var frameTime = frm->pts != ffmpeg.AV_NOPTS_VALUE
-                        ? frm->pts * _videoTimeBase
-                        : currentClock;
+                    // ========== 判断硬件帧类型 ==========
+                    bool isHardwareFrame = (_decodeMode == DecodeMode.Auto || _decodeMode == DecodeMode.Hardware) &&
+                                           (frm->format == (int)AVPixelFormat.AV_PIX_FMT_D3D11 || frm->format == (int)AVPixelFormat.AV_PIX_FMT_D3D12
+                                            ||frm->format == (int)AVPixelFormat.AV_PIX_FMT_CUDA ||
+                                            frm->format == (int)AVPixelFormat.AV_PIX_FMT_DXVA2_VLD);
 
-                    var diff = frameTime - currentClock;
-
-                    // Seek稳定期内不丢弃帧
-                    if (!_isSeekingStabilizing && diff < -0.3 && framesDropped < maxConsecutiveDrops)
-                    {
-                        framesDropped++;
-                        continue;
-                    }
-
-                    // ========== 处理硬件帧 ==========
-                    AVFrame* displayFrame = frm;
-                    bool needFreeFrame = false;
-
-                    // 检查是否是硬件帧
-                    bool isHardwareFrame = frm->format == (int)AVPixelFormat.AV_PIX_FMT_CUDA ||
-                                           frm->format == (int)AVPixelFormat.AV_PIX_FMT_D3D11 ||
-                                           frm->format == (int)AVPixelFormat.AV_PIX_FMT_DXVA2_VLD ||
-                                           frm->format == (int)AVPixelFormat.AV_PIX_FMT_VAAPI;
-
-                    // 零拷贝硬件帧信息 (D3D11VA)
+                    // 零拷贝尝试
+                    bool canUseZeroCopy = false;
                     IntPtr nv12TexturePtr = IntPtr.Zero;
                     uint textureArrayIndex = 0;
-
-                    if (isHardwareFrame && _hwDeviceContext != IntPtr.Zero)
+                    bool isTextureArray=false;
+                   // IntPtr d3d9SurfacePtr = (IntPtr)frm->data[0];
+                    //IntPtr d3d11SurfacePtr = (IntPtr)frm->data[1];
+                    if (CurrentD3dModel == D3DMode.D3D11)
                     {
-                        // 提取 D3D11VA 纹理指针 (用于零拷贝渲染)
-                        if (frm->format == (int)AVPixelFormat.AV_PIX_FMT_D3D11 && frm->data[1] != null)
+                        if (isHardwareFrame && _hwDeviceContext != IntPtr.Zero && frm->data[1] != null)
                         {
                             try
                             {
-                                // AVD3D11FrameDescriptor 结构: texture(IntPtr), index(int)
-                                var descPtr = (IntPtr)frm->data[1];
-                                nv12TexturePtr = Marshal.ReadIntPtr(descPtr, 0);   // ID3D11Texture2D*
-                                textureArrayIndex = (uint)Marshal.ReadInt32(descPtr, IntPtr.Size);
-                            }
-                            catch { }
-                        }
+                                nv12TexturePtr = (IntPtr)frm->data[0];
+                                textureArrayIndex = (uint)(UIntPtr)frm->data[1];
 
-                        // 下载到CPU (用于YUV420P提取和软件回退)
-                        AVFrame* swFrame = ffmpeg.av_frame_alloc();
-                        if (swFrame != null)
-                        {
-                            int transferRet = ffmpeg.av_hwframe_transfer_data(swFrame, frm, 0);
-                            if (transferRet >= 0)
-                            {
-                                swFrame->pts = frm->pts;
-                                displayFrame = swFrame;
-                                needFreeFrame = true;
+                                if (nv12TexturePtr != IntPtr.Zero)
+                                {
+                                    canUseZeroCopy = true;
+                                    // 增加引用计数，防止外部提前释放（如果 FFmpeg 内部持有引用，可省略，但安全起见加上）
+                                    // Marshal.AddRef(nv12TexturePtr); // 根据你的渲染器是否负责释放决定
+                                    // DebugLogger.WriteLine($"[FFmpeg] 硬件帧: tex=0x{nv12TexturePtr:X8}, idx={textureArrayIndex}");
+                                }
                             }
-                            else
+                            catch (Exception ex)
                             {
-                                DebugLogger.WriteLine($"[FFmpeg] Hardware frame transfer failed: {transferRet}");
-                                ffmpeg.av_frame_free(&swFrame);
+                                DebugLogger.WriteLine($"[FFmpeg] 提取硬件帧描述失败: {ex.Message}");
                             }
                         }
                     }
-                    // ====================================
-
-                    #region  // 检查帧数据有效性（修复 bad src image pointers 错误）
-                    //if (!IsFrameDataValid(displayFrame))
-                    //{
-                    //    DebugLogger.WriteLine("[FFmpeg] Invalid frame data, skipping frame");
-                    //    if (needFreeFrame) ffmpeg.av_frame_free(&displayFrame);
-                    //    ffmpeg.av_frame_unref(frm);
-                    //    continue;
-                    //}
-
-                    //if (_swsContext != IntPtr.Zero && _rgbBuffer != null)
-                    //{
-                    //    var sws = (SwsContext*)_swsContext;
-                    //    fixed (byte* pData = _rgbBuffer)
-                    //    {
-                    //        byte*[] dstData = { pData };
-                    //        int[] dstStride = { _videoWidth * 3 };
-
-                    //        ffmpeg.sws_scale(sws, displayFrame->data, displayFrame->linesize, 0, displayFrame->height, dstData, dstStride);
-                    //    }
-
-                    //    framesDropped = 0;
-
-                    //    FrameData frameData = new FrameData
-                    //    {
-                    //        Width = _videoWidth,
-                    //        Height = _videoHeight,
-                    //        Data = _rgbBuffer.ToArray(),
-                    //        VideoTimestamp = _currentTimeMs,
-                    //        AudioTimestamp = (long)_audioClock,
-                    //        AudioPlayPosition = GetAudioPlayPosition()
-                    //    };
-
-                    //    _displayQueue.TryAdd(frameData, 100);
-                    //}
-
-                    #endregion
-                    // ========== 零拷贝硬件帧信息 ==========
-                    _currentNV12TexturePtr = nv12TexturePtr;
-                    _currentTextureArrayIndex = textureArrayIndex;
-                    _currentIsHardwareFrame = nv12TexturePtr != IntPtr.Zero;
-                    // ========== YUV420P 数据提取（D3D9 GPU渲染，避免CPU BGR24转换） ==========
-                    ExtractYuv420PFrame(displayFrame, _videoWidth, _videoHeight);
-
-                    // 释放转换后的软件帧
-                    if (needFreeFrame)
+                    else if (CurrentD3dModel == D3DMode.D3D9)
                     {
-                        ffmpeg.av_frame_free(&displayFrame);
+                        if (isHardwareFrame && _hwDeviceContext != IntPtr.Zero && frm->data[3] != null)
+                        {
+                            try
+                            {
+                                // 仅用于零拷贝标志（这里实际不使用零拷贝，因为我们要做转换）
+                                var _nv12TexturePtr = (IntPtr)frm->data[3];
+                                textureArrayIndex = (uint)(UIntPtr)frm->data[1];
+                                if (_nv12TexturePtr != IntPtr.Zero)
+                                {
+                                    canUseZeroCopy = true; // 标记为硬件帧，但下面走 CPU 转换
+                                }
+
+                                // ----- 1. 将硬件帧下载到 CPU（使用临时帧，不影响 frm） -----
+                                AVFrame* swFrame = null;
+                                if (frm->format == (int)AVPixelFormat.AV_PIX_FMT_DXVA2_VLD)
+                                {
+                                    swFrame = ffmpeg.av_frame_alloc();
+                                    if (swFrame == null) return;
+                                    if (ffmpeg.av_hwframe_transfer_data(swFrame, frm, 0) < 0)
+                                    {
+                                        ffmpeg.av_frame_free(&swFrame);
+                                        return;
+                                    }
+                                }
+                                else
+                                {
+                                    swFrame = ffmpeg.av_frame_clone(frm);
+                                    if (swFrame == null) return;
+                                }
+
+                                // ----- 2. 分配 BGRA 帧（RGB32） -----
+                                AVFrame* rgbFrame = ffmpeg.av_frame_alloc();
+                                rgbFrame->format = (int)AVPixelFormat.AV_PIX_FMT_BGRA;
+                                rgbFrame->width = swFrame->width;
+                                rgbFrame->height = swFrame->height;
+                                if (ffmpeg.av_frame_get_buffer(rgbFrame, 32) < 0)
+                                {
+                                    ffmpeg.av_frame_free(&rgbFrame);
+                                    ffmpeg.av_frame_free(&swFrame);
+                                    return;
+                                }
+
+                                // ----- 3. YUV → BGRA 转换 -----
+                                SwsContext* ctx = ffmpeg.sws_getContext(
+                                    swFrame->width, swFrame->height, (AVPixelFormat)swFrame->format,
+                                    rgbFrame->width, rgbFrame->height, AVPixelFormat.AV_PIX_FMT_BGRA,
+                                    2, null, null, null);
+                                if (ctx == null)
+                                {
+                                    ffmpeg.av_frame_free(&rgbFrame);
+                                    ffmpeg.av_frame_free(&swFrame);
+                                    return;
+                                }
+                                ffmpeg.sws_scale(ctx, swFrame->data, swFrame->linesize, 0, swFrame->height,
+                                                 rgbFrame->data, rgbFrame->linesize);
+                                ffmpeg.sws_freeContext(ctx);
+                                ffmpeg.av_frame_free(&swFrame); // 释放下载后的帧
+
+                                // ----- 4. 获取 D3D9 设备并确保资源已创建 -----
+                                IDirect3DDevice9Ex device = _d3d9Device;
+                                if (device == null)
+                                {
+                                    ffmpeg.av_frame_free(&rgbFrame);
+                                    return;
+                                }
+                                int width = rgbFrame->width; int height= rgbFrame->height;
+                                EnsureD3D9Resources(device, rgbFrame->width, rgbFrame->height);
+
+                                // ----- 5. 将 BGRA 数据写入系统内存表面 -----
+                                var rect = _systemMemorySurface.LockRect(LockFlags.None);
+                                try
+                                {
+                                    byte* dst = (byte*)rect.DataPointer;
+                                    byte* src = (byte*)rgbFrame->data[0];
+                                    int dstPitch = rect.Pitch;
+                                    int srcPitch = rgbFrame->linesize[0];
+                                    int bytesPerRow = rgbFrame->width * 4;
+                                    for (int y = 0; y < rgbFrame->height; y++)
+                                    {
+                                        Buffer.MemoryCopy(src + y * srcPitch, dst + y * dstPitch, bytesPerRow, bytesPerRow);
+                                    }
+                                }
+                                finally
+                                {
+                                    _systemMemorySurface.UnlockRect();
+                                }
+                                ffmpeg.av_frame_free(&rgbFrame);
+
+                                // ----- 6. 将数据从系统内存表面复制到渲染目标纹理 -----
+                                // UpdateSurface 要求尺寸相同，且源表面为 SystemMemory，目标为 Default
+                                using (var destSurface = _renderTargetTexture.GetSurfaceLevel(0))
+                                {
+                                    // 源矩形：整个源表面（从 (0,0) 到 (width, height)）
+                                    var sourceRect = new Vortice.Direct3D9.Rect(0, 0, width, height);
+                                    // 目标起始点：从目标表面的 (0,0) 开始
+                                    var destPoint = new Vortice.Mathematics.Int2(0, 0);
+
+                                    device.UpdateSurface(_systemMemorySurface, sourceRect, destSurface, destPoint);
+
+                                    nv12TexturePtr = destSurface.NativePointer;
+                                    canUseZeroCopy = true;
+                                }
+                                // canUseZeroCopy 已为 true，表示这是硬件帧（但实际经过转换）
+
+                            }
+                            catch (Exception ex)
+                            {
+                                DebugLogger.WriteLine($"[FFmpeg] D3D9硬件帧处理失败: {ex.Message}");
+                            }
+                        }
+                    }
+                    else if (CurrentD3dModel == D3DMode.D3D12)
+                    {
+ 
+                        if (isHardwareFrame && _hwDeviceContext != IntPtr.Zero && frm->data[0] != null)
+                        {
+                            try
+                            {
+                                // 仅用于零拷贝标志（这里实际不使用零拷贝，因为我们要做转换）
+                                var d3d12Frame = (AVD3D12VAFrame*)frm->data[0];
+
+                                // 2. 获取纹理指针（ID3D12Resource*）
+                                nv12TexturePtr = d3d12Frame->texture;
+                                textureArrayIndex = (uint)d3d12Frame->subresource_index; // 如果需要，可能用于创建视图
+                                DebugLogger.WriteLine($"[FFmpeg] textureArrayIndex: {textureArrayIndex}");
+
+                                isTextureArray = (d3d12Frame->flags & (uint)AVD3D12VAFrameFlags.TextureArray) != 0;
+                                // 保存 subresourceIndex 和 isTextureArray 到 frameToRender 中，以便在渲染时使用
+                               // DebugLogger.WriteLine($"[FFmpeg] isTextureArray= {isTextureArray}");
+
+                                if (nv12TexturePtr != IntPtr.Zero)
+                                {
+                                    canUseZeroCopy = true; // 标记为硬件帧，但下面走 CPU 转换
+                                }
+
+                            }
+                            catch (Exception ex)
+                            {
+                                DebugLogger.WriteLine($"[FFmpeg] D3D9硬件帧处理失败: {ex.Message}");
+                            }
+                        }
                     }
 
-                    ffmpeg.av_frame_unref(frm);
+                    // ========== 构造 FrameData 并安全入队 ==========
+                    FrameData frameData = new FrameData
+                    {
+                        Width = _videoWidth,
+                        Height = _videoHeight,
+                        VideoTimestamp = (long)_videoClock,
+                        AudioTimestamp = (long)_audioClock,
+                        AudioPlayPosition = _frameCount,
+                        IsHardwareFrame = canUseZeroCopy,
+                        NV12TexturePtr = nv12TexturePtr,
+                        TextureArrayIndex = textureArrayIndex,
+                        IsTextureArray = isTextureArray
+                     };
+
+                    if (canUseZeroCopy)
+                    {
+                        // 零拷贝路径：直接传递硬件纹理信息
+                        _frameCount++;
+                    }
+                    else
+                    {
+                        // ========== CPU回退路径 ==========
+                        AVFrame* displayFrame = null;
+                        bool needFreeFrame = false;
+
+                        if (isHardwareFrame && _hwDeviceContext != IntPtr.Zero)
+                        {
+                            // 硬件帧下载到CPU
+                            AVFrame* swFrame = ffmpeg.av_frame_alloc();
+                            if (swFrame != null)
+                            {
+                                int transferRet = ffmpeg.av_hwframe_transfer_data(swFrame, frm, 0);
+                                if (transferRet >= 0)
+                                {
+                                    swFrame->pts = frm->pts;
+                                    displayFrame = swFrame;
+                                    needFreeFrame = true;
+                                }
+                                else
+                                {
+                                    DebugLogger.WriteLine($"[FFmpeg] 硬件帧传输失败: {transferRet}");
+                                    ffmpeg.av_frame_free(&swFrame);
+                                }
+                            }
+                        }
+                        else
+                        {
+                            // 软件帧：直接引用并提取
+                            AVFrame* refFrame = ffmpeg.av_frame_alloc();
+                            if (refFrame != null)
+                            {
+                                if (ffmpeg.av_frame_ref(refFrame, frm) >= 0)
+                                {
+                                    displayFrame = refFrame;
+                                    needFreeFrame = true;
+                                }
+                                else
+                                {
+                                    ffmpeg.av_frame_free(&refFrame);
+                                }
+                            }
+                        }
+
+                        if (displayFrame != null)
+                        {
+                            // 提取 YUV420P 数据到 FrameData
+                            ExtractYuv420PFrameData(displayFrame, ref frameData);
+                            _frameCount++;
+                        }
+
+                        if (needFreeFrame && displayFrame != null)
+                        {
+                            ffmpeg.av_frame_free(&displayFrame);
+                        }
+                    }
+
+                    // ========== 统一释放原始帧（让解码器继续） ==========
+                    if (frm != null) ffmpeg.av_frame_unref(frm);
+
+                    // ========== 安全入队（阻塞等待，不丢帧） ==========
+                    if (frameData.YPlane != null || frameData.NV12TexturePtr != IntPtr.Zero) // 确保数据有效
+                    {
+                        int maxQueue = _decodeMode == DecodeMode.Hardware ? 30 : 6;
+                        // 等待队列有空位
+                        while (_displayQueue.Count >= maxQueue && !_decodeCts.IsCancellationRequested)
+                        {
+                            Thread.Sleep(5);
+                        }
+                        if (!_decodeCts.IsCancellationRequested)
+                        {
+                            _displayQueue.Add(frameData, _decodeCts.Token);
+                        }
+                    }
                 }
             }
             finally
-            { 
+            {
                 Marshal.FreeHGlobal((IntPtr)pkt.data);
+            }
+        }
+        // 在类中定义缓存资源
+        private Vortice.Direct3D9.IDirect3DSurface9 _systemMemorySurface;   // 用于 CPU 填充
+        private IDirect3DTexture9 _renderTargetTexture;    // 渲染目标纹理
+        private int _cachedWidth, _cachedHeight;
+        // 创建/重建资源的辅助方法
+        private void EnsureD3D9Resources(IDirect3DDevice9Ex device, int width, int height)
+        {
+            if (_cachedWidth == width && _cachedHeight == height && _renderTargetTexture != null)
+                return;
+
+            // 释放旧资源
+            _systemMemorySurface?.Dispose();
+            _renderTargetTexture?.Dispose();
+
+            // 1. 创建系统内存表面（用于 CPU 填充）
+            _systemMemorySurface = device.CreateOffscreenPlainSurface(
+                (uint)width, (uint)height,
+                Format.X8R8G8B8,
+                Pool.SystemMemory);
+
+            // 2. 创建渲染目标纹理（用于显示）
+            _renderTargetTexture = device.CreateTexture(
+                (uint)width, (uint)height, 1,
+                Usage.RenderTarget,
+                Format.X8R8G8B8,
+                Pool.Default);
+
+            _cachedWidth = width;
+            _cachedHeight = height;
+        }
+        int _currentSwsInputWidth, _currentSwsInputHeight, SWS_BILINEAR=2;
+        // 辅助方法：从 AVFrame 提取 YUV420P 并填充到 FrameData（需实现）
+        /// <summary>
+        /// 从 AVFrame 提取 YUV420P 数据并填充到 FrameData（自动格式转换、缩放）
+        /// </summary>
+        private unsafe void ExtractYuv420PFrameData(AVFrame* frame, ref FrameData frameData)
+        {
+            int targetWidth = frameData.Width;
+            int targetHeight = frameData.Height;
+
+            // 判断原始帧是否已经是标准的 YUV420P 格式
+            bool isYuv420P = frame->format == (int)AVPixelFormat.AV_PIX_FMT_YUV420P ||
+                             frame->format == (int)AVPixelFormat.AV_PIX_FMT_YUVJ420P;
+
+            AVFrame* srcFrame = frame;
+            AVFrame* tempFrame = null;
+            bool needFreeTemp = false;
+
+            try
+            {
+                // ---------- 1. 格式/尺寸转换（使用 sws_scale 到 YUV420P） ----------
+                if (!isYuv420P || frame->width != targetWidth || frame->height != targetHeight)
+                {
+                    // 重建 swsContext（仅在输入格式或尺寸变化时）
+                    if (_currentSwsInputFormat != frame->format ||
+                        _currentSwsInputWidth != frame->width ||
+                        _currentSwsInputHeight != frame->height)
+                    {
+                        if (_swsContext != IntPtr.Zero)
+                        {
+                            ffmpeg.sws_freeContext((SwsContext*)_swsContext);
+                            _swsContext = IntPtr.Zero;
+                        }
+
+                        _swsContext = (IntPtr)ffmpeg.sws_getContext(
+                            frame->width, frame->height, (AVPixelFormat)frame->format,
+                            targetWidth, targetHeight, AVPixelFormat.AV_PIX_FMT_YUV420P,
+                            SWS_BILINEAR, null, null, null);      // SWS_BILINEAR 性能优于默认的 Bicubic
+
+                        if (_swsContext == IntPtr.Zero)
+                        {
+                            DebugLogger.WriteLine($"[FFmpeg] sws_getContext 失败 (fmt:{frame->format} {frame->width}x{frame->height})");
+                            return;
+                        }
+                        _currentSwsInputFormat = frame->format;
+                        _currentSwsInputWidth = frame->width;
+                        _currentSwsInputHeight = frame->height;
+                        DebugLogger.WriteLine($"[FFmpeg] swsContext 重建: {frame->width}x{frame->height} {(AVPixelFormat)frame->format} -> {targetWidth}x{targetHeight} YUV420P");
+                    }
+
+                    // 分配临时帧
+                    tempFrame = ffmpeg.av_frame_alloc();
+                    if (tempFrame == null)
+                    {
+                        DebugLogger.WriteLine("[FFmpeg] av_frame_alloc 失败");
+                        return;
+                    }
+                    needFreeTemp = true;
+                    tempFrame->format = (int)AVPixelFormat.AV_PIX_FMT_YUV420P;
+                    tempFrame->width = targetWidth;
+                    tempFrame->height = targetHeight;
+                    if (ffmpeg.av_frame_get_buffer(tempFrame, 32) < 0)
+                    {
+                        DebugLogger.WriteLine("[FFmpeg] av_frame_get_buffer 失败");
+                        return;
+                    }
+
+                    int result = ffmpeg.sws_scale((SwsContext*)_swsContext,
+                        frame->data, frame->linesize,
+                        0, frame->height,
+                        tempFrame->data, tempFrame->linesize);
+
+                    if (result < 0 || result != targetHeight)
+                    {
+                        DebugLogger.WriteLine($"[FFmpeg] sws_scale 失败: {result}");
+                        ffmpeg.sws_freeContext((SwsContext*)_swsContext);
+                        _swsContext = IntPtr.Zero;
+                        return;
+                    }
+
+                    srcFrame = tempFrame;
+                }
+
+                // ---------- 2. 拷贝 YUV 平面到 FrameData（考虑 linesize） ----------
+                int ySize = targetWidth * targetHeight;
+                int uvSize = (targetWidth / 2) * (targetHeight / 2);
+
+                // 只在数组大小不符时重新分配（避免每帧分配）
+                if (frameData.YPlane == null || frameData.YPlane.Length != ySize)
+                    frameData.YPlane = new byte[ySize];
+                if (frameData.UPlane == null || frameData.UPlane.Length != uvSize)
+                    frameData.UPlane = new byte[uvSize];
+                if (frameData.VPlane == null || frameData.VPlane.Length != uvSize)
+                    frameData.VPlane = new byte[uvSize];
+
+                // 真实 linesize（可能大于宽度）
+                int yStride = srcFrame->linesize[0];
+                int uStride = srcFrame->linesize[1];
+                int vStride = srcFrame->linesize[2];
+
+                // 优化拷贝：如果 linesize == width 则直接整块复制，否则逐行拷贝
+                if (yStride == targetWidth)
+                {
+                    // 紧密排列，一次拷贝整个平面
+                    fixed (byte* yDest = frameData.YPlane)
+                    {
+                        Buffer.MemoryCopy(srcFrame->data[0], yDest, ySize, ySize);
+                    }
+                }
+                else
+                {
+                    // 存在行填充，逐行拷贝
+                    for (int row = 0; row < targetHeight; row++)
+                    {
+                        Marshal.Copy(
+                            IntPtr.Add((IntPtr)srcFrame->data[0], row * yStride),
+                            frameData.YPlane, row * targetWidth, targetWidth);
+                    }
+                }
+
+                if (uStride == targetWidth / 2)
+                {
+                    fixed (byte* uDest = frameData.UPlane, vDest = frameData.VPlane)
+                    {
+                        Buffer.MemoryCopy(srcFrame->data[1], uDest, uvSize, uvSize);
+                        Buffer.MemoryCopy(srcFrame->data[2], vDest, uvSize, uvSize);
+                    }
+                }
+                else
+                {
+                    for (int row = 0; row < targetHeight / 2; row++)
+                    {
+                        Marshal.Copy(
+                            IntPtr.Add((IntPtr)srcFrame->data[1], row * uStride),
+                            frameData.UPlane, row * (targetWidth / 2), targetWidth / 2);
+                        Marshal.Copy(
+                            IntPtr.Add((IntPtr)srcFrame->data[2], row * vStride),
+                            frameData.VPlane, row * (targetWidth / 2), targetWidth / 2);
+                    }
+                }
+
+                // 记录实际步幅（对于紧密排列，设为宽度；也可保留 linesize，但后续处理往往用宽度）
+                frameData.YStride = targetWidth;
+                frameData.UStride = targetWidth / 2;
+                frameData.VStride = targetWidth / 2;
+            }
+            finally
+            {
+                if (needFreeTemp && tempFrame != null)
+                    ffmpeg.av_frame_free(&tempFrame);
+            }
+        }
+        /// <summary>
+        /// 调试：将硬件帧保存为 BMP 图片（用于定位解码问题）
+        /// </summary>
+        private unsafe void SaveHardwareFrameAsBmp(AVFrame* hwFrame, int width, int height, string fileName)
+        {
+            if (hwFrame == null || _hwDeviceContext == IntPtr.Zero)
+            {
+                DebugLogger.WriteLine($"[FFmpeg] 保存硬件帧失败: hwFrame={hwFrame == null}, hwDeviceContext={_hwDeviceContext == IntPtr.Zero}");
+                return;
+            }
+
+            try
+            {
+                // 将硬件帧下载到CPU
+                AVFrame* swFrame = ffmpeg.av_frame_alloc();
+                if (swFrame == null)
+                {
+                    DebugLogger.WriteLine($"[FFmpeg] 保存硬件帧失败: 无法分配软件帧");
+                    return;
+                }
+
+                DebugLogger.WriteLine($"[FFmpeg] 开始下载硬件帧: hwFrame->format={hwFrame->format}, width={hwFrame->width}, height={hwFrame->height}");
+                DebugLogger.WriteLine($"[FFmpeg] 硬件帧详情: data[0]=0x{(IntPtr)hwFrame->data[0]:X8}, data[1]=0x{(IntPtr)hwFrame->data[1]:X8}, data[2]=0x{(IntPtr)hwFrame->data[2]:X8}");
+                DebugLogger.WriteLine($"[FFmpeg] 硬件帧linesize: linesize[0]={hwFrame->linesize[0]}, linesize[1]={hwFrame->linesize[1]}, linesize[2]={hwFrame->linesize[2]}");
+                
+                int transferRet = ffmpeg.av_hwframe_transfer_data(swFrame, hwFrame, 0);
+                if (transferRet >= 0)
+                {
+                    DebugLogger.WriteLine($"[FFmpeg] 硬件帧下载成功: swFrame->format={swFrame->format}, data[0]=0x{(IntPtr)swFrame->data[0]:X8}, linesize[0]={swFrame->linesize[0]}");
+                    
+                    // 检查帧数据是否有效（采样几个像素点）
+                    if (swFrame->data[0] != null)
+                    {
+                        // 检查Y平面（前10个像素）
+                        byte* yData = swFrame->data[0];
+                        int ySum = 0;
+                        for (int i = 0; i < Math.Min(100, width * height); i++)
+                        {
+                            ySum += yData[i];
+                        }
+                        DebugLogger.WriteLine($"[FFmpeg] Y平面采样: 前100像素平均值={ySum / 100.0:F2}");
+                        
+                        // 检查UV平面
+                        if (swFrame->data[1] != null)
+                        {
+                            byte* uData = swFrame->data[1];
+                            int uSum = 0;
+                            for (int i = 0; i < Math.Min(50, width * height / 4); i++)
+                            {
+                                uSum += uData[i];
+                            }
+                            DebugLogger.WriteLine($"[FFmpeg] U平面采样: 前50像素平均值={uSum / 50.0:F2}");
+                        }
+                    }
+                    
+                    // 使用 swscale 转换到 RGB
+                    SaveFrameToBmpViaSwscale(swFrame, width, height, fileName);
+                    DebugLogger.WriteLine($"[FFmpeg] 硬件帧保存成功: {fileName}");
+                }
+                else
+                {
+                    DebugLogger.WriteLine($"[FFmpeg] 硬件帧下载失败: {transferRet}");
+                }
+                ffmpeg.av_frame_free(&swFrame);
+            }
+            catch (Exception ex)
+            {
+                DebugLogger.WriteLine($"[FFmpeg] 保存硬件帧失败: {ex.Message}");
             }
         }
 
         /// <summary>
-        /// 从 AVFrame 提取 YUV420P 平面数据，入队到显示队列
+        /// 调试：使用 swscale 将帧转换为 BMP（更安全的方式）
         /// </summary>
-        private unsafe void ExtractYuv420PFrame(AVFrame* frame, int targetWidth, int targetHeight)
+        private unsafe void SaveFrameToBmpViaSwscale(AVFrame* frame, int width, int height, string fileName)
         {
-            bool isYuv420P = frame->format == (int)AVPixelFormat.AV_PIX_FMT_YUV420P ||
-                             frame->format == (int)AVPixelFormat.AV_PIX_FMT_YUVJ420P;
-
-            // 如果格式不是 YUV420P，使用 sws_scale 转换
-            if (!isYuv420P || frame->width != targetWidth || frame->height != targetHeight)
+            try
             {
-                // 动态重建 swsContext（输出 YUV420P）
-                if (_currentSwsInputFormat != frame->format || _swsContext == IntPtr.Zero)
+                // 确保目录存在
+                string debugDir = Path.Combine(AppContext.BaseDirectory, "debug_frames");
+                Directory.CreateDirectory(debugDir);
+                string filePath = Path.Combine(debugDir, fileName);
+
+                DebugLogger.WriteLine($"[FFmpeg] SaveFrameToBmpViaSwscale: input format={frame->format}, width={width}, height={height}");
+                DebugLogger.WriteLine($"[FFmpeg] 帧颜色信息: color_range={frame->color_range}, color_primaries={frame->color_primaries}, color_trc={frame->color_trc}");
+                DebugLogger.WriteLine($"[FFmpeg] 帧数据指针: data[0]=0x{(IntPtr)frame->data[0]:X8}, data[1]=0x{(IntPtr)frame->data[1]:X8}");
+                DebugLogger.WriteLine($"[FFmpeg] 帧linesize: linesize[0]={frame->linesize[0]}, linesize[1]={frame->linesize[1]}");
+                
+                // 检查Y平面数据
+                if (frame->data[0] != null)
                 {
-                    if (_swsContext != IntPtr.Zero)
+                    byte* yData = frame->data[0];
+                    int yMin = 255, yMax = 0, ySum = 0;
+                    for (int i = 0; i < Math.Min(1000, frame->width * frame->height); i++)
                     {
-                        ffmpeg.sws_freeContext((SwsContext*)_swsContext);
+                        byte val = yData[i];
+                        if (val < yMin) yMin = val;
+                        if (val > yMax) yMax = val;
+                        ySum += val;
                     }
-                    _swsContext = (IntPtr)ffmpeg.sws_getContext(
-                        frame->width, frame->height, (AVPixelFormat)frame->format,
-                        targetWidth, targetHeight, AVPixelFormat.AV_PIX_FMT_YUV420P,
-                        1, null, null, null);
-                    _currentSwsInputFormat = frame->format;
+                    DebugLogger.WriteLine($"[FFmpeg] Y平面: min={yMin}, max={yMax}, avg={ySum / 1000.0:F2}");
+                }
+                
+                // 检查U/V平面数据
+                if (frame->data[1] != null)
+                {
+                    byte* uData = frame->data[1];
+                    int uMin = 255, uMax = 0, uSum = 0;
+                    for (int i = 0; i < Math.Min(500, frame->width * frame->height / 4); i++)
+                    {
+                        byte val = uData[i];
+                        if (val < uMin) uMin = val;
+                        if (val > uMax) uMax = val;
+                        uSum += val;
+                    }
+                    DebugLogger.WriteLine($"[FFmpeg] U平面: min={uMin}, max={uMax}, avg={uSum / 500.0:F2}");
                 }
 
-                if (_swsContext != IntPtr.Zero)
+                // 使用 swscale 转换到 BGR24
+                AVFrame* rgbFrame = ffmpeg.av_frame_alloc();
+                if (rgbFrame == null)
                 {
-                    var sws = (SwsContext*)_swsContext;
+                    DebugLogger.WriteLine("[FFmpeg] SaveFrameToBmpViaSwscale: 无法分配RGB帧");
+                    return;
+                }
 
-                    // 分配目标 YUV420P 帧
-                    AVFrame* yuvFrame = ffmpeg.av_frame_alloc();
-                    yuvFrame->format = (int)AVPixelFormat.AV_PIX_FMT_YUV420P;
-                    yuvFrame->width = targetWidth;
-                    yuvFrame->height = targetHeight;
-                    ffmpeg.av_frame_get_buffer(yuvFrame, 32);
+                rgbFrame->format = (int)AVPixelFormat.AV_PIX_FMT_BGR24;
+                rgbFrame->width = width;
+                rgbFrame->height = height;
+                int ret = ffmpeg.av_frame_get_buffer(rgbFrame, 1);
+                if (ret < 0)
+                {
+                    DebugLogger.WriteLine($"[FFmpeg] SaveFrameToBmpViaSwscale: av_frame_get_buffer失败: {ret}");
+                    ffmpeg.av_frame_free(&rgbFrame);
+                    return;
+                }
 
-                    ffmpeg.sws_scale(sws,
-                        frame->data, frame->linesize,
-                        0, frame->height,
-                        yuvFrame->data, yuvFrame->linesize);
+                // 使用 swscale 转换到 BGR24，设置正确的颜色空间参数
+                // 对于NV12格式，需要设置源和目标的颜色范围
+                int srcRange = (frame->color_range == AVColorRange.AVCOL_RANGE_JPEG) ? 1 : 0; // JPEG范围=full range
+                int dstRange = 1; // 输出使用full range (0-255)
+                
+                var sws = ffmpeg.sws_getContext(
+                    frame->width, frame->height, (AVPixelFormat)frame->format,
+                    width, height, AVPixelFormat.AV_PIX_FMT_BGR24,
+                    1, null, null, null);
+                
+                DebugLogger.WriteLine($"[FFmpeg] swscale颜色空间: srcRange={srcRange}, dstRange={dstRange}, color_range={frame->color_range}");
 
-                    CopyYuvPlanesToQueue(yuvFrame, targetWidth, targetHeight);
+                if (sws == null)
+                {
+                    DebugLogger.WriteLine("[FFmpeg] SaveFrameToBmpViaSwscale: sws_getContext失败");
+                    ffmpeg.av_frame_free(&rgbFrame);
+                    return;
+                }
 
-                    ffmpeg.av_frame_free(&yuvFrame);
+                DebugLogger.WriteLine($"[FFmpeg] swscale转换: frame->data[0]=0x{(IntPtr)frame->data[0]:X8}, rgbFrame->data[0]=0x{(IntPtr)rgbFrame->data[0]:X8}");
+                
+                ffmpeg.sws_scale(sws,
+                    frame->data, frame->linesize,
+                    0, frame->height,
+                    rgbFrame->data, rgbFrame->linesize);
+
+                ffmpeg.sws_freeContext(sws);
+
+                // 检查转换后的数据是否为空
+                if (rgbFrame->data[0] == null)
+                {
+                    DebugLogger.WriteLine("[FFmpeg] SaveFrameToBmpViaSwscale: 转换后RGB数据为空");
+                    ffmpeg.av_frame_free(&rgbFrame);
+                    return;
+                }
+
+                // 写入 BMP 文件
+                int rowSize = width * 3;
+                int padding = (4 - (rowSize % 4)) % 4;
+                int rgbSize = (rowSize + padding) * height;
+                
+                using (FileStream fs = new FileStream(filePath, FileMode.Create))
+                {
+                    BinaryWriter bw = new BinaryWriter(fs);
+
+                    // BMP 文件头 (14 bytes)
+                    bw.Write((byte)'B');
+                    bw.Write((byte)'M');
+                    bw.Write(54 + rgbSize);
+                    bw.Write((int)0);
+                    bw.Write((int)54);
+
+                    // BMP 信息头 (40 bytes)
+                    bw.Write(40);
+                    bw.Write(width);
+                    bw.Write(-height); // 负高度表示从上到下扫描
+                    bw.Write((short)1);
+                    bw.Write((short)24);
+                    bw.Write(0);
+                    bw.Write(rgbSize);
+                    bw.Write(0);
+                    bw.Write(0);
+                    bw.Write(0);
+                    bw.Write(0);
+
+                    // 写入 BGR 数据（BMP 格式本身就是 BGR 顺序，不需要转换）
+                    // 注意：swscale输出的帧是从顶部到底部的，与BMP格式一致
+                    for (int y = 0; y < height; y++)
+                    {
+                        IntPtr rowPtr = (IntPtr)rgbFrame->data[0] + y * rgbFrame->linesize[0];
+                        byte[] rowData = new byte[rowSize];
+                        Marshal.Copy(rowPtr, rowData, 0, rowSize);
+                        
+                        bw.Write(rowData);
+                        for (int p = 0; p < padding; p++)
+                            bw.Write((byte)0);
+                    }
+                }
+
+                DebugLogger.WriteLine($"[FFmpeg] 帧保存成功: {filePath}");
+                ffmpeg.av_frame_free(&rgbFrame);
+                DebugLogger.WriteLine($"[FFmpeg] 帧已保存: {filePath}");
+            }
+            catch (Exception ex)
+            {
+                DebugLogger.WriteLine($"[FFmpeg] 保存帧失败: {ex.Message}");
+            }
+        }
+
+        /// <summary>
+        /// 将视频有限范围颜色(16-235)转换为RGB全范围(0-255)
+        /// 视频格式通常使用有限范围，而BMP图片需要全范围
+        /// </summary>
+        private unsafe void AdjustColorRange(AVFrame* rgbFrame, int width, int height)
+        {
+            int rowSize = width * 3;
+            byte* dataPtr = (byte*)rgbFrame->data[0];
+            int linesize = rgbFrame->linesize[0];
+
+            for (int y = 0; y < height; y++)
+            {
+                byte* rowPtr = dataPtr + y * linesize;
+                for (int x = 0; x < rowSize; x++)
+                {
+                    // 视频有限范围: 16-235 -> RGB全范围: 0-255
+                    // 公式: output = ((input - 16) * 255) / 219
+                    byte value = rowPtr[x];
+                    if (value <= 16)
+                    {
+                        rowPtr[x] = 0;
+                    }
+                    else if (value >= 235)
+                    {
+                        rowPtr[x] = 255;
+                    }
+                    else
+                    {
+                        rowPtr[x] = (byte)(((value - 16) * 255) / 219);
+                    }
                 }
             }
-            else
+        }
+
+        /// <summary>
+        /// 调试：将 YUV420P 帧保存为 BMP 图片（用于定位解码问题）
+        /// </summary>
+        private unsafe void SaveFrameAsBmp(AVFrame* frame, int width, int height, string fileName)
+        {
+            try
             {
-                // 已经是 YUV420P，直接复制平面数据
-                CopyYuvPlanesToQueue(frame, targetWidth, targetHeight);
+                // 调试：检查帧数据
+                if (frame == null)
+                {
+                    DebugLogger.WriteLine($"[FFmpeg] SaveFrameAsBmp: frame is null");
+                    return;
+                }
+                if (frame->data[0] == null)
+                {
+                    DebugLogger.WriteLine($"[FFmpeg] SaveFrameAsBmp: frame->data[0] is null");
+                    return;
+                }
+                DebugLogger.WriteLine($"[FFmpeg] SaveFrameAsBmp: width={width}, height={height}, format={frame->format}, linesize[0]={frame->linesize[0]}, data[0]=0x{(IntPtr)frame->data[0]:X8}");
+
+                // 确保目录存在
+                string debugDir = Path.Combine(AppContext.BaseDirectory, "debug_frames");
+                Directory.CreateDirectory(debugDir);
+                string filePath = Path.Combine(debugDir, fileName);
+
+                // 使用 swscale 转换到 RGB24
+                AVFrame* rgbFrame = ffmpeg.av_frame_alloc();
+                if (rgbFrame == null)
+                {
+                    DebugLogger.WriteLine($"[FFmpeg] SaveFrameAsBmp: rgbFrame is null");
+                    return;
+                }
+
+                rgbFrame->format = (int)AVPixelFormat.AV_PIX_FMT_BGR24;
+                rgbFrame->width = width;
+                rgbFrame->height = height;
+                ffmpeg.av_frame_get_buffer(rgbFrame, 1);
+
+                var sws = ffmpeg.sws_getContext(
+                    frame->width, frame->height, (AVPixelFormat)frame->format,
+                    width, height, AVPixelFormat.AV_PIX_FMT_BGR24,
+                    1, null, null, null);
+
+                if (sws == null)
+                {
+                    DebugLogger.WriteLine($"[FFmpeg] SaveFrameAsBmp: sws_getContext failed");
+                    ffmpeg.av_frame_free(&rgbFrame);
+                    return;
+                }
+
+                ffmpeg.sws_scale(sws,
+                    frame->data, frame->linesize,
+                    0, frame->height,
+                    rgbFrame->data, rgbFrame->linesize);
+
+                // 调试：检查转换后的RGB数据（采样前100个像素）
+                byte* rgbData = (byte*)rgbFrame->data[0];
+                int rgbSum = 0;
+                for (int i = 0; i < Math.Min(100, width * height * 3); i++)
+                {
+                    rgbSum += rgbData[i];
+                }
+                DebugLogger.WriteLine($"[FFmpeg] SaveFrameAsBmp: RGB数据采样总和={rgbSum}, color_range={frame->color_range}");
+
+                // 手动调整颜色范围：将视频有限范围(16-235)转换为全范围(0-255)
+                // 这是因为视频通常使用有限范围，而BMP需要全范围
+                // 即使color_range未设置，也默认按有限范围处理（视频编码标准做法）
+                bool needsAdjustment = frame->color_range != AVColorRange.AVCOL_RANGE_JPEG;
+                DebugLogger.WriteLine($"[FFmpeg] SaveFrameAsBmp: 需要调整颜色范围={needsAdjustment}, color_range={frame->color_range}");
+                
+                // 对于软件解码，强制应用颜色范围调整（因为视频标准使用有限范围）
+                // 即使color_range是UNSPECIFIED，也按有限范围处理
+                if (needsAdjustment || _decodeMode == DecodeMode.Software)
+                {
+                    AdjustColorRange(rgbFrame, width, height);
+                    DebugLogger.WriteLine($"[FFmpeg] SaveFrameAsBmp: 已应用颜色范围调整");
+                }
+
+                DebugLogger.WriteLine($"[FFmpeg] SaveFrameAsBmp: swscale completed, rgbFrame->data[0]=0x{(IntPtr)rgbFrame->data[0]:X8}");
+
+                ffmpeg.sws_freeContext(sws);
+
+                // 写入 BMP 文件
+                int rgbSize = width * height * 3;
+                using (FileStream fs = new FileStream(filePath, FileMode.Create))
+                {
+                    BinaryWriter bw = new BinaryWriter(fs);
+
+                    // BMP 文件头 (14 bytes)
+                    bw.Write((byte)'B');
+                    bw.Write((byte)'M');
+                    bw.Write(54 + rgbSize);
+                    bw.Write((int)0);
+                    bw.Write((int)54);
+
+                    // BMP 信息头 (40 bytes)
+                    bw.Write(40);
+                    bw.Write(width);
+                    bw.Write(-height); // 负高度
+                    bw.Write((short)1);
+                    bw.Write((short)24);
+                    bw.Write(0);
+                    bw.Write(rgbSize);
+                    bw.Write(0);
+                    bw.Write(0);
+                    bw.Write(0);
+                    bw.Write(0);
+
+                    // 写入 BGR 数据（BMP 格式本身就是 BGR 顺序，不需要转换）
+                    int rowSize = width * 3;
+                    int padding = (4 - (rowSize % 4)) % 4;
+
+                    for (int y = 0; y < height; y++)
+                    {
+                        IntPtr rowPtr = (IntPtr)rgbFrame->data[0] + y * rgbFrame->linesize[0];
+                        byte[] rowData = new byte[rowSize];
+                        Marshal.Copy(rowPtr, rowData, 0, rowSize);
+                        
+                        bw.Write(rowData);
+                        for (int p = 0; p < padding; p++)
+                            bw.Write((byte)0);
+                    }
+                }
+
+                ffmpeg.av_frame_free(&rgbFrame);
+                DebugLogger.WriteLine($"[FFmpeg] 帧已保存: {filePath}");
+            }
+            catch (Exception ex)
+            {
+                DebugLogger.WriteLine($"[FFmpeg] 保存帧失败: {ex.Message}");
+            }
+        }
+
+        /// <summary>
+        /// 将 YUV 有限范围(16-235)转换为全范围(0-255)
+        /// 视频编码标准使用有限范围，而渲染需要全范围
+        /// </summary>
+        private void AdjustYuvColorRange(byte[] yPlane, byte[] uPlane, byte[] vPlane)
+        {
+            // 调整 Y 平面 (亮度)
+            for (int i = 0; i < yPlane.Length; i++)
+            {
+                byte value = yPlane[i];
+                if (value <= 16)
+                    yPlane[i] = 0;
+                else if (value >= 235)
+                    yPlane[i] = 255;
+                else
+                    yPlane[i] = (byte)(((value - 16) * 255) / 219);
+            }
+
+            // 调整 U 平面 (色度)
+            for (int i = 0; i < uPlane.Length; i++)
+            {
+                byte value = uPlane[i];
+                if (value <= 16)
+                    uPlane[i] = 0;
+                else if (value >= 240)
+                    uPlane[i] = 255;
+                else
+                    uPlane[i] = (byte)(((value - 16) * 255) / 224);
+            }
+
+            // 调整 V 平面 (色度)
+            for (int i = 0; i < vPlane.Length; i++)
+            {
+                byte value = vPlane[i];
+                if (value <= 16)
+                    vPlane[i] = 0;
+                else if (value >= 240)
+                    vPlane[i] = 255;
+                else
+                    vPlane[i] = (byte)(((value - 16) * 255) / 224);
             }
         }
 
@@ -3747,7 +4499,12 @@ namespace MovieAgent.FFmpegDecoder
         /// </summary>
         private unsafe void CopyYuvPlanesToQueue(AVFrame* frame, int width, int height)
         {
+            // 在 avcodec_receive_frame 成功后
             int ySize = frame->linesize[0] * height;
+            int uvSize = frame->linesize[1] * (height / 2);
+            
+
+
             int uvHeight = height / 2;
             int uSize = frame->linesize[1] * uvHeight;
             int vSize = frame->linesize[2] * uvHeight;
@@ -3766,13 +4523,13 @@ namespace MovieAgent.FFmpegDecoder
                 NV12TexturePtr = _currentNV12TexturePtr,
                 TextureArrayIndex = _currentTextureArrayIndex
             };
-
+          //  DebugLogger.WriteLine($"原始 Y 数据指针: 0x{(IntPtr)frame->data[0]:X8}, linesize: {frame->linesize[0]}, height: {frame->height}, ySize: {ySize}");
             // 复制 Y 平面
             if (frame->data[0] != null && ySize > 0)
             {
                 frameData.YPlane = new byte[ySize];
-                Marshal.Copy((IntPtr)frame->data[0], frameData.YPlane, 0, ySize);
-            }
+                Marshal.Copy((IntPtr)frame->data[0], frameData.YPlane, 0, ySize); 
+            } 
 
             // 复制 U 平面
             if (frame->data[1] != null && uSize > 0)
@@ -3787,13 +4544,83 @@ namespace MovieAgent.FFmpegDecoder
                 frameData.VPlane = new byte[vSize];
                 Marshal.Copy((IntPtr)frame->data[2], frameData.VPlane, 0, vSize);
             }
-
-            if (_displayQueue.Count >= 5)
+            // 复制完成后，强制填充为红色（仅用于测试）
+            //if (frameData.YPlane != null && frameData.UPlane != null && frameData.VPlane != null)
+            //{
+            //    // 填充 Y 平面为 82
+            //    for (int i = 0; i < frameData.YPlane.Length; i++)
+            //        frameData.YPlane[i] = 82;
+            //    // 填充 U 平面为 90
+            //    for (int i = 0; i < frameData.UPlane.Length; i++)
+            //        frameData.UPlane[i] = 90;
+            //    // 填充 V 平面为 240
+            //    for (int i = 0; i < frameData.VPlane.Length; i++)
+            //        frameData.VPlane[i] = 240;
+            //}
+            // ========== 颜色范围调整 ==========
+            // 软件解码输出的是有限范围(16-235)YUV数据，需要转换为全范围(0-255)
+            // 否则渲染时画面会偏暗，看起来像黑色背景
+            if (_decodeMode == DecodeMode.Software && frameData.YPlane != null && frameData.UPlane != null && frameData.VPlane != null)
+            {
+                DebugLogger.WriteLine($"[FFmpeg] CopyYuvPlanesToQueue: 准备应用YUV颜色范围调整, _decodeMode={_decodeMode}");
+                DebugLogger.WriteLine($"[FFmpeg] CopyYuvPlanesToQueue: YPlane长度={frameData.YPlane.Length}, UPlane={frameData.UPlane.Length}, VPlane={frameData.VPlane.Length}");
+                
+                // 采样检查调整前的数据
+                if (frameData.YPlane.Length > 0)
+                {
+                    DebugLogger.WriteLine($"[FFmpeg] CopyYuvPlanesToQueue: 调整前 - Y[0]={frameData.YPlane[0]}, Y[100]={frameData.YPlane[Math.Min(100, frameData.YPlane.Length-1)]}");
+                }
+                
+              //  AdjustYuvColorRange(frameData.YPlane, frameData.UPlane, frameData.VPlane);
+                
+                // 采样检查调整后的数据
+                if (frameData.YPlane.Length > 0)
+                {
+                    DebugLogger.WriteLine($"[FFmpeg] CopyYuvPlanesToQueue: 调整后 - Y[0]={frameData.YPlane[0]}, Y[100]={frameData.YPlane[Math.Min(100, frameData.YPlane.Length-1)]}");
+                }
+                
+                DebugLogger.WriteLine($"[FFmpeg] CopyYuvPlanesToQueue: 已应用YUV颜色范围调整 (有限范围->全范围)");
+            }
+            else
+            {
+                DebugLogger.WriteLine($"[FFmpeg] CopyYuvPlanesToQueue: 跳过颜色范围调整, _decodeMode={_decodeMode}, YPlane={frameData.YPlane != null}, UPlane={frameData.UPlane != null}, VPlane={frameData.VPlane != null}");
+            }
+            if (_displayQueue == null) { return; };
+            if (_displayQueue.Count >= 3)
             {
                 _displayQueue.TryTake(out _);
             }
             _frameCount++;
+            if (_frameCount == 10)
+            {
+                // SaveFrameAsBmp(frame, width, height, $"decoded_frame_10_3.bmp"); 
+                //string yuvPath = "raw_frame_10.yuv";
+                //using var fs = new FileStream(yuvPath, FileMode.Create);
+                //fs.Write(frameData.YPlane, 0, frameData.YPlane.Length);
+                //fs.Write(frameData.UPlane, 0, frameData.UPlane.Length);
+                //fs.Write(frameData.VPlane, 0, frameData.VPlane.Length);
+                //DebugLogger.WriteLine($"保存原始 YUV 到 {yuvPath}");
 
+                //// 读取第一个像素验证
+                //if (frame->data[0] != null)
+                //{
+                //    byte firstPixel = Marshal.ReadByte((IntPtr)frame->data[0]);
+                //    DebugLogger.WriteLine($"第一个像素 Y 值: {firstPixel}");
+                //}
+                //// 在 CopyYuvPlanesToQueue 方法内，复制完数据后立即检查
+                //if (frameData.YPlane != null && frameData.YPlane.Length > 0)
+                //{
+                //    // 打印第一个和中心像素
+                //    int centerY = (height / 2) * width + (width / 2);
+                //    DebugLogger.WriteLine($"复制后 Y 平面第一个像素: {frameData.YPlane[0]}, 中心像素: {frameData.YPlane[centerY]}");
+
+                  
+                //        string debugPath = $"debug_y_{_frameCount}.bin";
+                //        File.WriteAllBytes(debugPath, frameData.YPlane);
+                //        DebugLogger.WriteLine($"已保存 Y 平面数据到 {debugPath}，大小: {frameData.YPlane.Length}");
+                    
+                //}
+            }
             _displayQueue.TryAdd(frameData, 10, _decodeCts?.Token ?? CancellationToken.None);
         }
         private unsafe bool IsFrameDataValid(AVFrame* frame)
@@ -4078,7 +4905,7 @@ namespace MovieAgent.FFmpegDecoder
                 _currentIsHardwareFrame = nv12TexturePtr != IntPtr.Zero;
 
                 // ========== YUV420P 数据提取（D3D9 GPU渲染） ==========
-                ExtractYuv420PFrame(displayFrame, _videoWidth, _videoHeight);
+                //ExtractYuv420PFrame(displayFrame, _videoWidth, _videoHeight);
 
                 // ========== 更新当前时间 ==========
                 if (displayFrame->pts != ffmpeg.AV_NOPTS_VALUE)
@@ -4240,37 +5067,44 @@ namespace MovieAgent.FFmpegDecoder
         /// </summary>
         /// <returns>当前播放时间（秒）</returns>
         private double GetPlaybackClock()
-        {
+        { 
             lock (_clockLock)
             {
                 if (_isPaused) return _clockBase;
-
-                // ✅ 用系统时钟跟踪播放位置
-                if (!_isClockInitialized)
-                {
-                    _playbackStartTime = DateTime.Now;
-                    _playbackStartPosition = _audioClock / 1000.0;
-                    _isClockInitialized = true;
-                }
-
-                var elapsed = (DateTime.Now - _playbackStartTime).TotalSeconds;
-                var clock = _playbackStartPosition + elapsed;
-
-                // 定期校准（每 5 秒校准一次）
-                if ((DateTime.Now - _lastCalibrationTime).TotalSeconds > 5)
-                {
-                    var hardwarePos = GetHardwarePosition();
-                    if (hardwarePos > 0)
-                    {
-                        // 用硬件位置校准
-                        _playbackStartPosition = hardwarePos;
-                        _playbackStartTime = DateTime.Now;
-                        _lastCalibrationTime = DateTime.Now;
-                    }
-                }
-
-                return clock * _playbackSpeed;
+                double hardwarePos = GetHardwarePosition(); // 返回秒，需确保从 0 开始
+                return hardwarePos * _playbackSpeed;
             }
+        
+            //lock (_clockLock)
+            //{
+            //    if (_isPaused) return _clockBase;
+
+            //    // ✅ 用系统时钟跟踪播放位置
+            //    if (!_isClockInitialized)
+            //    {
+            //        _playbackStartTime = DateTime.Now;
+            //        _playbackStartPosition = _audioClock / 1000.0;
+            //        _isClockInitialized = true;
+            //    }
+
+            //    var elapsed = (DateTime.Now - _playbackStartTime).TotalSeconds;
+            //    var clock = _playbackStartPosition + elapsed;
+
+            //    // 定期校准（每 5 秒校准一次）
+            //    if ((DateTime.Now - _lastCalibrationTime).TotalSeconds > 5)
+            //    {
+            //        var hardwarePos = GetHardwarePosition();
+            //        if (hardwarePos > 0)
+            //        {
+            //            // 用硬件位置校准
+            //            _playbackStartPosition = hardwarePos;
+            //            _playbackStartTime = DateTime.Now;
+            //            _lastCalibrationTime = DateTime.Now;
+            //        }
+            //    }
+
+            //    return clock * _playbackSpeed;
+            //}
         }
 
         private double GetHardwarePosition()
@@ -4279,17 +5113,15 @@ namespace MovieAgent.FFmpegDecoder
             {
                 if (_audioOutput != null && _audioOutput.PlaybackState == PlaybackState.Playing)
                 {
-                    var position = _audioOutput.GetPosition();
-                    var bytesPerSecond = _audioBuffer.WaveFormat?.AverageBytesPerSecond ?? 0;
-                    if (bytesPerSecond > 0)
-                    {
-                        // ✅ 硬件位置，但也要减去缓冲延迟
-                        var hardwarePos = (double)position / bytesPerSecond;
+                    var position = _audioOutput.GetPosition();          // 已提交的总字节数
+                    var bytesPerSecond = _audioBuffer.WaveFormat?.AverageBytesPerSecond ?? 1;
+                    var submittedTime = (double)position / bytesPerSecond; // 总提交时长（包含缓冲）
 
-                        // 估算缓冲延迟（200ms）
-                        var bufferDelay = 0.2;
-                        return hardwarePos - bufferDelay;
-                    }
+                    // 动态获取当前缓冲区中未播放的时长
+                    double bufferDelay = _audioBuffer?.BufferedDuration.TotalSeconds ?? 0;
+
+                    // 实际硬件播放位置 = 提交时长 - 未播放缓冲时长
+                    return submittedTime - bufferDelay;
                 }
             }
             catch { }
@@ -4436,13 +5268,12 @@ namespace MovieAgent.FFmpegDecoder
             else if (format == (int)AVSampleFormat.AV_SAMPLE_FMT_FLTP)
             {
                 float** src = (float**)&aFrm->data;
+                // 预分配一次，所有采样点复用
+                float[] channelData = new float[channels];
                 for (int i = 0; i < samples; i++)
                 {
-                    float[] channelData = new float[channels];
                     for (int c = 0; c < channels; c++)
-                    {
                         channelData[c] = src[c][i];
-                    }
                     MixChannelsToStereo(channelData, channelLayout, out float left, out float right);
                     WriteSample(buffer, i, left * volumeFactor, right * volumeFactor);
                 }
@@ -4995,6 +5826,8 @@ namespace MovieAgent.FFmpegDecoder
         {
             try
             {
+                _systemMemorySurface?.Dispose();
+                _renderTargetTexture?.Dispose();
                 if (_videoFrame != IntPtr.Zero)
                 {
                     var frame = (AVFrame*)_videoFrame;
@@ -5230,101 +6063,145 @@ namespace MovieAgent.FFmpegDecoder
 
         public int CurrentAudioTrack => _audioStreamIndex;
         public int CurrentSubtitleTrack => _subtitleStreamIndex;
+        /// <summary>
+        /// 音频正在切换true 是 false 否
+        /// </summary>
+        private volatile bool _audioTrackSwitchInProgress;
 
-        public unsafe void SetAudioTrack(int index)
+        public unsafe void SetAudioTrack(int trackListIndex)
         {
-            if (index < 0 || index >= _audioTracks.Count)
+            // 1. 检查轨道列表有效性
+            if (_audioTracks == null || trackListIndex < 0 || trackListIndex >= _audioTracks.Count)
                 return;
-            
-            // 如果是当前轨道，不需要切换
-            if (index == _audioStreamIndex)
+
+            int newStreamIndex = _audioTracks[trackListIndex].Index; // 真实流索引
+            if (newStreamIndex == _audioStreamIndex)
                 return;
-            
-            DebugLogger.WriteLine($"[FFmpeg] Switching audio track from {_audioStreamIndex} to {index}");
-            
+
+            DebugLogger.WriteLine($"[FFmpeg] 切换音频轨道: {_audioStreamIndex} → {newStreamIndex}");
+
             var fmtCtx = (AVFormatContext*)_formatContext;
-            if (fmtCtx == null)
-                return;
-            
-            // 获取新轨道的流
-            AVStream* newStream = fmtCtx->streams[index];
+            if (fmtCtx == null) return;
+
+            AVStream* newStream = fmtCtx->streams[newStreamIndex];
             if (newStream == null)
             {
-                DebugLogger.WriteLine($"[FFmpeg] Failed to get stream {index}");
+                DebugLogger.WriteLine($"[FFmpeg] 获取流 {newStreamIndex} 失败");
                 return;
             }
-            
-            // 保存当前播放位置，切换后继续播放
-            long currentPosition = _currentTimeMs;
-            
-            // 1. 先清空旧的音频缓冲区（避免旧音频残留）
-            if (_audioBuffer != null)
+
+            // 2. 记录当前播放位置（毫秒），转为 Seek 所需单位（假设 Seek 接受秒）
+            long currentPosMs = _currentTimeMs;
+            double seekSeconds = currentPosMs / 1000.0;
+
+            // 3. 暂停音频输出并清空缓冲，避免旧数据残留
+            if (_audioOutput != null)
             {
-                _audioBuffer.ClearBuffer();
-                DebugLogger.WriteLine("[FFmpeg] Audio buffer cleared before track switch");
+                _audioOutput.Pause();   // NAudio 的暂停方法
+                _audioBuffer?.ClearBuffer();
+                DebugLogger.WriteLine("[FFmpeg] 音频输出已暂停，缓冲区已清空");
             }
-            
-            // 2. 清空音频包队列（丢弃旧轨道的包）
-            while (_audioPacketQueue.Reader.TryRead(out _)) { }
-            DebugLogger.WriteLine("[FFmpeg] Audio packet queue cleared");
-            
-            // 3. 释放旧的音频解码器（使用锁防止与解码线程竞争）
-            lock (_audioCodecLock)
+
+            // 4. 停止解码线程对音频资源的访问（使用轻量级切换锁）
+            _audioTrackSwitchInProgress = true;   // 需添加 volatile bool 字段
+            try
             {
-                if (_audioCodecContext != IntPtr.Zero)
+                // 等待解码线程完成当前包（如果正在解码音频包）
+                Thread.Sleep(50); // 简单等待，也可用更精细的同步
+
+                // 清空音频包队列（防止旧包被处理）
+                while (_audioPacketQueue.Reader.TryRead(out _)) { }
+                DebugLogger.WriteLine("[FFmpeg] 音频包队列已清空");
+
+                // 5. 释放旧的音频解码器与相关资源（加锁保护）
+                lock (_audioCodecLock)
                 {
-                    var oldCtx = (AVCodecContext*)_audioCodecContext;
-                    ffmpeg.avcodec_free_context(&oldCtx);
-                    _audioCodecContext = IntPtr.Zero;
-                    DebugLogger.WriteLine("[FFmpeg] Old audio codec context released");
+                    if (_audioCodecContext != IntPtr.Zero)
+                    {
+                        var oldCtx = (AVCodecContext*)_audioCodecContext;
+                        ffmpeg.avcodec_free_context(&oldCtx);
+                        _audioCodecContext = IntPtr.Zero;
+                    }
+                    if (_audioFrame != IntPtr.Zero)
+                    {
+                        var frame = (AVFrame*)_audioFrame;
+                        ffmpeg.av_frame_free(&frame);
+                        _audioFrame = IntPtr.Zero;
+                    }
+                    if (_swrContext != IntPtr.Zero)
+                    {
+                        var swr = (SwrContext*)_swrContext;
+                        ffmpeg.swr_free(&swr);
+                        _swrContext = IntPtr.Zero;
+                    }
+                    DebugLogger.WriteLine("[FFmpeg] 旧音频解码器已释放");
                 }
-                
-                if (_audioFrame != IntPtr.Zero)
+
+                // 6. 更新当前音频流索引
+                _audioStreamIndex = newStreamIndex;
+
+                // 7. 重新初始化解码器（你已有的方法）
+                InitializeAudioDecoder(newStream);
+
+                // 8. 重新配置音频输出设备（关键：根据新流参数重建）
+                // 假设你有 _audioBuffer 的 WaveFormat，需要更新
+                if (_audioOutput != null)
                 {
-                    var frame = (AVFrame*)_audioFrame;
-                    ffmpeg.av_frame_free(&frame);
-                    _audioFrame = IntPtr.Zero;
+                    // 获取新解码器的输出格式（一般来自解码器上下文）
+                    var newCodecCtx = (AVCodecContext*)_audioCodecContext;
+                    if (newCodecCtx != null)
+                    {
+                        int sampleRate = newCodecCtx->sample_rate;
+                        int channels = newCodecCtx->ch_layout.nb_channels;
+                        // 根据你的音频输出库（如 NAudio）创建新的 WaveFormat
+                        // 示例：_audioBuffer = new BufferedWaveProvider(new WaveFormat(sampleRate, 16, channels));
+                        // 这里需要根据你的实际初始化逻辑编写，例如调用已有的 ConfigureAudioOutput 或直接赋值
+                        // 暂时示意：
+                        // _audioBuffer = new BufferedWaveProvider(WaveFormat.CreateCustomFormat(...));
+                        // _audioOutput.Init(_audioBuffer);
+                        // 由于没有具体方法，你可以提取自己原有启动音频输出的代码块放在这里
+                        DebugLogger.WriteLine("[FFmpeg] 需在此处重新初始化音频输出设备（根据新采样率/声道）");
+                        // **** 重要 **** 你必须根据自己项目中的音频输出初始化逻辑来填写这一段
+                        // 停止并释放旧设备
+                        _audioOutput.Stop();
+                        _audioOutput.Dispose();
+                        _audioBuffer = null;
+
+                        // 根据新解码上下文创建新的音频提供者
+                        var codecCtx = (AVCodecContext*)_audioCodecContext;
+                        if (codecCtx != null)
+                        {
+                            var waveFormat = new WaveFormat(codecCtx->sample_rate, 16, codecCtx->ch_layout.nb_channels);
+                            _audioBuffer = new BufferedWaveProvider(waveFormat);
+                            _audioBuffer.DiscardOnBufferOverflow = true;
+
+                            _audioOutput = new WaveOutEvent();  // 或你使用的输出类型
+                            _audioOutput.Init(_audioBuffer);
+                            _audioOutput.Play();
+                        }
+                    }
                 }
-                
-                // 释放旧的重采样器
-                if (_swrContext != IntPtr.Zero)
+
+                // 9. Seek 到切换前的位置（确保 Seek 方法接受 double 秒）
+                if (seekSeconds > 0)
                 {
-                    var swr = (SwrContext*)_swrContext;
-                    ffmpeg.swr_free(&swr);
-                    _swrContext = IntPtr.Zero;
-                    DebugLogger.WriteLine("[FFmpeg] Old resampler released");
+                    Seek(seekSeconds);   // 假设 Seek 签名：public void Seek(double seconds)
                 }
-            }
-            
-            // 4. 更新轨道索引
-            _audioStreamIndex = index;
-            
-            // 5. 使用新轨道重新初始化音频解码器
-            InitializeAudioDecoder(newStream);
-            
-            // 6. Seek到当前位置，让新轨道从当前位置开始解码
-            if (currentPosition > 0)
-            {
-                Seek(currentPosition);
-            }
-            
-            // 7. 确保音频输出保持运行
-            if (_audioOutput != null && _audioOutput.PlaybackState != PlaybackState.Playing)
-            {
-                try
+
+                // 10. 恢复音频播放
+                if (_audioOutput != null)
                 {
                     _audioOutput.Play();
-                    DebugLogger.WriteLine("[FFmpeg] Audio playback resumed after track switch");
-                }
-                catch (Exception ex)
-                {
-                    DebugLogger.WriteLine($"[FFmpeg] Failed to resume audio playback: {ex.Message}");
+                    DebugLogger.WriteLine("[FFmpeg] 音频播放已恢复");
                 }
             }
-            
-            DebugLogger.WriteLine($"[FFmpeg] Audio track switched to {index} successfully");
-        }
+            finally
+            {
+                _audioTrackSwitchInProgress = false;   // 允许解码线程继续工作
+            }
 
+            DebugLogger.WriteLine($"[FFmpeg] 音频轨道切换成功");
+        }
         public unsafe void SetSubtitleTrack(int index)
         {
             // -1 表示关闭字幕
@@ -6181,6 +7058,7 @@ namespace MovieAgent.FFmpegDecoder
         /// NV12 纹理数组索引 (D3D11VA 纹理数组中的索引)
         /// </summary>
         public uint TextureArrayIndex { get; set; }
+        public bool IsTextureArray { get; set; }
     }
 
     /// <summary>
@@ -6390,6 +7268,49 @@ namespace MovieAgent.FFmpegDecoder
         /// 轨道描述信息
         /// </summary>
         public string? Description { get; set; }
+    }
+    public enum VideoScaleMode
+    {
+        Fit,
+        Stretch,
+        Zoom
+    }
+    /// <summary>
+    /// 对应 FFmpeg 的 AVD3D12VADeviceContext
+    /// 用于设置 AVHWDeviceContext.hwctx
+    /// </summary>
+    [StructLayout(LayoutKind.Sequential)]
+    public struct AVD3D12VADeviceContext
+    {
+        public IntPtr device;          // ID3D12Device*
+        public IntPtr video_device;    // ID3D12VideoDevice*（可留空，由 FFmpeg 自动填充）
+        public IntPtr @lock;           // 函数指针，可留空
+        public IntPtr unlock;          // 函数指针，可留空
+        public IntPtr lock_ctx;        // 上下文指针，可留空
+        public uint resource_flags;    // D3D12_RESOURCE_FLAGS，默认为 0
+        public uint heap_flags;        // D3D12_HEAP_FLAGS，默认为 0
+    }
+    [StructLayout(LayoutKind.Sequential)]
+    public struct AVD3D12VASyncContext
+    {
+        public IntPtr fence;      // ID3D12Fence*
+        public IntPtr @event;     // HANDLE
+        public ulong fence_value;
+    }
+
+    [StructLayout(LayoutKind.Sequential)]
+    public struct AVD3D12VAFrame
+    {
+        public IntPtr texture;                // ID3D12Resource*
+        public int subresource_index;         // int
+        public AVD3D12VASyncContext sync_ctx; // 内嵌结构体
+        public uint flags;                    // AVD3D12VAFrameFlags (枚举)
+    }
+
+    public enum AVD3D12VAFrameFlags : uint
+    {
+        None = 0,
+        TextureArray = 1 << 1,
     }
 
     /// <summary>

@@ -639,32 +639,32 @@ else
             {
                 if (string.IsNullOrEmpty(_movie.PosterPath))
                 {
-                    var doubanInfo = await DoubanService.SearchMovieAsync(_movie.Title, _movie.ReleaseYear);
-                    if (doubanInfo != null)
-                    {
-                        if (!string.IsNullOrEmpty(doubanInfo.Poster))
-                            _movie.PosterPath = doubanInfo.Poster;
-                        if (doubanInfo.Rating.HasValue)
-                            _movie.Rating = doubanInfo.Rating.Value;
-                        if (!string.IsNullOrEmpty(doubanInfo.Director))
-                            _movie.Director = doubanInfo.Director;
-                        if (!string.IsNullOrEmpty(doubanInfo.Genres))
-                            _movie.Genres = doubanInfo.Genres;
-                        if (!string.IsNullOrEmpty(doubanInfo.Country))
-                            _movie.Country = doubanInfo.Country;
-                        if (!string.IsNullOrEmpty(doubanInfo.Language))
-                            _movie.Language = doubanInfo.Language;
-                        if (!string.IsNullOrEmpty(doubanInfo.Summary))
-                            _movie.Overview = doubanInfo.Summary;
+                    // var doubanInfo = await DoubanService.SearchMovieAsync(_movie.Title, _movie.ReleaseYear);
+                    // if (doubanInfo != null)
+                    // {
+                    //     if (!string.IsNullOrEmpty(doubanInfo.Poster))
+                    //         _movie.PosterPath = doubanInfo.Poster;
+                    //     if (doubanInfo.Rating.HasValue)
+                    //         _movie.Rating = doubanInfo.Rating.Value;
+                    //     if (!string.IsNullOrEmpty(doubanInfo.Director))
+                    //         _movie.Director = doubanInfo.Director;
+                    //     if (!string.IsNullOrEmpty(doubanInfo.Genres))
+                    //         _movie.Genres = doubanInfo.Genres;
+                    //     if (!string.IsNullOrEmpty(doubanInfo.Country))
+                    //         _movie.Country = doubanInfo.Country;
+                    //     if (!string.IsNullOrEmpty(doubanInfo.Language))
+                    //         _movie.Language = doubanInfo.Language;
+                    //     if (!string.IsNullOrEmpty(doubanInfo.Summary))
+                    //         _movie.Overview = doubanInfo.Summary;
 
-                        await MovieRepo.UpdateAsync(_movie);
-                    }
-                    else
-                    {
-                        await MovieRepo.UpdatePosterFromDirectoryAsync(_movie);
-                        await MovieRepo.UpdateMediaInfoFromDirectoryAsync(_movie);
-                        _movie = await MovieRepo.GetByIdAsync(movieId);
-                    }
+                    //     await MovieRepo.UpdateAsync(_movie);
+                    // }
+                    // else
+                    // {
+                    //     await MovieRepo.UpdatePosterFromDirectoryAsync(_movie);
+                    //     await MovieRepo.UpdateMediaInfoFromDirectoryAsync(_movie);
+                    //     _movie = await MovieRepo.GetByIdAsync(movieId);
+                    // }
                 }
 
                 var videoPaths = await MovieRepo.GetMovieVideoPathsAsync(movieId);
@@ -681,6 +681,7 @@ else
 
     private void PlayVideo(string filePath)
     {
+       
         PlayerService.RequestPlayback(filePath);
         PlayerService.ToggleFullscreen();
     }

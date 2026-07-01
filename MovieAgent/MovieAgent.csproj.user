@@ -6,4 +6,12 @@
   <PropertyGroup>
     <ActiveDebugProfile>MovieAgent</ActiveDebugProfile>
   </PropertyGroup>
+  <ItemGroup>
+    <Compile Update="Controls\Window\D3D12Window\ControlWindow.xaml.cs">
+      <SubType>Code</SubType>
+    </Compile>
+    <Compile Update="Controls\Window\D3D12Window\VideoWindow.xaml.cs">
+      <SubType>Code</SubType>
+    </Compile>
+  </ItemGroup>
 </Project>

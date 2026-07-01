@@ -64,19 +64,18 @@ namespace MovieAgent.FFmpegDecoder
             }
             //获取显卡信息
             
-            FFmpegDecoderEngine decoder = new FFmpegDecoderEngine(DecodeMode.Auto);  
-            DebugLogger.WriteLine($"[Initialize FFmpegDecoder Main DecodeMode:] {decoder.CurrentDecodeMode}");
-            var ipcServer = new DecoderIpcServer(pipeName, decoder);
+           //  DebugLogger.WriteLine($"[Initialize FFmpegDecoder Main DecodeMode:] {decoder.CurrentDecodeMode}");
+            //var ipcServer = new DecoderIpcServer(pipeName, decoder);
 
-            try
-            {
-                await ipcServer.RunAsync();
-            }
-            catch (Exception ex)
-            {
-                DebugLogger.WriteLine($"Initialize Decoder error: {ex.Message}");
-                Environment.Exit(1);
-            }
+            //try
+            //{
+            //    await ipcServer.RunAsync();
+            //}
+            //catch (Exception ex)
+            //{
+            //    DebugLogger.WriteLine($"Initialize Decoder error: {ex.Message}");
+            //    Environment.Exit(1);
+            //}
         }
     }
 }

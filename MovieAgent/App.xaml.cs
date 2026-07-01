@@ -8,29 +8,54 @@ using MovieAgent.Infrastructure.Repositories;
 using MovieAgent.Infrastructure.Services;
 using MovieAgent.Services;
 using MudBlazor.Services;
+using SQLitePCL;
 using System;
 using System.IO;
+using System.Runtime.InteropServices;
 using System.Windows;
-
+ 
 namespace MovieAgent;
 
 public partial class App : Application
 {
+    [DllImport("shcore.dll")]
+    private static extern int SetProcessDpiAwareness(int awareness);
+
+    private const int PROCESS_PER_MONITOR_DPI_AWARE = 1;
+    private const int PROCESS_PER_MONITOR_DPI_AWARE_V2 = 2;
+
+   
     public IServiceProvider Services { get; private set; } = null!;
 
     protected override void OnStartup(StartupEventArgs e)
     {
         // 这是第一个执行的代码，必须写日志
         try
-        {
-            var logPath = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "startup.log");
+        { 
+            SetProcessDpiAwareness(PROCESS_PER_MONITOR_DPI_AWARE_V2); 
+             var logPath = Path.Combine(AppContext.BaseDirectory, "startup.log");
             File.WriteAllText(logPath, $"[{DateTime.Now:yyyy-MM-dd HH:mm:ss.fff}] 应用程序启动，开始执行 OnStartup\r\n");
         }
         catch (Exception ex)
         {
+            // 回退到旧版本
+            SetProcessDpiAwareness(PROCESS_PER_MONITOR_DPI_AWARE);
             // 如果连日志都写不了，那问题很严重
             try { File.WriteAllText(@"C:\temp\movieagent_error.log", $"[{DateTime.Now}] 日志写入失败: {ex.Message}\r\n"); } catch { }
         }
+        // 启用全局未处理异常捕获
+        this.DispatcherUnhandledException += (s, e) =>
+        {
+            DebugLogger.WriteLine($"UI线程未处理异常: {e.Exception}");
+            e.Handled = false; // 设为 false 让调试器捕获
+        };
+        AppDomain.CurrentDomain.UnhandledException += (s, e) =>
+        {
+            DebugLogger.WriteLine($"AppDomain未处理异常: {e.ExceptionObject}");
+        };
+        System.Windows.Forms.Application.SetUnhandledExceptionMode(System.Windows.Forms.UnhandledExceptionMode.CatchException);
+        // 初始化 DebugLogger
+        DebugLogger.Initialize(AppContext.BaseDirectory);
 
         try
         {
@@ -180,6 +205,7 @@ public partial class App : Application
             }
             Shutdown();
         }
+        
     }
 
     private void AppendLog(string message)

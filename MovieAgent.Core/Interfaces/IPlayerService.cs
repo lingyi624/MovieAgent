@@ -1,6 +1,9 @@
 using MovieAgent.FFmpegDecoder;
 using System;
 using System.Collections.Generic;
+using Vortice.Direct3D11;
+using Vortice.Direct3D12;
+using static MovieAgent.FFmpegDecoder.FFmpegDecoderEngine;
 
 namespace MovieAgent.Core.Interfaces;
 
@@ -24,6 +27,7 @@ public interface IPlayerService
     /// <summary>当前播放位置</summary>
     TimeSpan Position { get; }
     long AudioPlayPosition { get; }
+    D3DMode? CurrentD3dModel { get;  }
 
     /// <summary>视频时间戳</summary>
     TimeSpan VideoTimestamp { get; }
@@ -145,4 +149,7 @@ public interface IPlayerService
     /// </summary>
     /// <param name="speed">播放速度</param>
     void SetPlaybackSpeed(double speed);
+    void SetD3d11Device(ID3D11Device device);
+    void SetD3d9Device(Vortice.Direct3D9.IDirect3DDevice9Ex device);
+    void SetD3d12Device(ID3D12Device device);
 }
