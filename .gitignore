@@ -31,3 +31,6 @@
 /build_err2.txt
 /build_errors.txt
 /build_output.txt
+/MovieAgent.FFmpegDecoder/bin/Release/net10.0
+/MovieAgent.Tests/bin/Release/net10.0-windows/cs
+/MovieAgent.Tests/bin/Release/net10.0-windows
