@@ -1,8 +1,9 @@
-﻿using Microsoft.AspNetCore.Components.RenderTree;
+using Microsoft.AspNetCore.Components.RenderTree;
 using Microsoft.AspNetCore.Components.WebView.Wpf;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Win32;
 using MovieAgent.Controls;
+using MovieAgent.Controls.Window;
 using MovieAgent.Core.Interfaces;
 using MovieAgent.FFmpegDecoder;
 using MovieAgent.Infrastructure.Services;
@@ -21,10 +22,12 @@ using System.Windows.Input;
 using System.Windows.Media;
 using System.Windows.Media.Imaging;
 using System.Windows.Threading;
+using Vortice.Direct3D11;
+using static System.Windows.Forms.VisualStyles.VisualStyleElement;
 
 namespace MovieAgent.D3D11Window;
 
-public partial class ControlWindow : Window
+public partial class ControlWindow : System.Windows.Window
 {
     private IPlayerService? _playerService;
     private readonly ILoggerService _logger;
@@ -41,10 +44,9 @@ public partial class ControlWindow : Window
      private Rect _normalVideoRect;
     private Rect _normalControlRect;
 
-    // 去重调度
-    private volatile bool _renderScheduled;
+    // 去重调度（无锁）：用 Interlocked 操作 _pendingFrame 和 _renderScheduled
+    private volatile int _renderScheduled;
     private FrameData? _pendingFrame;
-    private readonly object _pendingFrameLock = new();
 
     // 外部字幕
     private string? _externalSubtitlePath;
@@ -70,13 +72,10 @@ public partial class ControlWindow : Window
     private double _previousLeft;
     private double _previousTop;
 
-    // 视频窗口引用
-    private readonly VideoWindow _videoWindow;
+  
 
-    public ControlWindow(VideoWindow videoWindow)
-    {
-        _videoWindow = videoWindow ?? throw new ArgumentNullException(nameof(videoWindow));
-
+    public ControlWindow()
+    { 
         var services = ((App)Application.Current).Services;
         _logger = services.GetRequiredService<ILoggerService>();
         _playerService = services.GetRequiredService<IPlayerService>();
@@ -95,8 +94,8 @@ public partial class ControlWindow : Window
         _playerService.FrameUpdated += OnFrameUpdated;
 
         // 初始化定时器
-        _hideControlsTimer = new DispatcherTimer { Interval = TimeSpan.FromSeconds(3) };
-        _hideControlsTimer.Tick += (s, e) => HideControls();
+        _hideControlsTimer = new DispatcherTimer { Interval = TimeSpan.FromSeconds(10) };
+         _hideControlsTimer.Tick += (s, e) => HideControls();
 
         // 设置窗口全屏透明覆盖
         // this.WindowState = WindowState.Maximized;
@@ -107,30 +106,32 @@ public partial class ControlWindow : Window
         //this.Topmost = true;
         //this.ShowActivated = false;
 
-        this.Left = 0;
-        this.Top = 0;
-        this.Width = SystemParameters.PrimaryScreenWidth;
-        this.Height = SystemParameters.PrimaryScreenHeight;
-        this.WindowState = WindowState.Normal;   // 显式保持 Normal
+ 
+        var bWindow = Application.Current.Windows.OfType<SpriteWindow>().FirstOrDefault();
 
+        if (bWindow != null)
+        {
+            bWindow.Close();
+        }
         // this.Background = new SolidColorBrush(Color.FromArgb(1, 0, 0, 0)); // ARGB: #01000000
         ShowControls(); // 强制显示顶部和底部栏
-
+ 
         this.Loaded += ControlWindow_Loaded;
     }
-
+    
     private void ControlWindow_Loaded(object sender, RoutedEventArgs e)
     {
         //MessageBox.Show("ControlWindow 已加载");
-        _videoWindow.LocationChanged += (s, e) => { if (!_isFullScreen) SyncControlPosition(); };
-        _videoWindow.SizeChanged += (s, e) => { if (!_isFullScreen) SyncControlPosition(); };
-    }
+        this.LocationChanged += (s, e) => { if (!_isFullScreen) SyncControlPosition(); };
+        this.SizeChanged += (s, e) => { if (!_isFullScreen) SyncControlPosition(); };
+     }
     private void SyncControlPosition()
     {
-        this.Left = _videoWindow.Left;
-        this.Top = _videoWindow.Top;
-        this.Width = _videoWindow.Width;
-        this.Height = _videoWindow.Height;
+        this.Left = this.Left;
+        this.Top = this.Top;
+        this.Width = this.Width;
+        this.Height = this.Height;
+       
     }
     public void PlayMovie(string filePath)
     {
@@ -200,7 +201,7 @@ public partial class ControlWindow : Window
                     _logger.Debug($"[Player] ===== 开始播放流程 ===== ");
                     _logger.Debug($"[Player] 文件路径: {actualPlayPath}");
                     _logger.Debug($"[Player] 电影标题: {_currentMovieTitle}");
-                    //var renderer = _videoWindow.Renderer;
+                    //var renderer = this.Renderer;
                     //var device = renderer?.GetDevice();
                     //if (device != null)
                     //{
@@ -214,7 +215,6 @@ public partial class ControlWindow : Window
                     // 显示视频播放层，隐藏 Blazor WebView
                     _logger.Debug($"[Player] 切换到视频播放层");
                  
-
                     // 切换到全屏
                     _logger.Debug($"[Player] 进入全屏模式");
                     EnterFullScreen();
@@ -235,7 +235,6 @@ public partial class ControlWindow : Window
                     _frameCount = 0;
                     _logger.Debug("[Player] ===== 播放流程初始化完成 ===== ");
                     
-
                     UpdatePlayStatus();
 
                     ShowControls();
@@ -252,70 +251,98 @@ public partial class ControlWindow : Window
         });
     }
 
+    private void EnterFullScreen()
+    {
+        
+        if (_isFullScreen) return;
+
+        // 保存当前窗口状态
+        _previousWindowState = this.WindowState;
+        _previousWindowStyle = this.WindowStyle;
+        _previousTopmost = this.Topmost;
+        _previousWidth = this.Width;
+        _previousHeight = this.Height;
+        _previousLeft = this.Left;
+        _previousTop = this.Top;
+
+        // 正确的全屏模式：覆盖任务栏
+        // 步骤：先恢复正常状态，再设置无边框，最后最大化
+        if (this.WindowState == WindowState.Normal) 
+            this.WindowState = WindowState.Maximized;
+        this.WindowStyle = WindowStyle.None;
+        this.ResizeMode = ResizeMode.NoResize;
+       // this.Topmost = true;
+       // this.ShowActivated = true;
+        this.Left = 0;
+        this.Top = 0;
+         this.Width = SystemParameters.PrimaryScreenWidth;
+         this.Height = SystemParameters.PrimaryScreenHeight;
+         _isFullScreen = true;
+        FullscreenButton.Content = "退出全屏";
+        DebugLogger.WriteLine("进入全屏模式");
+    }
 
     private void OnFrameUpdated(object? sender, FrameData frame)
     {
         _frameCount++;
         if (_frameCount % 30 == 0)
             _logger.Debug($"[Control] 第 {_frameCount} 帧");
-       
+
         try
         {
-            var renderer = _videoWindow.GetDevice();
-            if (renderer == null) return;
-            if (_playerService == null ) return;
+            if (_playerService == null) return;
             if (_playerService.VideoWidth <= 0 || _playerService.VideoHeight <= 0) return;
+            if (frame == null) return;
 
-            bool needSchedule = false;
-            lock (_pendingFrameLock)
+            // 仅保留最新帧，丢弃中间帧以避免堆积
+            Interlocked.Exchange(ref _pendingFrame, frame);
+
+            // 用无锁方式调度：仅在空闲时入队一次
+            if (Interlocked.CompareExchange(ref _renderScheduled, 1, 0) == 0)
             {
-                _pendingFrame = frame;
-                if (!_renderScheduled)
-                {
-                    _renderScheduled = true;
-                    needSchedule = true;
-                }
-            }
-
-            if (needSchedule)
-            {
-                Dispatcher.BeginInvoke(DispatcherPriority.Render, () =>
-                {
-                    FrameData? frameToRender = null;
-                    lock (_pendingFrameLock)
-                    {
-                        frameToRender = _pendingFrame;
-                        _pendingFrame = null;
-                        _renderScheduled = false;
-                    }
-
-                    if (frameToRender != null && _videoWindow.GetDevice() != null)
-                    {
-                        if (frameToRender.IsHardwareFrame)
-                            _videoWindow.VideoView.RenderD3D11VATexture(
-                                frameToRender.NV12TexturePtr,
-                                frameToRender.Width,
-                                frameToRender.Height,
-                                frameToRender.TextureArrayIndex
-                                   );
-                        else
-                        {
-
-                            _videoWindow.VideoView.UpdateFrame(
-                                frameToRender.YPlane, frameToRender.UPlane, frameToRender.VPlane,
-                                frameToRender.Width, frameToRender.Height,
-                                frameToRender.YStride, frameToRender.UStride, frameToRender.VStride); 
-
-                        }
-
-                    }
-                });
+                Dispatcher.BeginInvoke(DispatcherPriority.Render, RenderPendingFrame);
             }
         }
         catch (Exception ex)
         {
             _logger.Debug($"[Control] 帧更新失败: {ex.Message}");
         }
+    }
+
+    private void RenderPendingFrame()
+    {
+        // 立即取出最新帧并释放调度标志，允许新帧再次调度
+        var frameToRender = Interlocked.Exchange(ref _pendingFrame, null);
+        Interlocked.Exchange(ref _renderScheduled, 0);
+
+        if (frameToRender == null) return;
+        if (this.GetDevice() == null) return;
+
+        try
+        {
+            if (frameToRender.IsHardwareFrame)
+            {
+                this.VideoView.RenderD3D11VATexture(
+                    frameToRender.NV12TexturePtr,
+                    frameToRender.Width,
+                    frameToRender.Height,
+                    frameToRender.TextureArrayIndex);
+            }
+            else
+            {
+                this.VideoView.UpdateFrame(
+                    frameToRender.YPlane, frameToRender.UPlane, frameToRender.VPlane,
+                    frameToRender.Width, frameToRender.Height,
+                    frameToRender.YStride, frameToRender.UStride, frameToRender.VStride);
+            }
+        }
+        catch (Exception ex)
+        {
+            _logger.Debug($"[Control] 渲染调用失败: {ex.Message}");
+        }
+        // 不再续接调度：续接会导致同一 VSYNC 周期内 Present 两次，
+        // 第二次会被 VSYNC 阻塞，导致下一帧延迟和抖动。
+        // 新帧到达时会通过 OnFrameUpdated 重新调度。
     }
 
     // 以下是移植自 MainWindow 的所有控制方法（进度、音量、字幕、全屏、事件处理等），
@@ -453,21 +480,21 @@ public partial class ControlWindow : Window
                 };
                 button.Style = (Style)this.FindResource("ControlButtonStyle");
                 // 先应用基础样式
-                if ((track.Index == _playerService?.CurrentAudioTrack))
-                {
-                    button.Background = new SolidColorBrush(Color.FromRgb(0, 120, 215));
-                    button.FontWeight = FontWeights.Bold;
-                }
-                // 如果是当前选中的音频轨道，高亮显示
-                //if (track.Index == _playerService?.CurrentAudioTrack)
+                //if ((track.Index == _playerService?.CurrentAudioTrack))
                 //{
-                //    button.Content = $"✓ {displayText}";
-                //    button.FontWeight = System.Windows.FontWeights.Bold;
-                //    // 选中状态使用不同颜色
-                //    button.Background = new System.Windows.Media.SolidColorBrush(
-                //        System.Windows.Media.Color.FromRgb(0, 120, 215) // 蓝色高亮
-                //    );
+                //    button.Background = new SolidColorBrush(Color.FromRgb(0, 120, 215));
+                //    button.FontWeight = FontWeights.Bold;
                 //}
+                // 如果是当前选中的音频轨道，高亮显示
+                if (track.Index == _playerService?.CurrentAudioTrack)
+                {
+                    button.Content = $"✓ {displayText}";
+                    button.FontWeight = System.Windows.FontWeights.Bold;
+                    // 选中状态使用不同颜色
+                    button.Background = new System.Windows.Media.SolidColorBrush(
+                        System.Windows.Media.Color.FromRgb(0, 120, 215) // 蓝色高亮
+                    );
+                }
 
                 AudioTrackListPanel.Children.Add(button);
                 //if (SubtitleTrackListPanel.TryFindResource("ControlButtonStyle") is Style style1)
@@ -483,10 +510,6 @@ public partial class ControlWindow : Window
             _logger.Error(ex, "[Player] Failed to update audio track list");
         }
     }
-
-
-
-
 
     private void UpdateSubtitleTrackList()
     {
@@ -558,7 +581,7 @@ public partial class ControlWindow : Window
                     _playerService?.SetSpuTrack(trackIndex);
 
                     // 如果切换到内部字幕，禁用外部字幕
-                    if (trackIndex >= 0 && _externalSubtitlePath != null)
+                    if (trackIndex >= 0 )
                     {
                         _subtitleUpdateTimer?.Stop();
                         _externalSubtitlePath = null;
@@ -575,6 +598,8 @@ public partial class ControlWindow : Window
                 {
                     button.Content = $"✓ {displayText}";
                     button.FontWeight = System.Windows.FontWeights.Bold;
+                    _logger.Debug($"[Player] 当前字幕=✓ {displayText}");
+
                 }
 
                 SubtitleTrackListPanel.Children.Add(button);
@@ -584,7 +609,6 @@ public partial class ControlWindow : Window
                 }
             }
 
-
             _logger.Debug($"[Player] Subtitle track list updated: {subtitleTracks.Count} tracks");
         }
         catch (Exception ex)
@@ -593,9 +617,196 @@ public partial class ControlWindow : Window
         }
     }
 
-    #region 字幕和轨道切换
+    //#region 字幕和轨道切换
 
- 
+    #region 字幕下载功能
+
+    /// <summary>
+    /// 打开字幕下载对话框
+    /// </summary>
+    private void DownloadSubtitleButton_Click(object sender, RoutedEventArgs e)
+    {
+        SubtitlePopup.IsOpen = false;
+
+        // 默认填充当前电影名称作为搜索关键词
+        if (!string.IsNullOrEmpty(_currentMovieTitle))
+        {
+            SubtitleSearchBox.Text = _currentMovieTitle;
+        }
+
+        // 默认选择中文
+        SubtitleLanguageCombo.SelectedIndex = 0;
+        SubtitleSearchStatus.Text = string.Empty;
+        SubtitleResultsPanel.Children.Clear();
+
+        SubtitleDownloadPopup.IsOpen = true;
+        _logger.Debug("[MainWindow] Subtitle download popup opened");
+    }
+
+    /// <summary>
+    /// 关闭字幕下载对话框
+    /// </summary>
+    private void CloseSubtitleDownloadButton_Click(object sender, RoutedEventArgs e)
+    {
+        SubtitleDownloadPopup.IsOpen = false;
+        _logger.Debug("[MainWindow] Subtitle download popup closed");
+    }
+
+    /// <summary>
+    /// 搜索字幕
+    /// </summary>
+    private async void SearchSubtitleButton_Click(object sender, RoutedEventArgs e)
+    {
+        if (_subtitleService == null)
+        {
+            SubtitleSearchStatus.Text = "字幕服务不可用";
+            return;
+        }
+
+        string query = SubtitleSearchBox.Text.Trim();
+        if (string.IsNullOrEmpty(query))
+        {
+            SubtitleSearchStatus.Text = "请输入搜索关键词";
+            return;
+        }
+
+        string language = "zh";
+        if (SubtitleLanguageCombo.SelectedItem is ComboBoxItem selectedItem)
+        {
+            language = selectedItem.Tag?.ToString() ?? "zh";
+        }
+
+        SubtitleSearchStatus.Text = "正在搜索...";
+        SubtitleResultsPanel.Children.Clear();
+
+        try
+        {
+            _logger.Debug($"[MainWindow] Searching subtitles for: {query}, language: {language}");
+            var results = await _subtitleService.SearchSubtitlesAsync(query, language);
+
+            if (results.Count == 0)
+            {
+                SubtitleSearchStatus.Text = "未找到匹配的字幕";
+                return;
+            }
+
+            SubtitleSearchStatus.Text = $"找到 {results.Count} 个字幕";
+
+            foreach (var subtitle in results)
+            {
+                var itemPanel = new StackPanel { Orientation = Orientation.Horizontal };
+                itemPanel.Margin = new Thickness(5);
+
+                var infoPanel = new StackPanel { Width = 350 };
+
+                var titleText = new TextBlock
+                {
+                    Text = subtitle.Title,
+                    Foreground = Brushes.White,
+                    FontSize = 13,
+                    TextTrimming = TextTrimming.CharacterEllipsis
+                };
+
+                var detailText = new TextBlock
+                {
+                    Text = $"语言: {subtitle.Language} | 评分: {subtitle.Rating}",
+                    Foreground = Brushes.Gray,
+                    FontSize = 11,
+                    Margin = new Thickness(0, 2, 0, 0)
+                };
+
+                infoPanel.Children.Add(titleText);
+                infoPanel.Children.Add(detailText);
+
+                var downloadButton = new System.Windows.Controls.Button
+                {
+                    Content = "下载",
+                    Style = (Style)FindResource("ControlButtonStyle"),
+                    Width = 70,
+                    Tag = subtitle,
+                    Background = new SolidColorBrush(Color.FromRgb(233, 69, 96))
+                };
+                downloadButton.Click += DownloadSubtitleItem_Click;
+
+                itemPanel.Children.Add(infoPanel);
+                itemPanel.Children.Add(downloadButton);
+
+                SubtitleResultsPanel.Children.Add(itemPanel);
+            }
+        }
+        catch (Exception ex)
+        {
+            _logger.Error(ex, "[MainWindow] Subtitle search failed");
+            SubtitleSearchStatus.Text = "搜索失败，请稍后重试";
+        }
+    }
+
+    /// <summary>
+    /// 下载选中的字幕
+    /// </summary>
+    private async void DownloadSubtitleItem_Click(object sender, RoutedEventArgs e)
+    {
+        if (_subtitleService == null || sender is not System.Windows.Controls.Button button || button.Tag is not SubtitleResult subtitle)
+            return;
+
+        button.IsEnabled = false;
+        SubtitleSearchStatus.Text = "正在下载...";
+
+        try
+        {
+            _logger.Debug($"[MainWindow] Downloading subtitle: {subtitle.Title}");
+            var subtitleData = await _subtitleService.DownloadSubtitleAsync(subtitle.DownloadUrl);
+
+            if (subtitleData == null || subtitleData.Length == 0)
+            {
+                SubtitleSearchStatus.Text = "下载失败";
+                button.IsEnabled = true;
+                return;
+            }
+
+            // 保存字幕到视频文件所在目录
+            string savedPath = string.Empty;
+
+            // 如果正在播放视频，保存到视频目录
+            if (_playerService != null && _playerService.IsPlaying)
+            {
+                // 尝试获取当前播放的文件路径
+                string? videoPath = _playerService.GetCurrentRequestedFilePath();
+                if (!string.IsNullOrEmpty(videoPath) && File.Exists(videoPath))
+                {
+                    string directory = Path.GetDirectoryName(videoPath)!;
+                    string videoName = Path.GetFileNameWithoutExtension(videoPath);
+                    string subtitleFileName = $"{videoName}{subtitle.Extension}";
+                    savedPath = Path.Combine(directory, subtitleFileName);
+
+                    await File.WriteAllBytesAsync(savedPath, subtitleData);
+                    _logger.Debug($"[MainWindow] Subtitle saved to: {savedPath}");
+
+                    // 字幕加载功能暂不支持
+                    _logger.Debug("[MainWindow] Subtitle downloaded successfully");
+                }
+            }
+
+            // 如果没有正在播放的视频，保存到默认目录
+            if (string.IsNullOrEmpty(savedPath))
+            {
+                savedPath = await _subtitleService.SaveSubtitleAsync(0, subtitleData, subtitle.Extension);
+            }
+
+            SubtitleSearchStatus.Text = $"字幕已保存: {Path.GetFileName(savedPath)}";
+            button.Content = "已下载";
+            _logger.Debug($"[MainWindow] Subtitle download completed: {savedPath}");
+        }
+        catch (Exception ex)
+        {
+            _logger.Error(ex, "[MainWindow] Subtitle download failed");
+            SubtitleSearchStatus.Text = "下载失败";
+            button.IsEnabled = true;
+        }
+    }
+
+    #endregion
+
     private void StartProgressUpdate()
     {
         _progressTimer?.Stop();
@@ -648,112 +859,24 @@ public partial class ControlWindow : Window
         catch { }
     }
 
-
-
     private string FormatTime(TimeSpan time)
     {
         if (time.TotalHours >= 1)
             return $"{time.Hours:D2}:{time.Minutes:D2}:{time.Seconds:D2}";
         return $"{time.Minutes:D2}:{time.Seconds:D2}";
     }
-
-    private void EnterFullScreen()
-    {
-        _normalVideoRect = new Rect(_videoWindow.Left, _videoWindow.Top, _videoWindow.Width, _videoWindow.Height);
-        _normalControlRect = new Rect(this.Left, this.Top, this.Width, this.Height);
-
-        _videoWindow.WindowStyle = WindowStyle.None;
-        _videoWindow.ResizeMode = ResizeMode.NoResize;
-        _videoWindow.Topmost = false;
-        _videoWindow.Left = 0;
-        _videoWindow.Top = 0;
-        _videoWindow.Width = SystemParameters.PrimaryScreenWidth;
-        _videoWindow.Height = SystemParameters.PrimaryScreenHeight;
-
-        this.Left = 0;
-        this.Top = 0;
-        this.Width = SystemParameters.PrimaryScreenWidth;
-        this.Height = SystemParameters.PrimaryScreenHeight;
-
-        _isFullScreen = true;
-        FullscreenButton.Content = "退出全屏";
-
-        return; 
-        if (_isFullScreen) return;
-
-        _isFullScreen = true;
-
-        // 保存当前状态
-        _previousWindowState = this.WindowState;
-        _previousWindowStyle = this.WindowStyle;
-        _previousTopmost = this.Topmost;
-        _previousWidth = this.Width;
-        _previousHeight = this.Height;
-        _previousLeft = this.Left;
-        _previousTop = this.Top;
-
-        // 切换到真正的全屏（隐藏任务栏）
-        this.WindowStyle = WindowStyle.None;
-        this.Topmost = true;
-        this.WindowState = WindowState.Normal; // 先恢复正常状态
-        this.Width = System.Windows.SystemParameters.PrimaryScreenWidth;
-        this.Height = System.Windows.SystemParameters.PrimaryScreenHeight;
-        this.Left = 0;
-        this.Top = 0;
-        this.WindowState = WindowState.Maximized;
-
-        // 全屏模式下：显示底部控制栏，隐藏顶部面板
-        TopBar.Visibility = Visibility.Collapsed;
-        BottomBar.Visibility = Visibility.Visible;
-        //ShowInTaskbar = false;
-        //_videoWindow.ShowInTaskbar = ShowInTaskbar;
-
-        _hideControlsTimer?.Start();
-
-        _logger.Debug("[Player] 进入全屏模式 - 顶部面板已隐藏");
-    }
+    
     private void ToggleFullScreen()
     {
-        if (_isFullScreen) ExitFullScreen();
-        else EnterFullScreen();
+        if (_isFullScreen)
+        {
+            ExitFullScreen();
+        }
+        else
+        {
+            EnterFullScreen();
+        }
     }
-
-    private void ExitFullScreen()
-    {
-        _videoWindow.Left = _normalVideoRect.Left;
-        _videoWindow.Top = _normalVideoRect.Top;
-        _videoWindow.Width = _normalVideoRect.Width;
-        _videoWindow.Height = _normalVideoRect.Height;
-        _videoWindow.WindowStyle = WindowStyle.None;
-        _videoWindow.ResizeMode = ResizeMode.CanResize;
-        _videoWindow.Topmost = false;
-
-        this.Left = _normalControlRect.Left;
-        this.Top = _normalControlRect.Top;
-        this.Width = _normalControlRect.Width;
-        this.Height = _normalControlRect.Height;
-
-        _isFullScreen = false;
-        FullscreenButton.Content = "全屏";
-        return;
-        if (!_isFullScreen) return;
-
-        _isFullScreen = false;
-
-        // 恢复之前的窗口状态
-        this.Topmost = _previousTopmost;
-        this.WindowStyle = _previousWindowStyle;
-        this.WindowState = _previousWindowState;
-        this.Left = _previousLeft;
-        this.Top = _previousTop;
-        this.Width = _previousWidth;
-        this.Height = _previousHeight;
-
-        //ShowInTaskbar= true;
-        //_videoWindow.ShowInTaskbar = ShowInTaskbar;
-        _logger.Debug("[Player] 退出全屏模式");
-    }
-
     private void OnPlaybackRequestedByBlazor(object? sender, EventArgs e)
     {
         _logger.Debug("[Player] OnPlaybackRequestedByBlazor 被调用");
@@ -862,7 +985,6 @@ public partial class ControlWindow : Window
             _subtitleHideTimer.Start();
         });
     }
-
  
     private void UseSystemPlayerForCurrentFile()
     {
@@ -887,7 +1009,6 @@ public partial class ControlWindow : Window
 
             // 隐藏视频播放层
           
-
             // 退出全屏
             ExitFullScreen();
         }
@@ -898,35 +1019,74 @@ public partial class ControlWindow : Window
         }
     }
 
+    private void ExitFullScreen()
+    {
+        if (!_isFullScreen) return;
+
+        // 恢复窗口样式
+        if (this.WindowState == WindowState.Maximized)
+            this.WindowState = WindowState.Normal;
+   
+        this.WindowStyle = _previousWindowStyle;
+        this.ResizeMode = ResizeMode.CanResize;
+        this.Topmost = _previousTopmost;
+        this.ShowActivated = true;
+
+        // 退出全屏后，窗口最大化到工作区（除任务栏外的整个屏幕区域）
+        Rect area = SystemParameters.WorkArea;
+        this.Left = area.Left;
+        this.Top = area.Top;
+        this.Width = area.Width;
+        this.Height = area.Height;
+       // this.WindowState = WindowState.Maximized;
+
+        _isFullScreen = false;
+        FullscreenButton.Content = "全屏";
+        DebugLogger.WriteLine("退出全屏模式");
+
+        
+    }
+
     private void ShowControls()
     {
-        //if (!_isFullScreen)
-        //{
-        //    TopBar.Visibility = Visibility.Visible;
-        //}
-         
-        TopBar.Visibility = Visibility.Visible; 
-          BottomBar.Visibility = Visibility.Visible;
-
+        
+        ControlsPopup.IsOpen = true;
+        TopBarPopup.IsOpen = true;
+        TopBarPopup.Visibility = Visibility.Visible;
+        TopBar.Visibility = Visibility.Visible;
+        BottomBar.Visibility = Visibility.Visible;
+        ControlsPopup.Visibility=Visibility.Visible;
         _hideControlsTimer?.Stop();
         _hideControlsTimer?.Start();
+
+        //壁纸时间复位
+        var bWindow = Application.Current.Windows.OfType<SpriteWindow>().FirstOrDefault();
+
+        if (bWindow != null)
+        {
+            bWindow.Close();
+        }
     }
 
     private void HideControls()
     {
+        // 不能关闭 Popup（IsOpen=false），否则鼠标事件无法穿透到下面的 VideoRenderer
+        // 保持 Popup 打开，只隐藏内部控件内容
         AudioPopup.IsOpen = false;
         SpeedPopup.IsOpen = false;
-
         SubtitlePopup.IsOpen = false;
         InfoPopup.IsOpen = false;
         TopBar.Visibility = Visibility.Collapsed;
         BottomBar.Visibility = Visibility.Collapsed;
     }
 
-    private void Window_MouseMove(object sender, MouseEventArgs e) => ShowControls(); 
+    private void Window_MouseMove(object sender, MouseEventArgs e) => ShowControls();
 
- 
 
+    public ID3D11Device? GetDevice()
+    {
+        return VideoView.GetDevice();
+    }
     // 其余事件处理方法（VolumeSlider_ValueChanged, AudioButton_Click, SubtitleButton_Click, SpeedOption_Click,
     // LoadSubtitleButton_Click, InfoButton_Click, KeyDown 等）请从 MainWindow.cs 复制，并删除不相关的部分。
     private void FallbackToSystemPlayer(string filePath)
@@ -960,16 +1120,12 @@ public partial class ControlWindow : Window
                 _playerService.FrameUpdated -= OnFrameUpdated;
                 await _playerService.StopAsync();
             }
-            //var renderer = _videoWindow.Renderer;
-            // renderer?.ClearScreen();
 
             // 退出全屏并恢复 Blazor WebView
             if (_isFullScreen)
             {
                 ExitFullScreen();
             }
-
-       
 
             // 重置播放状态
             _externalSubtitlePath = null;
@@ -985,20 +1141,31 @@ public partial class ControlWindow : Window
             }
 
             _logger.Debug("[Player] 播放已停止");
+
+            // 关闭壁纸窗口，防止遮挡任务栏
+            var wallpaperWindow = Application.Current.Windows.OfType<MovieWallpaperWindow>().FirstOrDefault();
+            if (wallpaperWindow != null)
+            {
+               // wallpaperWindow.Hide();
+            }
+
+            // 完成所有清理后关闭窗口
+            this.Close();
         }
         catch (Exception ex)
         {
             _logger.Debug($"[Player] 停止播放出错: {ex.Message}");
+            try
+            {
+                this.Close();
+            }
+            catch { }
         }
     }
 
     public void StopPlayback()
     {
-        // 在后台线程执行停止操作，避免UI卡死
-        Task.Run(() =>
-        {
-            Dispatcher.Invoke(StopPlaybackInternal);
-        });
+        Dispatcher.Invoke(StopPlaybackInternal);
     }
 
     public void PausePlayback()
@@ -1052,29 +1219,13 @@ public partial class ControlWindow : Window
 
     private void StopButton_Click(object sender, RoutedEventArgs e)
     {
-     
         StopPlayback();
-        PlayPauseButton.Content = "▶"; // 重置为播放图标
-        _videoWindow.Close();
-        this.Close();
     }
 
     private void FullscreenButton_Click(object sender, RoutedEventArgs e)
     {
-        this.WindowState = WindowState.Minimized;
         ToggleFullScreen();
         ShowControls();
-        //if (_isFullScreen)
-        //{
-        //    ExitFullScreen();
-        //    FullscreenButton.Content = "全屏";
-        //}
-        //else
-        //{
-        //    EnterFullScreen();
-        //    FullscreenButton.Content = "退出全屏";
-        //}
-        //ShowControls();
     }
 
     private void ProgressSlider_ValueChanged(object sender, RoutedPropertyChangedEventArgs<double> e)
@@ -1122,6 +1273,11 @@ public partial class ControlWindow : Window
 
             _logger.Debug($"[Player] Seek to {seekPosition} seconds");
 
+            // Seek 前立即清空待渲染帧和渲染器缓冲，避免渲染旧帧导致卡顿
+            Interlocked.Exchange(ref _pendingFrame, null);
+            Interlocked.Exchange(ref _renderScheduled, 0);
+            this.VideoView.ResetBuffers();
+
             Task.Run(() =>
             {
                 try
@@ -1153,11 +1309,7 @@ public partial class ControlWindow : Window
         }
     }
 
-    private void VideoOverlay_MouseMove(object sender, System.Windows.Input.MouseEventArgs e)
-    {
-        ShowControls();
-    }
-
+ 
     private void ShowControls2()
     {
         //if (VideoOverlay.Visibility == Visibility.Visible)
@@ -1180,7 +1332,6 @@ public partial class ControlWindow : Window
             //BottomBar.Visibility = Visibility.Collapsed;
             //SubtitleTextBlock.Visibility = Visibility.Collapsed;
 
-
             _hideControlsTimer?.Stop();
             _hideControlsTimer?.Start();
         }
@@ -1190,15 +1341,18 @@ public partial class ControlWindow : Window
     {
         if (e.Key == System.Windows.Input.Key.Escape)
         {
-            if (_isFullScreen)
-            {
-                ExitFullScreen();
-                FullscreenButton.Content = "全屏";
-            }
+             
+           ToggleFullScreen();
+            
             e.Handled = true;
             return;
-        } 
-     
+        }
+        if (e.Key == System.Windows.Input.Key.Enter)
+        {
+           ShowControls();
+            e.Handled = true;
+            return;
+        }
 
         if (e.Key == System.Windows.Input.Key.Space)
         {
@@ -1279,7 +1433,7 @@ public partial class ControlWindow : Window
 
     private void AudioTrackItem_Click(object sender, RoutedEventArgs e)
     {
-        if (sender is Button button && button.Tag is int trackIndex)
+        if (sender is System.Windows.Forms.Button button && button.Tag is int trackIndex)
         {
             AudioPopup.IsOpen = false;
             _logger.Debug($"[Player] Audio track switch not supported in isolated mode");
@@ -1309,7 +1463,7 @@ public partial class ControlWindow : Window
 
     private void SpeedOption_Click(object sender, RoutedEventArgs e)
     {
-        if (sender is Button button && double.TryParse(button.Tag?.ToString(), out double speed))
+        if (sender is System.Windows.Forms.Button button && double.TryParse(button.Tag?.ToString(), out double speed))
         {
             _logger.Debug($"[Player] Speed set to {speed}x");
             _playerService?.SetPlaybackSpeed(speed);
@@ -1322,7 +1476,7 @@ public partial class ControlWindow : Window
 
     private void SubtitleDelayButton_Click(object sender, RoutedEventArgs e)
     {
-        if (sender is Button button && double.TryParse(button.Tag?.ToString(), out double delayMs))
+        if (sender is System.Windows.Forms.Button button && double.TryParse(button.Tag?.ToString(), out double delayMs))
         {
             _logger.Debug($"[Player] Subtitle delay set to {delayMs}ms");
             _playerService?.SetSubtitleDelay(delayMs);
@@ -1333,7 +1487,7 @@ public partial class ControlWindow : Window
 
     private void AudioTrackButton_Click(object sender, RoutedEventArgs e)
     {
-        if (sender is Button button && button.Tag is int trackIndex)
+        if (sender is System.Windows.Forms.Button button && button.Tag is int trackIndex)
         {
             _logger.Debug($"[Player] 选择音频轨道: {trackIndex}");
             _playerService?.SetAudioTrack(trackIndex);
@@ -1343,7 +1497,7 @@ public partial class ControlWindow : Window
 
     private void SubtitleTrackButton_Click(object sender, RoutedEventArgs e)
     {
-        if (sender is Button button && button.Tag is int trackIndex)
+        if (sender is System.Windows.Forms.Button button && button.Tag is int trackIndex)
         {
             _logger.Debug($"[Player] 选择字幕轨道: {trackIndex}");
             _playerService?.SetSpuTrack(trackIndex);
@@ -1374,7 +1528,7 @@ public partial class ControlWindow : Window
 
     private void SubtitleTrackItem_Click(object sender, RoutedEventArgs e)
     {
-        if (sender is Button button && button.Tag is int trackIndex)
+        if (sender is System.Windows.Forms.Button button && button.Tag is int trackIndex)
         {
             SubtitlePopup.IsOpen = false;
             _logger.Debug($"[Player] Subtitle track switch not supported in isolated mode");
@@ -1493,44 +1647,33 @@ public partial class ControlWindow : Window
         }
     }
 
-    /// <summary>
-    /// 加载窗口图标
-    /// </summary>
-    public void SetDecoderInfo(string decoderName, string decodeMode)
+    private void InfoButton_Click(object sender, RoutedEventArgs e)
     {
-        _currentDecoderName = decoderName;
-        _currentDecodeMode = decodeMode;
-    }
-
-    private void LoadWindowIcon()
-    {
-        try
+        InfoPopup.IsOpen = !InfoPopup.IsOpen;
+        if (InfoPopup.IsOpen)
         {
-            var iconPath = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "logo.png");
-            if (File.Exists(iconPath))
-            {
-                var bitmap = new BitmapImage();
-                bitmap.BeginInit();
-                bitmap.UriSource = new Uri(iconPath);
-                bitmap.CacheOption = BitmapCacheOption.OnLoad;
-                bitmap.EndInit();
-                Icon = bitmap;
-            }
-        }
-        catch (Exception ex)
-        {
-            _logger.Debug($"[MainWindow] Failed to load window icon: {ex.Message}");
+            LoadSystemInfo();
+            LoadMediaInfo();
         }
     }
 
-    private async void InfoButton_Click(object sender, RoutedEventArgs e)
+    private void LoadSystemInfo()
     {
+        CpuInfoText.Text = Environment.GetEnvironmentVariable("PROCESSOR_IDENTIFIER") ?? "未知";
+        MemoryInfoText.Text = $"{(GC.GetTotalMemory(false) / (1024 * 1024))} MB";
+        GpuInfoText.Text = "Direct3D11";
+        ResolutionText.Text = $"{SystemParameters.PrimaryScreenWidth}x{SystemParameters.PrimaryScreenHeight}";
+        OSInfoText.Text = Environment.OSVersion.VersionString;
+    }
 
-        InfoPopup.IsOpen = true;
-        ShowControls();
-
-        UpdateMediaInfo();
-        await UpdateSystemInfoAsync(); // 异步调用，不卡 UI
+    private void LoadMediaInfo()
+    {
+        FileNameText.Text = System.IO.Path.GetFileName(_currentPlayingFilePath ?? "");
+        VideoResolutionText.Text = $"{_playerService?.VideoWidth}x{_playerService?.VideoHeight}";
+        FpsText.Text = "未知";
+        DurationText.Text = FormatTime(_playerService?.Duration ?? TimeSpan.Zero);
+        DecodeModeText.Text = _playerService?.CurrentD3dModel?.ToString() ?? "未知";
+        DecoderNameText.Text = _currentDecoderName;
     }
 
     private void CloseInfoButton_Click(object sender, RoutedEventArgs e)
@@ -1538,561 +1681,62 @@ public partial class ControlWindow : Window
         InfoPopup.IsOpen = false;
     }
 
-    private async Task UpdateSystemInfoAsync()
-    {
-        try
-        {
-            CpuInfoText.Text = "进在获取";
-            MemoryInfoText.Text = "进在获取";
-            GpuInfoText.Text = "进在获取";
-            ResolutionText.Text = "进在获取";
-            OSInfoText.Text = "进在获取";
-            // 使用 ConfigureAwait(false) 避免不必要的上下文切换
-            var cpuTask = Task.Run(() => GetCpuInfo());
-            var memoryTask = Task.Run(() => GetMemoryInfo());
-            var gpuTask = Task.Run(() => GetGpuInfo());
-            var osTask = Task.Run(() => GetOSInfo());
+    #region ISO挂载相关
 
-            // 等待所有任务
-            await Task.WhenAll(cpuTask, memoryTask, gpuTask, osTask)
-                      .ConfigureAwait(false);
-
-            // 获取结果（此时在后台线程）
-            var cpu = cpuTask.Result;
-            var memory = memoryTask.Result;
-            var gpu = gpuTask.Result;
-            var os = osTask.Result;
-            var resolution = $"{System.Windows.SystemParameters.PrimaryScreenWidth:F0} x {System.Windows.SystemParameters.PrimaryScreenHeight}";
-
-            // 使用 Dispatcher 回到 UI 线程更新控件
-            await Application.Current.Dispatcher.InvokeAsync(() =>
-            {
-                CpuInfoText.Text = cpu;
-                MemoryInfoText.Text = memory;
-                GpuInfoText.Text = gpu;
-                ResolutionText.Text = resolution;
-                OSInfoText.Text = os;
-            });
-        }
-        catch (Exception ex)
-        {
-            _logger.Debug($"[Player] Error getting system info: {ex.Message}");
-        }
-    }
-
-    private void UpdateMediaInfo()
-    {
-        FileNameText.Text = _currentMovieTitle;
-        VideoResolutionText.Text = _playerService != null && _playerService.VideoWidth > 0 ? $"{_playerService.VideoWidth} x {_playerService.VideoHeight}" : "未知";
-
-        // 显示实际帧率
-        double fps = 0;
-        if (_playerService is LocalPlayerService localPlayer)
-        {
-            fps = localPlayer.Fps;
-        }
-        FpsText.Text = fps > 0 ? $"{fps:F2} fps" : "未知";
-
-        DurationText.Text = _playerService != null && _playerService.Duration.TotalMilliseconds > 0 ? FormatTime(_playerService.Duration) : "未知";
-        DecodeModeText.Text = string.IsNullOrEmpty(_currentDecodeMode) ? "Auto" : _currentDecodeMode;
-        DecoderNameText.Text = string.IsNullOrEmpty(_currentDecoderName) ? "初始化中..." : _currentDecoderName.ToUpper();
-    }
-
-    private string GetCpuInfo()
-    {
-        try
-        {
-            using (var searcher = new System.Management.ManagementObjectSearcher("SELECT * FROM Win32_Processor"))
-            {
-                foreach (var obj in searcher.Get())
-                {
-                    string name = obj["Name"]?.ToString() ?? "";
-                    if (name.Contains("Intel", StringComparison.OrdinalIgnoreCase))
-                    {
-                        return $"{name.Trim()}, {Environment.ProcessorCount} 核心";
-                    }
-                    else if (name.Contains("AMD", StringComparison.OrdinalIgnoreCase))
-                    {
-                        return $"{name.Trim()}, {Environment.ProcessorCount} 核心";
-                    }
-                }
-            }
-            return $"{Environment.ProcessorCount} 核心 CPU";
-        }
-        catch { }
-        return "未知";
-    }
-
-    private string GetMemoryInfo()
-    {
-        try
-        {
-            ulong installedMemory = GetInstalledMemory();
-            double gb = installedMemory / (1024.0 * 1024.0 * 1024.0);
-            return $"{gb:F1} GB";
-        }
-        catch { }
-        return "未知";
-    }
-
-    private ulong GetInstalledMemory()
-    {
-        try
-        {
-            using (var key = Microsoft.Win32.Registry.LocalMachine.OpenSubKey(@"HARDWARE\DESCRIPTION\System\CentralProcessor\0"))
-            {
-                if (key != null)
-                {
-                    var value = key.GetValue("ProcessorNameString");
-                    if (value != null)
-                    {
-                        // 尝试从注册表获取内存信息
-                        using (var memKey = Microsoft.Win32.Registry.LocalMachine.OpenSubKey(@"SYSTEM\CurrentControlSet\Control\Session Manager\Memory Management"))
-                        {
-                            if (memKey != null)
-                            {
-                                var physicalMemory = memKey.GetValue("PhysicalMemory");
-                                if (physicalMemory is byte[] bytes)
-                                {
-                                    return BitConverter.ToUInt64(bytes, 0);
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-        }
-        catch { }
-        return 8UL * 1024 * 1024 * 1024; // 默认返回8GB
-    }
-
-    private string GetGpuInfo()
-    {
-        try
-        {
-            var decoderType = HardwareDetectionService.GetUseGpuInfo();
-
-            return decoderType;
-        }
-        catch { }
-        return "未知";
-    }
-
-    private string GetOSInfo()
-    {
-        try
-        {
-            var os = Environment.OSVersion;
-            if (os.Platform == PlatformID.Win32NT)
-            {
-                if (os.Version.Major == 10 && os.Version.Build >= 22000)
-                {
-                    return "Windows 11";
-                }
-                else if (os.Version.Major == 10)
-                {
-                    return "Windows 10";
-                }
-            }
-            return $"Windows {os.Version.Major}.{os.Version.Minor}";
-        }
-        catch { }
-        return "未知";
-    }
-
-    protected override void OnClosing(System.ComponentModel.CancelEventArgs e)
-    {
-        _logger.Debug("[MainWindow] OnClosing 被调用");
-
-        try
-        {
-            // 取消所有事件订阅，防止事件污染
-            _logger.Debug("[MainWindow] 取消事件订阅...");
-
-            // 取消 FrameUpdated 事件订阅
-            if (_playerService != null)
-            {
-                _playerService.FrameUpdated -= OnFrameUpdated;
-                _playerService.PlaybackRequestedByBlazor -= OnPlaybackRequestedByBlazor;
-            }
-            // 停止播放
-            StopPlaybackInternal();
-
-            // 释放播放器服务
-            _logger.Debug("[MainWindow] Disposing player service...");
-            (_playerService as IDisposable)?.Dispose();
-            _logger.Debug("[MainWindow] Player service disposed");
-        }
-        catch (Exception ex)
-        {
-            _logger.Error($"[MainWindow] Error during closing: {ex.Message}");
-        }
-
-        _hideControlsTimer?.Stop();
-        _progressTimer?.Stop();
-
-        _logger.Debug("[MainWindow] Closing completed");
-        base.OnClosing(e);
-    }
-
-
-#endregion
-
-    #region 控制进度条显示的计时器
-    private bool _isDragging = false;
-    private double _dragValue = 0;
-
-    /// <summary>
-    /// 鼠标按下（开始拖动）
-    /// </summary>
-    //private void ProgressSlider_PreviewMouseLeftButtonDown(object sender, MouseButtonEventArgs e)
-    //{
-    //    _isDragging = true;
-
-    //    // 获取鼠标点击位置对应的值
-    //    var slider = (Slider)sender;
-    //    Point point = e.GetPosition(slider);
-    //    double percent = point.X / slider.ActualWidth;
-    //    _dragValue = percent * slider.Maximum;
-
-    //    // 显示时间标签
-    //    SeekTimeLabel.Visibility = Visibility.Visible;
-    //    UpdateSeekTimeLabel(_dragValue);
-
-    //    // 可选：显示小手光标
-    //    slider.Cursor = Cursors.Hand;
-    //}
-
-    /// <summary>
-    /// 鼠标移动（拖动中）
-    /// </summary>
-    //private void ProgressSlider_PreviewMouseMove(object sender, MouseEventArgs e)
-    //{
-    //    if (!_isDragging) return;
-
-    //    var slider = (Slider)sender;
-    //    Point point = e.GetPosition(slider);
-    //    double percent = Math.Max(0, Math.Min(1, point.X / slider.ActualWidth));
-    //    _dragValue = percent * slider.Maximum;
-
-    //    // 实时更新时间显示
-    //    UpdateSeekTimeLabel(_dragValue);
-    //}
-
-    /// <summary>
-    /// 鼠标松开（结束拖动，执行 Seek）
-    /// </summary>
-    //private void ProgressSlider_PreviewMouseLeftButtonUp(object sender, MouseButtonEventArgs e)
-    //{
-    //    if (!_isDragging) return;
-    //    _isDragging = false;
-
-    //    var slider = (Slider)sender;
-
-    //    // 隐藏时间标签
-    //    SeekTimeLabel.Visibility = Visibility.Collapsed;
-    //    slider.Cursor = Cursors.Arrow;
-
-    //    // 执行 Seek 跳转
-    //    SeekTo(_dragValue);
-    //}
-
-    /// <summary>
-    /// 滑块值改变时（用于播放进度更新）
-    /// </summary>
-    //private void ProgressSlider_ValueChanged(object sender, RoutedPropertyChangedEventArgs<double> e)
-    //{
-    //    // 如果不是用户拖动，更新滑块值（来自播放器的进度更新）
-    //    if (!_isDragging)
-    //    {
-    //        _dragValue = e.NewValue;
-    //        UpdateSeekTimeLabel(_dragValue);
-    //    }
-    //}
-
-    /// <summary>
-    /// 更新时间标签显示
-    /// </summary>
-    //private void UpdateSeekTimeLabel(double milliseconds)
-    //{
-    //    TimeSpan time = TimeSpan.FromMilliseconds(milliseconds);
-    //    SeekTimeLabel.Text = time.ToString(@"hh\:mm\:ss");
-    //}
-
-    ///// <summary>
-    ///// 执行 Seek 跳转
-    ///// </summary>
-    //private void SeekTo(double milliseconds)
-    //{ 
-    //    // 发送 Seek 命令到解码器
-    //    //  _decoder?.Seek((long)milliseconds);
-
-    //    //DebugLogger.WriteLine($"[Seek] 跳转到: {TimeSpan.FromMilliseconds(milliseconds):hh\\:mm\\:ss}");
-    //    try
-    //    {
-    //        ProgressSlider_MouseUp(null,null);
-    //        // 更新滑块值
-    //       //        ProgressSlider.Value = milliseconds;
-    //        var newPosition = TimeSpan.FromMilliseconds(milliseconds);
-    //        CurrentTimeText.Text = FormatTime(newPosition);
-    //    }
-    //    catch { }
-    //}
-
-    #endregion
-
-    #region 字幕下载功能
-
-    /// <summary>
-    /// 打开字幕下载对话框
-    /// </summary>
-    private void DownloadSubtitleButton_Click(object sender, RoutedEventArgs e)
-    {
-        SubtitlePopup.IsOpen = false;
-
-        // 默认填充当前电影名称作为搜索关键词
-        if (!string.IsNullOrEmpty(_currentMovieTitle))
-        {
-            SubtitleSearchBox.Text = _currentMovieTitle;
-        }
-
-        // 默认选择中文
-        SubtitleLanguageCombo.SelectedIndex = 0;
-        SubtitleSearchStatus.Text = string.Empty;
-        SubtitleResultsPanel.Children.Clear();
-
-        SubtitleDownloadPopup.IsOpen = true;
-        _logger.Debug("[MainWindow] Subtitle download popup opened");
-    }
-
-    /// <summary>
-    /// 关闭字幕下载对话框
-    /// </summary>
-    private void CloseSubtitleDownloadButton_Click(object sender, RoutedEventArgs e)
-    {
-        SubtitleDownloadPopup.IsOpen = false;
-        _logger.Debug("[MainWindow] Subtitle download popup closed");
-    }
-
-    /// <summary>
-    /// 搜索字幕
-    /// </summary>
-    private async void SearchSubtitleButton_Click(object sender, RoutedEventArgs e)
-    {
-        if (_subtitleService == null)
-        {
-            SubtitleSearchStatus.Text = "字幕服务不可用";
-            return;
-        }
-
-        string query = SubtitleSearchBox.Text.Trim();
-        if (string.IsNullOrEmpty(query))
-        {
-            SubtitleSearchStatus.Text = "请输入搜索关键词";
-            return;
-        }
-
-        string language = "zh";
-        if (SubtitleLanguageCombo.SelectedItem is ComboBoxItem selectedItem)
-        {
-            language = selectedItem.Tag?.ToString() ?? "zh";
-        }
-
-        SubtitleSearchStatus.Text = "正在搜索...";
-        SubtitleResultsPanel.Children.Clear();
-
-        try
-        {
-            _logger.Debug($"[MainWindow] Searching subtitles for: {query}, language: {language}");
-            var results = await _subtitleService.SearchSubtitlesAsync(query, language);
-
-            if (results.Count == 0)
-            {
-                SubtitleSearchStatus.Text = "未找到匹配的字幕";
-                return;
-            }
-
-            SubtitleSearchStatus.Text = $"找到 {results.Count} 个字幕";
-
-            foreach (var subtitle in results)
-            {
-                var itemPanel = new StackPanel { Orientation = Orientation.Horizontal };
-                itemPanel.Margin = new Thickness(5);
-
-                var infoPanel = new StackPanel { Width = 350 };
-
-                var titleText = new TextBlock
-                {
-                    Text = subtitle.Title,
-                    Foreground = Brushes.White,
-                    FontSize = 13,
-                    TextTrimming = TextTrimming.CharacterEllipsis
-                };
-
-                var detailText = new TextBlock
-                {
-                    Text = $"语言: {subtitle.Language} | 评分: {subtitle.Rating}",
-                    Foreground = Brushes.Gray,
-                    FontSize = 11,
-                    Margin = new Thickness(0, 2, 0, 0)
-                };
-
-                infoPanel.Children.Add(titleText);
-                infoPanel.Children.Add(detailText);
-
-                var downloadButton = new Button
-                {
-                    Content = "下载",
-                    Style = (Style)FindResource("ControlButtonStyle"),
-                    Width = 70,
-                    Tag = subtitle,
-                    Background = new SolidColorBrush(Color.FromRgb(233, 69, 96))
-                };
-                downloadButton.Click += DownloadSubtitleItem_Click;
-
-                itemPanel.Children.Add(infoPanel);
-                itemPanel.Children.Add(downloadButton);
-
-                SubtitleResultsPanel.Children.Add(itemPanel);
-            }
-        }
-        catch (Exception ex)
-        {
-            _logger.Error(ex, "[MainWindow] Subtitle search failed");
-            SubtitleSearchStatus.Text = "搜索失败，请稍后重试";
-        }
-    }
-
-    /// <summary>
-    /// 下载选中的字幕
-    /// </summary>
-    private async void DownloadSubtitleItem_Click(object sender, RoutedEventArgs e)
-    {
-        if (_subtitleService == null || sender is not Button button || button.Tag is not SubtitleResult subtitle)
-            return;
-
-        button.IsEnabled = false;
-        SubtitleSearchStatus.Text = "正在下载...";
-
-        try
-        {
-            _logger.Debug($"[MainWindow] Downloading subtitle: {subtitle.Title}");
-            var subtitleData = await _subtitleService.DownloadSubtitleAsync(subtitle.DownloadUrl);
-
-            if (subtitleData == null || subtitleData.Length == 0)
-            {
-                SubtitleSearchStatus.Text = "下载失败";
-                button.IsEnabled = true;
-                return;
-            }
-
-            // 保存字幕到视频文件所在目录
-            string savedPath = string.Empty;
-
-            // 如果正在播放视频，保存到视频目录
-            if (_playerService != null && _playerService.IsPlaying)
-            {
-                // 尝试获取当前播放的文件路径
-                string? videoPath = _playerService.GetCurrentRequestedFilePath();
-                if (!string.IsNullOrEmpty(videoPath) && File.Exists(videoPath))
-                {
-                    string directory = Path.GetDirectoryName(videoPath)!;
-                    string videoName = Path.GetFileNameWithoutExtension(videoPath);
-                    string subtitleFileName = $"{videoName}{subtitle.Extension}";
-                    savedPath = Path.Combine(directory, subtitleFileName);
-
-                    await File.WriteAllBytesAsync(savedPath, subtitleData);
-                    _logger.Debug($"[MainWindow] Subtitle saved to: {savedPath}");
-
-                    // 字幕加载功能暂不支持
-                    _logger.Debug("[MainWindow] Subtitle downloaded successfully");
-                }
-            }
-
-            // 如果没有正在播放的视频，保存到默认目录
-            if (string.IsNullOrEmpty(savedPath))
-            {
-                savedPath = await _subtitleService.SaveSubtitleAsync(0, subtitleData, subtitle.Extension);
-            }
-
-            SubtitleSearchStatus.Text = $"字幕已保存: {Path.GetFileName(savedPath)}";
-            button.Content = "已下载";
-            _logger.Debug($"[MainWindow] Subtitle download completed: {savedPath}");
-        }
-        catch (Exception ex)
-        {
-            _logger.Error(ex, "[MainWindow] Subtitle download failed");
-            SubtitleSearchStatus.Text = "下载失败";
-            button.IsEnabled = true;
-        }
-    }
-
-    #endregion
-
-    #region BDMV/ISO 蓝光支持
-
-    /// <summary>
-    /// 挂载 ISO 文件为虚拟驱动器，返回挂载点路径
-    /// </summary>
     private string? MountIsoForBdmv(string isoPath)
     {
         try
         {
-            _logger.Debug($"[BDMV] Mounting ISO: {isoPath}");
+            using var managementClass = new ManagementClass("Win32_CDROMDrive");
+            var drivesBefore = managementClass.GetInstances().Cast<ManagementObject>()
+                .Select(m => m["DeviceID"]?.ToString()).ToList();
 
             var psi = new System.Diagnostics.ProcessStartInfo
             {
                 FileName = "powershell.exe",
-                Arguments = $"-NoProfile -Command \"$result = Mount-DiskImage -ImagePath '{isoPath}' -PassThru; $drive = ($result | Get-Volume).DriveLetter; if ($drive) {{ $drive + ':' }}\"",
-                RedirectStandardOutput = true,
-                RedirectStandardError = true,
+                Arguments = $"-Command \"Mount-DiskImage -ImagePath '{isoPath}' -PassThru | Get-Volume | Select-Object -ExpandProperty DriveLetter\"",
                 UseShellExecute = false,
+                RedirectStandardOutput = true,
                 CreateNoWindow = true
             };
 
             using var process = System.Diagnostics.Process.Start(psi);
-            if (process == null)
+            process?.WaitForExit(5000);
+            var output = process?.StandardOutput.ReadToEnd().Trim();
+
+            if (!string.IsNullOrEmpty(output))
             {
-                _logger.Error("[BDMV] Failed to start PowerShell for ISO mount");
-                return null;
+                return $"{output}:\\";
             }
 
-            string output = process.StandardOutput.ReadToEnd().Trim();
-            process.WaitForExit(10000);
+            using var managementClassAfter = new ManagementClass("Win32_CDROMDrive");
+            var drivesAfter = managementClassAfter.GetInstances().Cast<ManagementObject>()
+                .Select(m => m["DeviceID"]?.ToString()).ToList();
 
-            if (!string.IsNullOrEmpty(output) && output.Length >= 2)
+            var newDrive = drivesAfter.Except(drivesBefore).FirstOrDefault();
+            if (!string.IsNullOrEmpty(newDrive))
             {
-                string mountPoint = output + "\\";
-                _logger.Debug($"[BDMV] ISO mounted at: {mountPoint}");
-                return mountPoint;
+                return newDrive;
             }
-
-            _logger.Error($"[BDMV] Mount failed, output: {output}");
         }
         catch (Exception ex)
         {
-            _logger.Error($"[BDMV] Mount ISO error: {ex.Message}");
+            _logger.Debug($"[Player] ISO挂载失败: {ex.Message}");
         }
 
         return null;
     }
 
-    /// <summary>
-    /// 卸载 ISO 虚拟驱动器
-    /// </summary>
     private void DismountIso(string isoPath)
     {
         try
         {
-            _logger.Debug($"[BDMV] Dismounting ISO: {isoPath}");
-
             var psi = new System.Diagnostics.ProcessStartInfo
             {
                 FileName = "powershell.exe",
-                Arguments = $"-NoProfile -Command \"Dismount-DiskImage -ImagePath '{isoPath}'\"",
-                RedirectStandardOutput = true,
-                RedirectStandardError = true,
+                Arguments = $"-Command \"Dismount-DiskImage -ImagePath '{isoPath}'\"",
                 UseShellExecute = false,
+                RedirectStandardOutput = true,
                 CreateNoWindow = true
             };
 
@@ -2101,13 +1745,10 @@ public partial class ControlWindow : Window
         }
         catch (Exception ex)
         {
-            _logger.Error($"[BDMV] Dismount ISO error: {ex.Message}");
+            _logger.Debug($"[Player] ISO卸载失败: {ex.Message}");
         }
     }
 
-    /// <summary>
-    /// 显示 BDMV 标题选择对话框，返回用户选择的文件路径，取消返回 null
-    /// </summary>
     private string? ShowBdmvTitleDialog(string bdmvPath, string title)
     {
         var titles = MovieAgent.Infrastructure.Services.LocalPlayerService.GetBdmvTitles(bdmvPath);
@@ -2125,7 +1766,7 @@ public partial class ControlWindow : Window
         }
 
         // 创建选择对话框
-        var dialog = new Window
+        var dialog = new System.Windows.Window
         {
             Title = $"蓝光标题选择 - {title}",
             Width = 500,
@@ -2156,7 +1797,7 @@ public partial class ControlWindow : Window
         };
         Grid.SetRow(buttonPanel, 1);
 
-        var playButton = new Button
+        var playButton = new System.Windows.Controls.Button
         {
             Content = "播放选中",
             Width = 100,
@@ -2165,7 +1806,7 @@ public partial class ControlWindow : Window
             IsDefault = true
         };
 
-        var cancelButton = new Button
+        var cancelButton = new System.Windows.Controls.Button
         {
             Content = "取消",
             Width = 100,
@@ -2208,36 +1849,36 @@ public partial class ControlWindow : Window
         _currentMovieTitle = movieTitle;
         if (_playerService == null) return;
 
-        _videoWindow.Width = 1200;
-        _videoWindow.Height = 800;
-        _videoWindow.Left = 100;
-        _videoWindow.Top = 100;
-        _videoWindow.WindowState = WindowState.Normal;
-        _videoWindow.Topmost = false;
+        //_videoWindow.Width = 1200;
+        //_videoWindow.Height = 800;
+        //_videoWindow.Left = 100;
+        //_videoWindow.Top = 100;
+        // _videoWindow.WindowState = WindowState.Normal;
+        this.Topmost = false;
         SyncControlPosition();
 
         // 等待 VideoRenderer 设备就绪 
         // 强制同步等待最多 5 秒
         for (int i = 0; i < 50; i++)
         {
-            
 
-            if (_videoWindow.GetDevice() != null)
-            { 
-                var device = _videoWindow.GetDevice();
+
+            if (this.GetDevice() != null)
+            {
+                var device = this.GetDevice();
                 if (device != null)
                 {
                     _playerService.SetD3d11Device(device);
                     // 用 device 初始化硬件解码器
                     _logger.Debug($"[VideoRendererControl] GetDevice已调用,初始化硬件解码器");
                 }
-                DebugLogger.WriteLine("设备就绪！"); 
+                DebugLogger.WriteLine("设备就绪！");
                 break;
             }
             System.Threading.Thread.Sleep(100);
             DebugLogger.WriteLine($"等待设备中... 尝试 {i + 1}");
         }
-        if (_videoWindow.GetDevice() == null)
+        if (this.GetDevice() == null)
             DebugLogger.WriteLine("设备最终仍然为 null，初始化失败");
 
         // 订阅帧事件（由 ControlWindow 接管渲染）

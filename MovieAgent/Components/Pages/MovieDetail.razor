@@ -1,4 +1,4 @@
-@page "/movie/{Id:int}"
+@page "/movie/{Id}"
 @using MovieAgent.Components.Controls
 @inject IMovieRepository MovieRepo
 @inject MovieAgent.Infrastructure.Services.ITagService TagService
@@ -7,6 +7,7 @@
 @inject MovieAgent.Infrastructure.Services.IDoubanService DoubanService
 @inject MovieAgent.Infrastructure.Services.IMovieReviewService ReviewService
 @inject IJSRuntime JSRuntime
+@inject IServiceProvider ServiceProvider
 
 <PageTitle>@(_movie?.Title ?? "电影详情")</PageTitle>
 
@@ -122,7 +123,17 @@ else
                 @if (!string.IsNullOrEmpty(_movie.Director))
                 {
                     <MudText Typo="Typo.body2" Style="margin-bottom: 4px;">
-                        <span style="color: #888;">导演:</span> <span style="color: #E0E0E0;">@_movie.Director</span>
+                        <span style="color: #888;">导演:</span> 
+                        @if (!string.IsNullOrEmpty(_movie.DirectorTmdbId))
+                        {
+@*                             <MudLink Href="@($"/person/{_movie.DirectorTmdbId}")" Style="color: #E94560;">@_movie.Director</MudLink>
+ *@                                @RenderDirectorLinks(_movie.Director, _movie.DirectorTmdbId)
+
+                        }
+                        else
+                        {
+                            <span style="color: #E0E0E0;">@_movie.Director</span>
+                        }
                     </MudText>
                 }
 
@@ -130,7 +141,9 @@ else
                 @if (!string.IsNullOrEmpty(_movie.Writer))
                 {
                     <MudText Typo="Typo.body2" Style="margin-bottom: 4px;">
-                        <span style="color: #888;">编剧:</span> <span style="color: #E0E0E0;">@_movie.Writer</span>
+                        <span style="color: #888;">编剧:</span> @* <span style="color: #E0E0E0;">@_movie.Writer</span> *@
+                            @RenderWriterLinks(_movie.Writer, _movie.WriterTmdbIds)
+
                     </MudText>
                 }
 
@@ -138,8 +151,9 @@ else
                 @if (!string.IsNullOrEmpty(_movie.Cast))
                 {
                     <MudText Typo="Typo.body2" Style="margin-bottom: 4px;">
-                        <span style="color: #888;">主演:</span> <span style="color: #E0E0E0;">@_movie.Cast</span>
-                    </MudText>
+                        <span style="color: #888;">主演:</span> 
+                            @RenderCastLinks(_movie.Cast, _movie.CastTmdbIds)
+                        </MudText>
                 }
 
                 <!-- 地区 -->
@@ -162,7 +176,8 @@ else
                 @if (!string.IsNullOrEmpty(_movie.ProductionCompanies))
                 {
                     <MudText Typo="Typo.body2" Style="margin-bottom: 4px;">
-                        <span style="color: #888;">制片公司:</span> <span style="color: #E0E0E0;">@GetCompanies()</span>
+                        <span style="color: #888;">制片公司:</span> 
+                        @RenderCompanyLinks(_movie.ProductionCompanies, _movie.ProductionCompanyIds)
                     </MudText>
                 }
 
@@ -330,7 +345,7 @@ else
             </MudStack>
 
             <!-- 评分同步 -->
-                <div style="margin-top: 16px; padding: 12px; background: #2D2D44; border-radius: 8px;opacity: 0.8;">
+          @*       <div style="margin-top: 16px; padding: 12px; background: #2D2D44; border-radius: 8px;opacity: 0.8;">
                 <MudText Typo="Typo.subtitle2" Style="color: #E94560; margin-bottom: 8px;">评分同步</MudText>
                 <MudStack Row="true" Wrap="Wrap.Wrap" Spacing="2" AlignItems="AlignItems.Center">
                     <MudTextField T="string" @bind-Value="_doubanId" Placeholder="豆瓣电影ID" Style="width: 180px;" />
@@ -364,7 +379,7 @@ else
                 {
                     <MudText Typo="Typo.caption" Style="color: #E94560; margin-top: 8px;">@_doubanMessage</MudText>
                 }
-            </div>
+            </div> *@
 
             <!-- 影评区域 -->
                 <div style="margin-top: 16px; padding: 12px; background: #2D2D44; border-radius: 8px;opacity: 0.8;">
@@ -409,7 +424,7 @@ else
     </MudGrid>
     
     <!-- 相似电影推荐 -->
-    <SimilarMoviesPanel MovieId="@Id" TopK="6" />
+    <SimilarMoviesPanel MovieId="@_localId" TopK="6" />
 }
 
 <!-- 影评编辑对话框 -->
@@ -417,7 +432,7 @@ else
     <DialogContent>
         <MudStack Spacing="3">
             <MudText Typo="Typo.h6">@(_isEditingReview ? "编辑影评" : "写影评")</MudText>
-            <MudRating @bind-Value="_reviewRating" Size="Size.Medium" Color="Color.Warning" />
+            <MudRating @bind-SelectedValue="_reviewRating" Size="Size.Medium" Color="Color.Warning" />
             <MudTextField T="string" @bind-Value="_reviewContent" Label="影评内容" Variant="Variant.Outlined" 
                          Lines="6" Placeholder="写下你对这部电影的感受..." />
         </MudStack>
@@ -431,25 +446,26 @@ else
 </MudDialog>
 
 @code {
-    [Parameter] public int Id { get; set; }
+    [Parameter] public string Id { get; set; } = string.Empty;
+    private int _localId;
     private Movie? _movie;
     private int _userRating;
     private List<string> _tags = new();
     private string _newTag = string.Empty;
     private bool _isGenerating = false;
     private bool _isLoading = false;
-    
+
     private string _doubanId = string.Empty;
     private MovieAgent.Infrastructure.Services.DoubanMovieInfo? _doubanMovie;
     private bool _isSearching = false;
     private string _doubanMessage = string.Empty;
     private string _ratingSource = string.Empty;
-    
+
     private List<MovieAgent.Core.Entities.MovieReview> _reviews = new();
     private MovieAgent.Core.Entities.MovieReview? _myReview;
     private bool _reviewDialogVisible = false;
     private bool _isEditingReview = false;
-    private int _reviewRating = 3;
+    private int _reviewRating = 5;
     private string _reviewContent = string.Empty;
     private int? _editingReviewId;
 
@@ -473,7 +489,28 @@ else
 
         try
         {
-            _movie = await MovieRepo.GetByIdAsync(Id);
+            if (int.TryParse(Id, out var localId))
+            {
+                _movie = await MovieRepo.GetByIdAsync(localId);
+                _localId = localId;
+            }
+
+            if (_movie == null)
+            {
+                _movie = await MovieRepo.GetByTmdbIdAsync(Id);
+                if (_movie != null)
+                {
+                    _localId = _movie.Id;
+                    Id = _movie.Id.ToString();
+                }
+                else
+
+                {
+                    var dialog = ServiceProvider.GetRequiredService<IDialogService>(); 
+                     await dialog.ShowMessageBoxAsync("查询失败", $"本地库没有相关的电影", yesText: "确定"); 
+                    return;
+                }
+            }
             if (_movie != null)
             {
                 // 自动获取海报和媒体信息（如果数据库中没有）
@@ -513,7 +550,7 @@ else
                 _ratingSource = _movie?.TmdbId != null ? "TMDB" : string.Empty;
             }
 
-            _tags = await TagService.GetTagsAsync(Id);
+            _tags = await TagService.GetTagsAsync(_localId);
             _newTag = string.Empty;
         }
         finally
@@ -525,13 +562,13 @@ else
 
     private async Task LoadReviews()
     {
-        _reviews = await ReviewService.GetReviewsByMovieAsync(Id);
+        _reviews = await ReviewService.GetReviewsByMovieAsync(_localId);
         _myReview = _reviews.FirstOrDefault();
     }
 
     private async Task LoadTags()
     {
-        _tags = await TagService.GetTagsAsync(Id);
+        _tags = await TagService.GetTagsAsync(_localId);
         _newTag = string.Empty;
     }
 
@@ -539,13 +576,13 @@ else
     {
         if (string.IsNullOrWhiteSpace(_newTag)) return;
 
-        await TagService.AddTagAsync(Id, _newTag.Trim());
+        await TagService.AddTagAsync(_localId, _newTag.Trim());
         await LoadTags();
     }
 
     private async Task RemoveTag(string tag)
     {
-        await TagService.RemoveTagAsync(Id, tag);
+        await TagService.RemoveTagAsync(_localId, tag);
         await LoadTags();
     }
 
@@ -558,7 +595,7 @@ else
 
         try
         {
-            await TagService.AddAllAiTagsAsync(Id);
+            await TagService.AddAllAiTagsAsync(_localId);
             await LoadTags();
         }
         finally
@@ -639,6 +676,269 @@ else
         }
     }
 
+    private RenderFragment RenderCastLinks() => __builder =>
+    {
+        try
+        {
+            if (string.IsNullOrEmpty(_movie?.Cast))
+                return;
+
+            var castNames = _movie.Cast.Split(',').Select(n => n.Trim()).ToList();
+            var castIds = new List<string?>();
+
+            if (!string.IsNullOrEmpty(_movie.CastTmdbIds))
+            {
+                castIds = System.Text.Json.JsonSerializer.Deserialize<List<string>>(_movie.CastTmdbIds) ?? new List<string?>();
+            }
+
+            for (int i = 0; i < castNames.Count; i++)
+            {
+                if (i > 0)
+                {
+                    <span style="color: #888;">, </span>
+                }
+                var id = i < castIds.Count ? castIds[i] : null;
+                if (!string.IsNullOrEmpty(id))
+                {
+                    <MudLink Href="@($"/person/{id}")" Style="color: #E94560;">@castNames[i >= castNames.Count ? castNames.Count -1:i]</MudLink>
+                }
+                else
+                {
+                    <span style="color: #E0E0E0;">@castNames[i]</span>
+                }
+            }
+            
+        }
+        catch
+        {
+            <span style="color: #E0E0E0;">@_movie?.Cast</span>
+        }
+    };
+
+    private RenderFragment RenderCompanyLinks() => __builder =>
+    {
+        try
+        {
+            if (string.IsNullOrEmpty(_movie?.ProductionCompanies))
+                return;
+            
+            List<string> companyNames;
+            try
+            {
+                companyNames = System.Text.Json.JsonSerializer.Deserialize<List<string>>(_movie.ProductionCompanies) ?? new List<string>();
+            }
+            catch
+            {
+                companyNames = _movie.ProductionCompanies.Split('、').Select(n => n.Trim()).ToList();
+            }
+            
+            var companyIds = new List<string?>();
+            
+            if (!string.IsNullOrEmpty(_movie.ProductionCompanyIds))
+            {
+                companyIds = System.Text.Json.JsonSerializer.Deserialize<List<string>>(_movie.ProductionCompanyIds) ?? new List<string?>();
+            }
+            
+            for (int i = 0; i < companyNames.Count; i++)
+            {
+                if (i > 0)
+                {
+                    <span style="color: #888;">, </span>
+                }
+                if (i >=companyNames.Count) return;
+                var id = i < companyIds.Count ? companyIds[i] : null;
+                if (!string.IsNullOrEmpty(id))
+                {
+                    <MudLink Href="@($"/company/{id}")" Style="color: #E94560;">@companyNames[i]</MudLink>
+                }
+                else
+                {
+                    <span style="color: #E0E0E0;">@companyNames[i]</span>
+                }
+            }
+        }
+        catch
+        {
+            <span style="color: #E0E0E0;">@GetCompanies()</span>
+        }
+    };
+    private RenderFragment RenderDirectorLinks(string director, string? directorTmdbId)
+    {
+        return builder =>
+        {
+            if (!string.IsNullOrEmpty(directorTmdbId) && long.TryParse(directorTmdbId, out var id))
+            {
+                builder.OpenComponent<MudLink>(0);
+                builder.AddAttribute(1, "Href", NavigationManager.ToAbsoluteUri($"/person/{id}").ToString());
+                builder.AddAttribute(2, "Style", "color: #E94560; text-decoration: none;");
+                builder.AddAttribute(3, "ChildContent", (RenderFragment)(b =>
+                {
+                    b.AddContent(0, director);
+                }));
+                builder.CloseComponent();
+            }
+            else
+            {
+                builder.OpenComponent<MudText>(0);
+                builder.AddAttribute(1, "Typo", Typo.body2);
+                builder.AddAttribute(2, "Style", "color: white;");
+                builder.AddAttribute(3, "ChildContent", (RenderFragment)(b =>
+                {
+                    b.AddContent(0, director);
+                }));
+                builder.CloseComponent();
+            }
+        };
+    }
+
+    private RenderFragment RenderWriterLinks(string writers, string? writerTmdbIds)
+    {
+        return builder =>
+        {
+            var writerList = writers.Split(',');
+            var idList = ParseIdList(writerTmdbIds);
+
+            for (int i = 0; i < writerList.Length; i++)
+            {
+                var writer = writerList[i].Trim();
+                var tmdbId = i < idList.Count ? idList[i] : null;
+
+                if (!string.IsNullOrEmpty(tmdbId) && long.TryParse(tmdbId, out var id))
+                {
+                    builder.OpenComponent<MudLink>(i * 2);
+                    builder.AddAttribute(i * 2 + 1, "Href", NavigationManager.ToAbsoluteUri($"/person/{id}").ToString());
+                    builder.AddAttribute(i * 2 + 2, "Style", "color: #E94560; text-decoration: none;");
+                    builder.AddAttribute(i * 2 + 3, "ChildContent", (RenderFragment)(b =>
+                    {
+                        b.AddContent(0, writer);
+                    }));
+                    builder.CloseComponent();
+                }
+                else
+                {
+                    builder.OpenComponent<MudText>(i * 2);
+                    builder.AddAttribute(i * 2 + 1, "Typo", Typo.body2);
+                    builder.AddAttribute(i * 2 + 2, "Style", "color: white;");
+                    builder.AddAttribute(i * 2 + 3, "ChildContent", (RenderFragment)(b =>
+                    {
+                        b.AddContent(0, writer);
+                    }));
+                    builder.CloseComponent();
+                }
+
+                if (i < writerList.Length - 1)
+                {
+                    builder.AddContent(i * 2 + 4, "、");
+                }
+            }
+        };
+    }
+
+    private RenderFragment RenderCastLinks(string cast, string? castTmdbIds)
+    {
+        return builder =>
+        {
+            var castList = cast.Split(',');
+            var idList = ParseIdList(castTmdbIds);
+
+            for (int i = 0; i < castList.Length; i++)
+            {
+                var actor = castList[i].Trim();
+                var tmdbId = i < idList.Count ? idList[i] : null;
+
+                if (!string.IsNullOrEmpty(tmdbId) && long.TryParse(tmdbId, out var id))
+                {
+                    builder.OpenComponent<MudLink>(i * 2);
+                    builder.AddAttribute(i * 2 + 1, "Href", NavigationManager.ToAbsoluteUri($"/person/{id}").ToString());
+                    builder.AddAttribute(i * 2 + 2, "Style", "color: #E94560; text-decoration: none;");
+                    builder.AddAttribute(i * 2 + 3, "ChildContent", (RenderFragment)(b =>
+                    {
+                        b.AddContent(0, actor);
+                    }));
+                    builder.CloseComponent();
+                }
+                else
+                {
+                    builder.OpenComponent<MudText>(i * 2);
+                    builder.AddAttribute(i * 2 + 1, "Typo", Typo.body2);
+                    builder.AddAttribute(i * 2 + 2, "Style", "color: white;");
+                    builder.AddAttribute(i * 2 + 3, "ChildContent", (RenderFragment)(b =>
+                    {
+                        b.AddContent(0, actor);
+                    }));
+                    builder.CloseComponent();
+                }
+
+                if (i < castList.Length - 1)
+                {
+                    builder.AddContent(i * 2 + 4, "、");
+                }
+            }
+        };
+    }
+    private RenderFragment RenderCompanyLinks(string companies, string? companyIds)
+    {
+        return builder =>
+        {
+            List<string> companyList;
+            try
+            {
+                companyList = System.Text.Json.JsonSerializer.Deserialize<List<string>>(companies) ?? new List<string>();
+            }
+            catch
+            {
+                companyList = companies.Split('、').ToList();
+            }
+
+            var idList = ParseIdList(companyIds);
+
+            for (int i = 0; i < Math.Min(companyList.Count, 3); i++)
+            {
+                var company = companyList[i];
+                var tmdbId = i < idList.Count ? idList[i] : null;
+
+                if (!string.IsNullOrEmpty(tmdbId) && long.TryParse(tmdbId, out var id))
+                {
+                    builder.OpenComponent<MudLink>(i * 2);
+                    builder.AddAttribute(i * 2 + 1, "Href", NavigationManager.ToAbsoluteUri($"/company/{id}").ToString());
+                    builder.AddAttribute(i * 2 + 2, "Style", "color: #E94560; text-decoration: none;");
+                    builder.AddAttribute(i * 2 + 3, "ChildContent", (RenderFragment)(b =>
+                    {
+                        b.AddContent(0, company);
+                    }));
+                    builder.CloseComponent();
+                }
+                else
+                {
+                    builder.OpenComponent<MudText>(i * 2);
+                    builder.AddAttribute(i * 2 + 1, "Typo", Typo.body2);
+                    builder.AddAttribute(i * 2 + 2, "Style", "color: white;");
+                    builder.AddAttribute(i * 2 + 3, "ChildContent", (RenderFragment)(b =>
+                    {
+                        b.AddContent(0, company);
+                    }));
+                    builder.CloseComponent();
+                }
+
+                if (i < Math.Min(companyList.Count, 3) - 1)
+                {
+                    builder.AddContent(i * 2 + 4, "、");
+                }
+            }
+        };
+    }
+    private List<string> ParseIdList(string? jsonIds)
+    {
+        if (string.IsNullOrEmpty(jsonIds)) return new List<string>();
+        try
+        {
+            return System.Text.Json.JsonSerializer.Deserialize<List<string>>(jsonIds) ?? new List<string>();
+        }
+        catch
+        {
+            return new List<string>();
+        }
+    }
     private string GetKeywords()
     {
         try
@@ -717,7 +1017,7 @@ else
     private void ShowReviewDialog()
     {
         _isEditingReview = false;
-        _reviewRating = 3;
+        _reviewRating = 5;
         _reviewContent = string.Empty;
         _editingReviewId = null;
         _reviewDialogVisible = true;
@@ -736,7 +1036,7 @@ else
     {
         _reviewDialogVisible = false;
         _isEditingReview = false;
-        _reviewRating = 3;
+        _reviewRating = 5;
         _reviewContent = string.Empty;
         _editingReviewId = null;
     }
@@ -754,7 +1054,7 @@ else
         else
         {
             // 创建新影评
-            await ReviewService.CreateReviewAsync(Id, _reviewContent, _reviewRating);
+            await ReviewService.CreateReviewAsync(_localId, _reviewContent, _reviewRating);
         }
 
         await LoadReviews();

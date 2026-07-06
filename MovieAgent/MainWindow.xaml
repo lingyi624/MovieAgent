@@ -3,11 +3,11 @@
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         xmlns:blazor="clr-namespace:Microsoft.AspNetCore.Components.WebView.Wpf;assembly=Microsoft.AspNetCore.Components.WebView.Wpf"
         xmlns:controls="clr-namespace:MovieAgent.Controls"
-        Title="Movie Agent - 您的智能电影管家"
+        Title="Movie Agent (小雪雪) - 您的智能电影管家"
         Width="1400" Height="900"  
         MinWidth="1024" MinHeight="700"  
         WindowStartupLocation="CenterScreen"
-        WindowState="Maximized"
+        WindowState="Maximized" 
          Background="#1A1A2E">
   
     

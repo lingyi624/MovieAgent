@@ -1,24 +1,24 @@
 using System.Diagnostics;
 using System.IO;
 using System.Net.Http;
-using System.Net.Http.Json;
 using System.Text;
 using System.Text.Json;
+using Microsoft.Extensions.Configuration;
 using MovieAgent.Core.Interfaces;
+using MovieAgent.Infrastructure.Providers;
 
 namespace MovieAgent.Infrastructure.Services;
 
 public class MovieAgentService : IAgentService
 {
-    private readonly HttpClient _httpClient;
     private readonly IMovieRepository _movieRepo;
     private readonly IMovieUpdateService? _movieUpdateService;
     private readonly IPlayerService _player;
     private readonly IConversationMemoryService _memoryService;
     private readonly IHybridSearchService _hybridSearch;
     private readonly IVectorDatabaseService _vectorDb;
-    private string _modelName = string.Empty;
-    private string _ollamaUrl;
+    private IChatProvider? _chatProvider;
+    private readonly ModelConfig _modelConfig;
     private const string DefaultUserId = "default";
 
     public bool IsAvailable { get; private set; }
@@ -26,7 +26,7 @@ public class MovieAgentService : IAgentService
 
     public MovieAgentService(IMovieRepository movieRepo, IMovieUpdateService? movieUpdateService, IPlayerService player, 
         IConversationMemoryService memoryService, IHybridSearchService hybridSearch,
-        IVectorDatabaseService vectorDb, string modelUrl, string modelName)
+        IVectorDatabaseService vectorDb, IConfiguration config)
     {
         _movieRepo = movieRepo;
         _movieUpdateService = movieUpdateService;
@@ -34,13 +34,27 @@ public class MovieAgentService : IAgentService
         _memoryService = memoryService;
         _hybridSearch = hybridSearch;
         _vectorDb = vectorDb;
-        _modelName = modelName;
-        _ollamaUrl = modelUrl;
-        _httpClient = new HttpClient { BaseAddress = new Uri(modelUrl) };
         
-        Debug.WriteLine($"[Agent] Initializing with URL: {modelUrl}, Model: {modelName}");
+        var providerType = Enum.TryParse<ModelProviderType>(config["AI:Provider"] ?? "Ollama", out var type) 
+            ? type 
+            : ModelProviderType.Ollama;
+        
+        _modelConfig = new ModelConfig
+        {
+            Name = config["AI:ModelName"] ?? "phi3.5:3.8b-mini-instruct-q4_K_M",
+            Endpoint = providerType switch
+            {
+                ModelProviderType.DeepSeek => config["AI:DeepSeekUrl"] ?? "https://api.deepseek.com/v1",
+                _ => config["AI:ModelUrl"] ?? "http://localhost:11434"
+            },
+            ApiKey = config["AI:ApiKey"] ?? "",
+            ProviderType = providerType
+        };
+        
+        Debug.WriteLine($"[Agent] Initializing with Provider: {_modelConfig.ProviderType}, Model: {_modelConfig.Name}, Endpoint: {_modelConfig.Endpoint}");
     }
-    public string? ModelName => _modelName;
+    public string? ModelName => _modelConfig.Name;
+
     public async Task InitializeAsync()
     {
         IsAvailable = false;
@@ -50,40 +64,19 @@ public class MovieAgentService : IAgentService
         {
             Debug.WriteLine($"[Agent] Testing connection...");
             
-            var response = await _httpClient.GetAsync("/api/tags");
-            if (response.IsSuccessStatusCode)
+            _chatProvider = ChatProviderFactory.CreateProvider(_modelConfig);
+            IsAvailable = await _chatProvider.InitializeAsync();
+            LastError = _chatProvider.LastError;
+            
+            if (IsAvailable)
             {
-                var json = await response.Content.ReadAsStringAsync();
-                using var doc = JsonDocument.Parse(json);
-                var models = doc.RootElement.GetProperty("models");
-                
-                var modelExists = models.EnumerateArray()
-                    .Any(m => m.GetProperty("name").GetString()?.Contains(_modelName, StringComparison.OrdinalIgnoreCase) == true);
-                
-                if (modelExists)
-                {
-                    IsAvailable = true;
-                    Debug.WriteLine($"[Agent] Connected successfully, model: {_modelName}");
-                }
-                else
-                {
-                    var availableModels = string.Join(", ", models.EnumerateArray()
-                        .Select(m => m.GetProperty("name").GetString()));
-                    LastError = $"模型 '{_modelName}' 未找到。可用模型: {availableModels}";
-                    Debug.WriteLine($"[Agent] Model not found: {_modelName}");
-                }
+                _chatProvider.OnStreamDataReceived += OnStreamDataReceived;
+                Debug.WriteLine($"[Agent] Connected successfully, provider: {_chatProvider.Name}, model: {_modelConfig.Name}");
             }
             else
             {
-                LastError = $"连接失败: {response.StatusCode}";
-                Debug.WriteLine($"[Agent] Connection failed: {response.StatusCode}");
+                Debug.WriteLine($"[Agent] Connection failed: {LastError}");
             }
-        }
-        catch (HttpRequestException ex)
-        {
-            LastError = $"无法连接到 Ollama: {ex.Message}";
-            Debug.WriteLine($"[Agent] Connection error: {ex.Message}");
-            IsAvailable = false;
         }
         catch (Exception ex)
         {
@@ -108,89 +101,28 @@ public class MovieAgentService : IAgentService
             return localResult;
         }
 
-        if (!IsAvailable)
+        if (!IsAvailable || _chatProvider == null)
         {
             var errorMsg = LastError != null 
                 ? $"AI 服务暂不可用: {LastError}" 
-                : "AI 服务暂不可用，请检查 Ollama 是否已启动。";
+                : "AI 服务暂不可用，请检查配置是否正确。";
             _memoryService.AddMessage(DefaultUserId, userMessage, errorMsg);
             return errorMsg;
         }
 
         try
         {
-            Debug.WriteLine($"[Agent] Sending to Ollama: {userMessage}");
+            Debug.WriteLine($"[Agent] Sending to {_chatProvider.Name}: {userMessage}");
            
-             
-            // 不加载历史记录，仅使用当前查询和电影上下文
-            // RAG: 从向量数据库检索相关电影信息
             var movieContext = await BuildMovieContextAsync(userMessage);
+            var fullMessage = $"{movieContext}\n\n{userMessage}";
             
-            // 使用 /api/chat 接口，不包含历史对话
-            var requestBody = new
-            {
-                model = _modelName,
-                messages = new[]
-                {
-                    new { role = "system", content = GetSystemPrompt() },
-                    new { role = "user", content = $"{movieContext}\n\n{userMessage}" }
-                },
-                stream = true,
-                options = new { temperature = 0.1, num_predict = 512, num_ctx = 1024 }
-            };
-
-            var json = JsonSerializer.Serialize(requestBody);
-            var content = new StringContent(json, Encoding.UTF8, "application/json");
+            var response = await _chatProvider.ChatAsync(fullMessage);
             
-            var response = await _httpClient.PostAsync("/api/chat", content);
-            response.EnsureSuccessStatusCode();
+            Debug.WriteLine($"[Agent] Received: {response.Substring(0, Math.Min(50, response.Length))}...");
+            _memoryService.AddMessage(DefaultUserId, userMessage, response);
             
-            Debug.WriteLine($"[Agent] Stream started");
-            using var stream = await response.Content.ReadAsStreamAsync();
-            using var reader = new StreamReader(stream);
-            
-            var result = new StringBuilder();
-            string? line;
-            int chunkCount = 0;
-            
-            while ((line = await reader.ReadLineAsync()) != null)
-            {
-                if (string.IsNullOrWhiteSpace(line)) continue;
-                
-                try
-                {
-                    using var doc = JsonDocument.Parse(line);
-                    if (doc.RootElement.TryGetProperty("message", out var message))
-                    {
-                        if (message.TryGetProperty("content", out var contentElement))
-                        {
-                            var chunk = contentElement.GetString();
-                            if (!string.IsNullOrEmpty(chunk))
-                            {
-                                result.Append(chunk);
-                                chunkCount++;
-                                Debug.WriteLine($"[Agent] Chunk {chunkCount}: {chunk.Substring(0, Math.Min(50, chunk.Length))}...");
-                                OnStreamDataReceived?.Invoke(chunk);
-                            }
-                        }
-                    }
-                }
-                catch (Exception ex) 
-                { 
-                    Debug.WriteLine($"[Agent] Parse error: {ex.Message}, line: {line}"); 
-                }
-            }
-            
-            Debug.WriteLine($"[Agent] Stream completed, total chunks: {chunkCount}, length: {result.Length}");
-            
-            var finalResult = result.ToString().Trim();
-            if (string.IsNullOrWhiteSpace(finalResult))
-                finalResult = "抱歉，我无法理解你的请求。";
-            
-            Debug.WriteLine($"[Agent] Received: {finalResult}");
-            _memoryService.AddMessage(DefaultUserId, userMessage, finalResult);
-            
-            return finalResult;
+            return response;
         }
         catch (Exception ex)
         {
@@ -418,7 +350,7 @@ public class MovieAgentService : IAgentService
         {
             var request = new
             {
-                model = _modelName,
+                model = _modelConfig.Name,
                 messages = new[]
                 {
                     new { role = "system", content = QueryRewritePrompt },
@@ -428,8 +360,9 @@ public class MovieAgentService : IAgentService
                 options = new { temperature = 0.1, num_predict = 80, num_ctx = 256 }
             };
 
+            using var httpClient = new HttpClient { BaseAddress = new Uri(_modelConfig.Endpoint) };
             var content = new StringContent(JsonSerializer.Serialize(request), Encoding.UTF8, "application/json");
-            var response = await _httpClient.PostAsync("/api/chat", content);
+            var response = await httpClient.PostAsync("/api/chat", content);
             var responseString = await response.Content.ReadAsStringAsync();
             Console.WriteLine($"原始响应: {responseString}");
             if (!response.IsSuccessStatusCode)
@@ -438,8 +371,8 @@ public class MovieAgentService : IAgentService
                 return query; // 降级：返回原始查询
             }
 
-            var json = await response.Content.ReadFromJsonAsync<JsonElement>();
-            if (json.TryGetProperty("message", out var messageObj) && 
+            using var doc = JsonDocument.Parse(responseString);
+            if (doc.RootElement.TryGetProperty("message", out var messageObj) && 
                 messageObj.TryGetProperty("content", out var responseText))
             {
                 var rewritten = responseText.GetString()?.Trim() ?? query;

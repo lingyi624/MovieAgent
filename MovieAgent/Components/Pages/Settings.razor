@@ -5,6 +5,10 @@
 @inject IBackupService BackupService
 @inject IMovieExportService ExportService
 @inject IMovieRepository MovieRepo
+@using MovieAgent.Infrastructure.Providers
+@using MovieAgent.Core.Interfaces
+@using System.Text.Json
+@using System.Text
 
 <PageTitle>@LocalizationService.Translate("Settings")</PageTitle>
 
@@ -93,13 +97,49 @@
     </MudTabPanel>
 
     <MudTabPanel Text="AI 模型" Style="background: #1A1A2E; color: #E0E0E0;">
-        <MudText Typo="Typo.h6" Style="margin: 16px 0;">Ollama 配置</MudText>
+        <MudText Typo="Typo.h6" Style="margin: 16px 0;">AI 模型配置</MudText>
         <MudPaper Elevation="1" Style="padding: 16px; background: #2D2D44;">
-            <MudTextField @bind-Value="_modelUrl" Label="Ollama 地址" Variant="Variant.Outlined"
-                          Placeholder="http://localhost:11434" Style="margin-bottom: 16px; background: #2D2D44;" />
-            <MudTextField @bind-Value="_modelName" Label="模型名称" Variant="Variant.Outlined"
-                          Placeholder="phi3.5:3.8b-mini-instruct-q4_K_M" Style="margin-bottom: 16px; background: #2D2D44;" />
+            <MudGrid>
+                <MudItem xs="12" md="6">
+                    <MudSelect @bind-Value="_selectedModel" Label="选择模型" Variant="Variant.Outlined"
+                               Style="background: #2D2D44; margin-bottom: 16px;"
+                               Clearable="false">
+                        <MudSelectItem T="ModelConfig" Value="null">选择模型...</MudSelectItem>
+                        @foreach (var model in _availableModels)
+                        {
+                            <MudSelectItem T="ModelConfig" Value="@model">
+                                @model.Name (@model.ProviderType)
+                            </MudSelectItem>
+                        }
+                    </MudSelect>
+                </MudItem>
+                <MudItem xs="12" md="6">
+                    <MudTextField @bind-Value="_apiKey" Label="API Key (DeepSeek 需要)" 
+                                  Variant="Variant.Outlined" InputType="InputType.Password"
+                                  Placeholder="输入 API Key" Style="background: #2D2D44; margin-bottom: 16px;" />
+                </MudItem>
+            </MudGrid>
+            
+            @if (_selectedModel != null && _selectedModel.ProviderType == ModelProviderType.Ollama)
+            {
+                <MudTextField @bind-Value="_ollamaEndpoint" Label="Ollama 地址" Variant="Variant.Outlined"
+                              Placeholder="http://localhost:11434" Style="background: #2D2D44; margin-bottom: 16px;" />
+            }
+            
+            @if (_selectedModel != null && _selectedModel.ProviderType == ModelProviderType.DeepSeek)
+            {
+                <MudTextField @bind-Value="_deepseekEndpoint" Label="DeepSeek API 地址" Variant="Variant.Outlined"
+                              Placeholder="https://api.deepseek.com/v1" Style="background: #2D2D44; margin-bottom: 16px;" />
+            }
+            
             <MudButton Variant="Variant.Filled" Color="Color.Primary" OnClick="SaveAiSettings" Style="background: #E94560;">保存</MudButton>
+            <MudButton Variant="Variant.Outlined" Color="Color.Secondary" OnClick="TestAiConnection" 
+                       StartIcon="@Icons.Material.Filled.Refresh" Style="margin-left: 8px;">测试连接</MudButton>
+            
+            @if (!string.IsNullOrEmpty(_aiTestResult))
+            {
+                <MudText Typo="Typo.body2" Style="@($"{(_aiTestSuccess ? "color: #4CAF50;" : "color: #E94560;")}margin-top: 12px; display: block;")">@_aiTestResult</MudText>
+            }
         </MudPaper>
     </MudTabPanel>
 
@@ -180,6 +220,63 @@
             }
         </MudPaper>
     </MudTabPanel>
+    
+    <MudTabPanel Text="语音测试" Style="background: #1A1A2E; color: #E0E0E0;">
+        <MudText Typo="Typo.h6" Style="margin: 16px 0;">语音输入测试</MudText>
+        <MudPaper Elevation="1" Style="padding: 16px; background: #2D2D44;">
+            <MudStack Spacing="4" Style="margin-bottom: 16px;">
+                <MudText Typo="Typo.body2" Style="color: #888;">测试语音识别功能，请确保麦克风已正确连接。</MudText>
+                
+                <div style="display: flex; align-items: center; gap: 12px;">
+                    <MudChip T="string" Color="@(_isSpeechAvailable ? Color.Success : Color.Error)">
+                        @(_isSpeechAvailable ? "语音服务可用" : "语音服务不可用")
+                    </MudChip>
+                    <MudChip T="string" Color="@(_isListening ? Color.Warning : Color.Info)">
+                        @(_isListening ? "正在监听" : "未监听")
+                    </MudChip>
+                </div>
+                
+                <MudTextField @bind-Value="_recognizedText" Label="识别结果" Variant="Variant.Outlined"
+                              Placeholder="点击开始监听后说话..." Style="background: #2D2D44;"
+                              ReadOnly="true" Multiline="true" Rows="3" />
+                
+                <MudStack Row="true" Wrap="Wrap.Wrap" Spacing="2">
+                    <MudButton Variant="Variant.Filled" Color="@(_isListening ? Color.Error : Color.Primary)" 
+                               OnClick="ToggleListening" 
+                               Style="@(_isListening ? "background: #E94560;" : "background: #4CAF50;")">
+                        @(_isListening ? "停止监听" : "开始监听")
+                    </MudButton>
+                    <MudButton Variant="Variant.Outlined" Color="Color.Secondary" OnClick="TestSpeak" StartIcon="@Icons.Material.Filled.VolumeUp">
+                        测试语音合成
+                    </MudButton>
+                    <MudButton Variant="Variant.Outlined" Color="Color.Secondary" OnClick="ClearRecognition">
+                        清空结果
+                    </MudButton>
+                </MudStack>
+                
+                @if (_isListening)
+                {
+                    <div style="display: flex; align-items: center; gap: 8px; margin-top: 8px;">
+                        <div class="voice-wave">
+                            <div class="wave-bar"></div>
+                            <div class="wave-bar"></div>
+                            <div class="wave-bar"></div>
+                            <div class="wave-bar"></div>
+                            <div class="wave-bar"></div>
+                        </div>
+                        <MudText Typo="Typo.body2" Style="color: #4CAF50;">正在监听，请说话...</MudText>
+                    </div>
+                }
+                
+                @if (!string.IsNullOrEmpty(_speechStatus))
+                {
+                    <MudText Typo="Typo.body2" Style="@(_speechStatus.Contains("成功") ? "color: #4CAF50;" : "color: #E94560;")">
+                        @_speechStatus
+                    </MudText>
+                }
+            </MudStack>
+        </MudPaper>
+    </MudTabPanel>
 </MudTabs>
 
 @code {
@@ -196,9 +293,25 @@
     private string _exportMessage = "";
     private bool _exportSuccess = false;
 
+    // AI 模型配置
+    private List<ModelConfig> _availableModels = new();
+    private ModelConfig? _selectedModel;
+    private string _apiKey = "";
+    private string _ollamaEndpoint = "http://localhost:11434";
+    private string _deepseekEndpoint = "https://api.deepseek.com/v1";
+    private string _aiTestResult = "";
+    private bool _aiTestSuccess = false;
+    
+    // 语音测试配置
+    [Inject] private ISpeechService SpeechService { get; set; } = null!;
+    private bool _isSpeechAvailable = false;
+    private bool _isListening = false;
+    private string _recognizedText = "";
+    private string _speechStatus = "";
+
     private string CurrentLanguageText => LocalizationService.CurrentLanguage == Language.Chinese ? "中文" : "English";
 
-    protected override void OnInitialized()
+    protected override async Task OnInitializedAsync()
     {
         LoadShares();
         _playerPath = Config["Player:Path"] ?? "";
@@ -207,6 +320,160 @@
         _modelUrl = Config["AI:ModelUrl"] ?? "http://localhost:11434";
         _modelName = Config["AI:ModelName"] ?? "phi3.5:3.8b-mini-instruct-q4_K_M";
         LoadBackups();
+        LoadAiModels();
+        
+        await InitializeSpeechService();
+    }
+    
+    private async Task InitializeSpeechService()
+    {
+        try
+        {
+            await SpeechService.InitializeAsync();
+            _isSpeechAvailable = SpeechService.IsAvailable;
+            _speechStatus = _isSpeechAvailable ? "语音服务初始化成功" : "语音服务初始化失败";
+        }
+        catch (Exception ex)
+        {
+            _isSpeechAvailable = false;
+            _speechStatus = $"语音服务初始化异常: {ex.Message}";
+        }
+        StateHasChanged();
+    }
+    
+    private void ToggleListening()
+    {
+        if (!_isSpeechAvailable)
+        {
+            _speechStatus = "语音服务不可用，请检查麦克风和系统语音配置";
+            StateHasChanged();
+            return;
+        }
+        
+        if (_isListening)
+        {
+            SpeechService.StopListening();
+            _isListening = false;
+            _speechStatus = "监听已停止";
+        }
+        else
+        {
+            _recognizedText = "";
+            _isListening = true;
+            _speechStatus = "开始监听，请说话...";
+            SpeechService.StartListening(OnSpeechResult);
+        }
+        StateHasChanged();
+    }
+    
+    private void OnSpeechResult(string text)
+    {
+        _recognizedText += (string.IsNullOrEmpty(_recognizedText) ? "" : "\n") + text;
+        _speechStatus = $"识别成功: {text}";
+        StateHasChanged();
+    }
+    
+    private async void TestSpeak()
+    {
+        try
+        {
+            _speechStatus = "正在播放测试语音...";
+            StateHasChanged();
+            await SpeechService.SpeakAsync("你好，我是电影智能小管家小雪雪。语音合成测试成功！");
+            _speechStatus = "语音合成测试成功";
+        }
+        catch (Exception ex)
+        {
+            _speechStatus = $"语音合成失败: {ex.Message}";
+        }
+        StateHasChanged();
+    }
+    
+    private void ClearRecognition()
+    {
+        _recognizedText = "";
+        _speechStatus = "";
+    }
+
+    private void LoadAiModels()
+    {
+        _availableModels = ChatProviderFactory.GetDefaultModels();
+        
+        var savedModelName = Config["AI:ModelName"] ?? "";
+        var savedProvider = Config["AI:Provider"] ?? "Ollama";
+        
+        _selectedModel = _availableModels.FirstOrDefault(m => 
+            m.Name == savedModelName && m.ProviderType.ToString() == savedProvider);
+        
+        if (_selectedModel == null && _availableModels.Any())
+        {
+            _selectedModel = _availableModels.First(m => m.IsDefault);
+        }
+        
+        _apiKey = Config["AI:ApiKey"] ?? "";
+        _ollamaEndpoint = Config["AI:ModelUrl"] ?? "http://localhost:11434";
+        _deepseekEndpoint = Config["AI:DeepSeekUrl"] ?? "https://api.deepseek.com/v1";
+    }
+
+    private async void TestAiConnection()
+    {
+        if (_selectedModel == null)
+        {
+            _aiTestResult = "请先选择模型";
+            _aiTestSuccess = false;
+            StateHasChanged();
+            return;
+        }
+
+        _aiTestResult = "测试连接中...";
+        StateHasChanged();
+
+        try
+        {
+            var config = new ModelConfig
+            {
+                Name = _selectedModel.Name,
+                Endpoint = _selectedModel.ProviderType switch
+                {
+                    ModelProviderType.Ollama => _ollamaEndpoint,
+                    ModelProviderType.DeepSeek => _deepseekEndpoint,
+                    _ => _selectedModel.Endpoint
+                },
+                ApiKey = _apiKey,
+                ProviderType = _selectedModel.ProviderType
+            };
+
+            var provider = ChatProviderFactory.CreateProvider(config);
+            bool success = await provider.InitializeAsync();
+
+            if (success)
+            {
+                _aiTestResult = "连接成功！";
+                _aiTestSuccess = true;
+            }
+            else
+            {
+                _aiTestResult = $"连接失败: {provider.LastError}";
+                _aiTestSuccess = false;
+            }
+        }
+        catch (Exception ex)
+        {
+            _aiTestResult = $"测试失败: {ex.Message}";
+            _aiTestSuccess = false;
+        }
+
+        StateHasChanged();
+    }
+
+    private IEnumerable<ModelConfig> SearchModels(string searchText)
+    {
+        if (string.IsNullOrEmpty(searchText))
+            return _availableModels;
+        
+        return _availableModels.Where(m => 
+            m.Name.Contains(searchText, StringComparison.OrdinalIgnoreCase) ||
+            m.ProviderType.ToString().Contains(searchText, StringComparison.OrdinalIgnoreCase));
     }
 
     private void LoadBackups()
@@ -423,8 +690,11 @@
         {
             var config = new Dictionary<string, object>
             {
-                ["AI:ModelUrl"] = _modelUrl,
-                ["AI:ModelName"] = _modelName
+                ["AI:ModelUrl"] = _ollamaEndpoint,
+                ["AI:DeepSeekUrl"] = _deepseekEndpoint,
+                ["AI:ModelName"] = _selectedModel?.Name ?? "",
+                ["AI:Provider"] = _selectedModel?.ProviderType.ToString() ?? "Ollama",
+                ["AI:ApiKey"] = _apiKey
             };
             SaveAppSettings(config);
             Snackbar.Add("AI 模型配置已保存", Severity.Success);
@@ -437,11 +707,39 @@
 
     private void SaveAppSettings(Dictionary<string, object> updates)
     {
-        var path = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "appsettings.json");
-        var json = File.Exists(path) ? File.ReadAllText(path) : "{}";
-        var doc = System.Text.Json.JsonSerializer.Deserialize<Dictionary<string, object>>(json) ?? new();
-        foreach (var kv in updates) doc[kv.Key] = kv.Value;
-        File.WriteAllText(path, System.Text.Json.JsonSerializer.Serialize(doc, new System.Text.Json.JsonSerializerOptions { WriteIndented = true }));
+        try
+        {
+            var path = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "appsettings.json");
+            var json = File.Exists(path) ? File.ReadAllText(path) : "{}";
+            
+            using var doc = JsonDocument.Parse(json, new JsonDocumentOptions { AllowTrailingCommas = true });
+            var root = doc.RootElement.Clone();
+            
+            using var stream = new MemoryStream();
+            using var writer = new Utf8JsonWriter(stream, new JsonWriterOptions { Indented = true });
+            
+            writer.WriteStartObject();
+            
+            foreach (var property in root.EnumerateObject())
+            {
+                property.WriteTo(writer);
+            }
+            
+            foreach (var kv in updates)
+            {
+                var parts = kv.Key.Split(':');
+                writer.WriteString(kv.Key, kv.Value?.ToString() ?? "");
+            }
+            
+            writer.WriteEndObject();
+            writer.Flush();
+            
+            File.WriteAllText(path, Encoding.UTF8.GetString(stream.ToArray()));
+        }
+        catch (Exception ex)
+        {
+            Snackbar.Add($"配置保存失败: {ex.Message}", Severity.Error);
+        }
     }
 
     private void BrowsePlayer()

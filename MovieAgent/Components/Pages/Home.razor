@@ -5,7 +5,7 @@
 @inject NavigationManager NavigationManager
 @inject ILocalizationService LocalizationService
 
-<PageTitle>Movie Agent - @LocalizationService.Translate("Home")</PageTitle>
+<PageTitle>Movie Agent(小雪雪) - @LocalizationService.Translate("Home")</PageTitle>
 
 <MudStack Row="true" Justify="Justify.SpaceBetween" AlignItems="AlignItems.Center" Style="margin-bottom: 16px;">
     <MudText Typo="Typo.h4" Style="color: #E94560;">@LocalizationService.Translate("MoviePosterWall")</MudText>
@@ -439,8 +439,10 @@
             _scanProgressPercent = 0;
             StateHasChanged();
 
-            var files = MovieRepo.GetAllAsync().Result.Select(m => m.FilePath).ToList();
-            //await ScannerService.ScanVideoFilesAsync(sharePaths);
+            var files = await ScannerService.ScanVideoFilesAsync(sharePaths); 
+            //MovieRepo.GetAllAsync().Result.Where(m => m.TmdbId == null).Select(m => m.FilePath).ToList();
+
+             
             _scanFoundCount = files.Count;
             _scanTotalFiles = files.Count;
             StateHasChanged();

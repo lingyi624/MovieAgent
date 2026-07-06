@@ -140,13 +140,17 @@ public class MovieUpdateService : IMovieUpdateService
             ? string.Join(", ", searchResult.Countries) : null;
         existingMovie.Keywords = System.Text.Json.JsonSerializer.Serialize(searchResult.Keywords);
         existingMovie.Director = searchResult.Director;
+        existingMovie.DirectorTmdbId = searchResult.DirectorTmdbId;
         existingMovie.Writer = searchResult.Writer;
+        existingMovie.WriterTmdbIds = System.Text.Json.JsonSerializer.Serialize(searchResult.WriterTmdbIds ?? new List<string>());
         existingMovie.Cast = searchResult.Cast;
+        existingMovie.CastTmdbIds = System.Text.Json.JsonSerializer.Serialize(searchResult.CastTmdbIds ?? new List<string>());
         existingMovie.Language = searchResult.Languages != null && searchResult.Languages.Any() 
             ? string.Join(", ", searchResult.Languages) : null;
         existingMovie.Country = searchResult.Countries != null && searchResult.Countries.Any() 
             ? string.Join(", ", searchResult.Countries) : null;
         existingMovie.ImdbId = searchResult.ImdbId;
+        existingMovie.ProductionCompanyIds = System.Text.Json.JsonSerializer.Serialize(searchResult.ProductionCompanyIds ?? new List<string>());
 
         // 恢复用户数据
         existingMovie.UserRating = userRating;

@@ -5,6 +5,7 @@ using System.Globalization;
 using System.IO;
 using System.Net.WebSockets;
 using System.Text.RegularExpressions;
+using System.Windows.Shapes;
 
 namespace MovieAgent.Infrastructure.Services;
 
@@ -36,21 +37,29 @@ public class MovieScannerService : IMovieScannerService
         _configStorage = configStorage;
     }
 
-    void GetFilesSafe(string currentPath, HashSet<string> extensions, List<string> result)
+    async Task GetFilesSafe(string currentPath, HashSet<string> extensions, List<string> result)
     {
         try
         {
-            foreach (var file in Directory.GetFiles(currentPath))
+            var LastTime = await GetLastScanTimeAsync();
+            DirectoryInfo rootDir = new DirectoryInfo(currentPath);
+            var filteredDirs = rootDir.GetDirectories()
+                          .Where(d => d.CreationTime > LastTime)
+                          .ToList();
+            var filteredFiles = rootDir.GetFiles()
+                      .Where(f => f.LastWriteTime > LastTime)
+                      .ToArray();
+            foreach (var file in filteredFiles)
             {
-                if (extensions.Contains(Path.GetExtension(file)))
+                if (extensions.Contains(System.IO.Path.GetExtension(file.FullName)))
                 {
-                    result.Add(file);
+                    result.Add(file.FullName);
                 }
             }
-
-            foreach (var dir in Directory.GetDirectories(currentPath))
+           
+            foreach (var dir in filteredDirs)
             {
-                GetFilesSafe(dir, extensions, result);
+                await GetFilesSafe(dir.FullName, extensions, result);
             }
         }
         catch (UnauthorizedAccessException)
@@ -65,7 +74,7 @@ public class MovieScannerService : IMovieScannerService
 
     public async Task<List<string>> ScanVideoFilesAsync(List<string> sharePaths)
     {
-        return await Task.Run(() =>
+        return await Task.Run(async () =>
         {
             var files = new List<string>();
             foreach (var path in sharePaths)
@@ -79,7 +88,7 @@ public class MovieScannerService : IMovieScannerService
                 try
                 {
                     var found = new List<string>();
-                    GetFilesSafe(path, VideoExtensions, found);
+                  await  GetFilesSafe(path, VideoExtensions, found);
                     files.AddRange(found);
                     ScanProgressChanged?.Invoke(this, new ScanProgressEventArgs
                     {
@@ -114,7 +123,7 @@ public class MovieScannerService : IMovieScannerService
             try
             {
                 var found = new List<string>();
-                GetFilesSafe(path, VideoExtensions, found);
+              await  GetFilesSafe(path, VideoExtensions, found);
                 
                 foreach (var file in found)
                 {
@@ -152,90 +161,93 @@ public class MovieScannerService : IMovieScannerService
     public async Task<int> ImportNewMoviesAsync(List<string> filePaths, CancellationToken ct = default)
     {
         int total = filePaths.Count;
-        
-        // 阶段1：扫描文件，收集数据（不保存到数据库）
-       var movies= await _repo.GetAllAsync(); 
         var movieDataList = new List<(string FilePath, Movie Movie, MediaInfoResult? MediaInfo)>();
-         foreach (var movie in movies)
-        {
-            movieDataList.Add((movie.FilePath, movie, null));
-
-            int scannedCount = 0;
-
-            ReportProgress(new ScanProgressEventArgs
-            {
-                Stage = "Scanning",
-                TotalFiles = total,
-                TotalScanned = 0
-            });
-        }
         
-        //for (int i = 0; i < total; i++)
-        //{
-        //    if (ct.IsCancellationRequested) break;
-        //    var fp = filePaths[i];
+        ReportProgress(new ScanProgressEventArgs
+        {
+            Stage = "Scanning",
+            TotalFiles = total,
+            TotalScanned = 0
+        });
+
+        for (int i = 0; i < total; i++)
+        {
+            if (ct.IsCancellationRequested) break;
+            var fp = filePaths[i];
             
-        //    scannedCount++;
-            
-        //    // 只在处理完一批（每50个）或者最后更新进度，避免频繁UI更新
-        //    if (scannedCount % 50 == 0 || scannedCount == total)
-        //    {
-        //        ReportProgress(new ScanProgressEventArgs
-        //        {
-        //            Stage = "Scanning",
-        //            CurrentFileName = Path.GetFileName(fp),
-        //            CurrentIndex = i + 1,
-        //            TotalFiles = total,
-        //            TotalScanned = scannedCount
-        //        });
-        //    }
+            // 只在处理完一批（每50个）或者最后更新进度，避免频繁UI更新
+            if (i % 50 == 0 || i == total - 1)
+            {
+                ReportProgress(new ScanProgressEventArgs
+                {
+                    Stage = "Scanning",
+                    CurrentFileName = System.IO.Path.GetFileName(fp),
+                    CurrentIndex = i + 1,
+                    TotalFiles = total,
+                    TotalScanned = i + 1
+                });
+            }
 
-        //    try
-        //    {
-        //        // 检查文件是否已存在
-        //        var existingMovie = await _repo.GetByFilePathAsync(fp);
-                
-        //        Movie movie;
-        //        if (existingMovie != null)
-        //        {
-        //            movie = existingMovie;
-        //        }
-        //        else
-        //        {
-        //            movie = ParseFileName(fp);
-        //            if (movie == null) continue;
-        //        }
+            try
+            {
+                var existingMovie = await _repo.GetByFilePathAsync(fp);
 
-        //        MediaInfoResult? mediaInfo = null;
-        //        try
-        //        {
-        //            mediaInfo = _mediaInfo.GetMediaInfo(fp);
-        //            if (mediaInfo.Success)
-        //            {
-        //                movie.VideoCodec = mediaInfo.VideoCodec;
-        //                movie.AudioCodec = mediaInfo.AudioCodec;
-        //                movie.Resolution = mediaInfo.Resolution;
-        //                movie.HdrType = mediaInfo.HdrType;
-        //            }
-        //        }
-        //        catch (Exception ex)
-        //        {
-        //            Debug.WriteLine($"[Scanner] MediaInfo error: {ex.Message}");
-        //        }
+                Movie movie;
+                if (existingMovie != null)
+                {
+                    movie = existingMovie; 
+                }
+                else
+                {
+                    movie = ParseFileName(fp);
+                    if (movie == null) continue;
+                    movie.FilePath = fp;
+                    try
+                    {
+                        var fileInfo = new FileInfo(fp);
+                        movie.FileSize = fileInfo.Length;
+                    }
+                    catch { }
+                }
 
-        //        try
-        //        {
-        //            await _tmdb.FillMovieMetadataAsync(movie);
-        //        }
-        //        catch { /* metadata optional */ }
+                MediaInfoResult? mediaInfo = null;
+                try
+                {
+                    mediaInfo = _mediaInfo.GetMediaInfo(fp);
+                    if (mediaInfo.Success)
+                    {
+                        movie.VideoCodec = mediaInfo.VideoCodec;
+                        movie.AudioCodec = mediaInfo.AudioCodec;
+                        movie.Resolution = mediaInfo.Resolution;
+                        movie.HdrType = mediaInfo.HdrType;
+                        movie.Width = mediaInfo.Width;
+                        movie.Height = mediaInfo.Height;
+                        movie.FrameRate = mediaInfo.FrameRate;
+                        movie.VideoBitrate = (long?)(mediaInfo.VideoBitrate * 1000000);
+                        movie.AudioBitrate = (long?)(mediaInfo.AudioBitrate * 1000);
+                    }
+                }
+                catch (Exception ex)
+                {
+                    Debug.WriteLine($"[Scanner] MediaInfo error for {fp}: {ex.Message}");
+                }
 
-        //        movieDataList.Add((fp, movie, mediaInfo));
-        //    }
-        //    catch (Exception ex)
-        //    {
-        //        Debug.WriteLine($"[Scanner] Error: {ex.Message}");
-        //    }
-        //}
+                try
+                {
+                    await _tmdb.FillMovieMetadataAsync(movie);
+                }
+                catch (Exception ex)
+                {
+                    Debug.WriteLine($"[Scanner] TMDB metadata error for {fp}: {ex.Message}");
+                }
+
+                movieDataList.Add((fp, movie, mediaInfo));
+            }
+            catch (Exception ex)
+            {
+                Debug.WriteLine($"[Scanner] Error processing {fp}: {ex.Message}");
+            }
+        }
 
         if (movieDataList.Count == 0)
         {
@@ -243,11 +255,9 @@ public class MovieScannerService : IMovieScannerService
             return 0;
         }
 
-        // 阶段2：两个任务并行处理
         int dbCount = 0, vectorCount = 0;
         var lockObj = new object();
         
-        // 使用简单的 Action 来报告进度
         Action<int, int> reportProgress = (db, vector) =>
         {
             lock (lockObj)
@@ -265,7 +275,6 @@ public class MovieScannerService : IMovieScannerService
             });
         };
 
-        // 任务1：保存到 SQLite 数据库
         var dbTask = Task.Run(async () =>
         {
             int count = 0;
@@ -274,12 +283,19 @@ public class MovieScannerService : IMovieScannerService
                 if (ct.IsCancellationRequested) break;
                 try
                 {
-                    // 实际的数据库操作应该在这里
+                    if (movie.Id > 0)
+                    {
+                        await _repo.UpdateAsync(movie);
+                    }
+                    else
+                    {
+                        await _repo.AddAsync(movie);
+                    }
                     count++;
                 }
                 catch (Exception ex)
                 {
-                    Debug.WriteLine($"[Scanner] DB Error: {ex.Message}");
+                    Debug.WriteLine($"[Scanner] DB Error for {fp}: {ex.Message}");
                 }
                 
                 reportProgress(count, vectorCount);
@@ -287,7 +303,6 @@ public class MovieScannerService : IMovieScannerService
             return count;
         }, ct);
 
-        // 任务2：更新向量数据库（包含生成嵌入文本）
         var vectorTask = Task.Run(async () =>
         {
             int count = 0;
@@ -300,12 +315,10 @@ public class MovieScannerService : IMovieScannerService
             {
                 try
                 {
-                    // 准备向量数据
                     var vectorData = moviesToVector
                         .Select(m => (m.Id, BuildEmbeddingText(m), m.Title ?? "", m.Overview))
                         .ToList();
                     
-                    // 使用批量接口（每批1000个）生成并添加向量
                     count = await _vectorDb.BatchGenerateAndAddAsync(vectorData, new Progress<(int Current, int Total, string Stage)>(p =>
                     {
                         reportProgress(dbCount, p.Current);
@@ -319,7 +332,6 @@ public class MovieScannerService : IMovieScannerService
             return count;
         }, ct);
 
-        // 等待所有任务完成
         await Task.WhenAll(dbTask, vectorTask);
         
         int dbResult = dbTask.Result;

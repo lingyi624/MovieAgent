@@ -132,7 +132,8 @@ namespace MovieAgent.Infrastructure.Services
             return _currentRequestedFilePath;
         }
 
-        public async Task PlayAsync(string filePath)
+        public async Task 
+            PlayAsync(string filePath)
         {
             try
             {
@@ -152,7 +153,7 @@ namespace MovieAgent.Infrastructure.Services
                 _logger.Debug("[LocalPlayer] 创建 FFmpegDecoderEngine 实例...");
                 try
                 {
-                    _decoder = new FFmpegDecoderEngine(DecodeMode.Auto,D3DMode.D3D12);
+                    _decoder = new FFmpegDecoderEngine(DecodeMode.Auto,D3DMode.D3D11);
                      _logger.Debug("[LocalPlayer] FFmpegDecoderEngine 实例创建成功");
                     if (_decoder.CurrentD3dModel == D3DMode.D3D9)
                     {

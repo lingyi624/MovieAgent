@@ -90,11 +90,17 @@ public class TmdbSearchResult
         /// <summary>导演</summary>
         public string? Director { get; set; }
 
+        public string? DirectorTmdbId { get; set; }
+
         /// <summary>编剧列表</summary>
         public string? Writer { get; set; }
 
+        public List<string> WriterTmdbIds { get; set; } = new();
+
         /// <summary>主演列表</summary>
         public string? Cast { get; set; }
+
+        public List<string> CastTmdbIds { get; set; } = new();
 
         /// <summary>制片国家/地区列表</summary>
         public List<string> Countries { get; set; } = new();
@@ -126,9 +132,60 @@ public class TmdbSearchResult
         /// <summary>制片公司列表</summary>
         public List<string> ProductionCompanies { get; set; } = new();
 
+        public List<string> ProductionCompanyIds { get; set; } = new();
+
         /// <summary>关键词列表</summary>
         public List<string> Keywords { get; set; } = new();
 
         /// <summary>IMDB ID</summary>
         public string? ImdbId { get; set; }
+    }
+
+    public class TmdbPersonResult
+    {
+        public long Id { get; set; }
+        public string Name { get; set; } = string.Empty;
+        public string? OriginalName { get; set; }
+        public string? Biography { get; set; }
+        public string? ProfilePath { get; set; }
+        public DateTime? Birthday { get; set; }
+        public DateTime? Deathday { get; set; }
+        public string? PlaceOfBirth { get; set; }
+        public int? Gender { get; set; }
+        public string? KnownForDepartment { get; set; }
+        public double? Popularity { get; set; }
+        public List<string> AlsoKnownAs { get; set; } = new();
+        public List<string> KnownForTitles { get; set; } = new();
+        public List<PersonCredit> Credits { get; set; } = new();
+    }
+
+    public class PersonCredit
+    {
+        public string? Title { get; set; }
+        public string? Character { get; set; }
+        public DateTime? ReleaseDate { get; set; }
+        public string? PosterPath { get; set; }
+        public string? TmdbId { get; set; }
+    }
+
+    public class TmdbCompanyResult
+    {
+        public long Id { get; set; }
+        public string Name { get; set; } = string.Empty;
+        public string? Description { get; set; }
+        public string? LogoPath { get; set; }
+        public string? OriginCountry { get; set; }
+        public string? Headquarters { get; set; }
+        public string? Homepage { get; set; }
+        public string? ParentCompany { get; set; }
+        public List<CompanyMovie> MovieList { get; set; } = new();
+        public List<string> PersonList { get; set; } = new();
+    }
+
+    public class CompanyMovie
+    {
+        public string? Title { get; set; }
+        public DateTime? ReleaseDate { get; set; }
+        public string? PosterPath { get; set; }
+        public string? TmdbId { get; set; }
     }

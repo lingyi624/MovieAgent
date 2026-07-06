@@ -33,7 +33,8 @@ public interface IAgentService
     /// 最后一次错误信息
     /// </summary>
     string? LastError { get; }
-  
+    
+    event Action<string>? OnStreamDataReceived;
 }
 
 /// <summary>

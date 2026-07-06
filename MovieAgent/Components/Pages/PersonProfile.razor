@@ -1,0 +1,188 @@
+@page "/person/{TmdbId}"
+@inject IPersonService PersonService
+@inject NavigationManager NavigationManager
+
+<PageTitle>@(_person?.Name ?? "人员档案")</PageTitle>
+
+@if (_isLoading || _person == null)
+{
+    <div style="display: flex; justify-content: center; align-items: center; min-height: 300px;">
+        <MudProgressCircular Color="Color.Primary" Indeterminate="true" Size="Size.Large" />
+    </div>
+}
+else
+{
+    <MudStack Row="true" Justify="Justify.SpaceBetween" AlignItems="AlignItems.Center" Style="margin-bottom: 20px;">
+        <MudText Typo="Typo.h4" Style="color: #E94560;">人员档案</MudText>
+        <MudButton Icon="@Icons.Material.Filled.ArrowBack" Color="Color.Default" OnClick="@GoBack">返回</MudButton>
+    </MudStack>
+
+    <MudGrid>
+        <MudItem xs="12" md="3">
+            <MudImage Src="@GetProfileUrl(_person.ProfilePath)" Height="350" ObjectFit="ObjectFit.Cover" Elevation="8" Style="border-radius:10px;" />
+        </MudItem>
+        <MudItem xs="12" md="8">
+            <MudText Typo="Typo.h3" Style="color: #E94560; font-weight: bold;">@_person.Name</MudText>
+            @if (!string.IsNullOrEmpty(_person.OriginalName) && _person.OriginalName != _person.Name)
+            {
+                <MudText Typo="Typo.subtitle1" Style="color: gray;">@_person.OriginalName</MudText>
+            }
+
+            <MudChipSet T="string" Style="margin: 12px 0;">
+                @if (!string.IsNullOrEmpty(_person.KnownForDepartment))
+                {
+                    <MudChip T="string" Size="Size.Small" Color="Color.Primary">@_person.KnownForDepartment</MudChip>
+                }
+                @if (!string.IsNullOrEmpty(_person.Gender))
+                {
+                    <MudChip T="string" Size="Size.Small" Color="Color.Secondary">@_person.Gender</MudChip>
+                }
+                @if (_person.Popularity.HasValue)
+                {
+                    <MudChip T="string" Size="Size.Small" Color="Color.Dark" Style="background: #FFD700;">人气: @_person.Popularity.Value.ToString("0.0")</MudChip>
+                }
+            </MudChipSet>
+
+            @if (!string.IsNullOrEmpty(_person.Birthday?.ToString("yyyy-MM-dd")))
+            {
+                <MudText Typo="Typo.body1" Style="margin-bottom: 8px;">
+                    <span style="color: #888;">出生日期:</span> <span style="color: #E0E0E0;">@_person.Birthday?.ToString("yyyy-MM-dd")</span>
+                </MudText>
+            }
+
+            @if (!string.IsNullOrEmpty(_person.PlaceOfBirth))
+            {
+                <MudText Typo="Typo.body1" Style="margin-bottom: 8px;">
+                    <span style="color: #888;">出生地:</span> <span style="color: #E0E0E0;">@_person.PlaceOfBirth</span>
+                </MudText>
+            }
+
+            @if (!string.IsNullOrEmpty(_person.Deathday?.ToString("yyyy-MM-dd")))
+            {
+                <MudText Typo="Typo.body1" Style="margin-bottom: 8px;">
+                    <span style="color: #888;">逝世日期:</span> <span style="color: #E94560;">@_person.Deathday?.ToString("yyyy-MM-dd")</span>
+                </MudText>
+            }
+
+            @if (!string.IsNullOrEmpty(_person.AlsoKnownAs))
+            {
+                <MudText Typo="Typo.body1" Style="margin-bottom: 8px;">
+                    <span style="color: #888;">别名:</span> <span style="color: #E0E0E0;">@GetAlsoKnownAs()</span>
+                </MudText>
+            }
+
+            @if (!string.IsNullOrEmpty(_person.Company))
+            {
+                <MudText Typo="Typo.body1" Style="margin-bottom: 8px;">
+                    <span style="color: #888;">所属公司:</span> <span style="color: #E0E0E0;">@_person.Company</span>
+                </MudText>
+            }
+        </MudItem>
+    </MudGrid>
+
+    @if (!string.IsNullOrEmpty(_person.Biography))
+    {
+        <MudPaper Elevation="1" Style="padding: 16px; margin-top: 16px; background: #2D2D44;">
+            <MudText Typo="Typo.h6" Style="color: #E94560; margin-bottom: 8px;">个人简介</MudText>
+            <MudText Typo="Typo.body1" Style="color: #E0E0E0; line-height: 1.6;">@_person.Biography</MudText>
+        </MudPaper>
+    }
+
+    @if (_credits.Any())
+    {
+        <MudPaper Elevation="1" Style="padding: 16px; margin-top: 16px; background: #2D2D44;">
+            <MudText Typo="Typo.h6" Style="color: #E94560; margin-bottom: 12px;">代表作品</MudText>
+            <MudGrid>
+                @foreach (var credit in _credits)
+                {
+                    <MudItem xs="6" md="4" lg="3">
+                        <div style="cursor: pointer;" @onclick="@(() => NavigateToMovie(credit.TmdbId))">
+                            <MudImage Src="@GetPosterUrl(credit.PosterPath)" Height="200" ObjectFit="ObjectFit.Cover" Elevation="4" Style="border-radius:8px;" />
+                            <MudText Typo="Typo.body2" Style="color: #E0E0E0; margin-top: 8px; display: block;">@credit.Title</MudText>
+                            @if (!string.IsNullOrEmpty(credit.Character))
+                            {
+                                <MudText Typo="Typo.caption" Style="color: #888;">饰演: @credit.Character</MudText>
+                            }
+                            @if (credit.ReleaseDate.HasValue)
+                            {
+                                <MudText Typo="Typo.caption" Style="color: #888;">@credit.ReleaseDate.Value.Year</MudText>
+                            }
+                        </div>
+                    </MudItem>
+                }
+            </MudGrid>
+        </MudPaper>
+    }
+}
+
+@code {
+    [Parameter]
+    public string TmdbId { get; set; } = "";
+
+    private Person? _person;
+    private bool _isLoading = true;
+    private List<PersonCredit> _credits = new();
+
+    protected override async Task OnInitializedAsync()
+    {
+        await LoadPersonAsync();
+    }
+
+    private async Task LoadPersonAsync()
+    {
+        _isLoading = true;
+        _person = await PersonService.GetOrCreatePersonAsync(TmdbId);
+        
+        if (_person != null && !string.IsNullOrEmpty(_person.Credits))
+        {
+            try
+            {
+                _credits = System.Text.Json.JsonSerializer.Deserialize<List<PersonCredit>>(_person.Credits) ?? new List<PersonCredit>();
+            }
+            catch { }
+        }
+        
+        _isLoading = false;
+        StateHasChanged();
+    }
+
+    private string GetProfileUrl(string? profilePath)
+    {
+        if (string.IsNullOrWhiteSpace(profilePath))
+            return "https://via.placeholder.com/300x450?text=No+Photo";
+        return $"https://image.tmdb.org/t/p/w300{profilePath}";
+    }
+
+    private string GetPosterUrl(string? posterPath)
+    {
+        if (string.IsNullOrWhiteSpace(posterPath))
+            return "https://via.placeholder.com/200x300?text=No+Poster";
+        return $"https://image.tmdb.org/t/p/w200{posterPath}";
+    }
+
+    private string GetAlsoKnownAs()
+    {
+        try
+        {
+            var names = System.Text.Json.JsonSerializer.Deserialize<List<string>>(_person!.AlsoKnownAs!) ?? new List<string>();
+            return string.Join(", ", names);
+        }
+        catch
+        {
+            return _person?.AlsoKnownAs ?? "";
+        }
+    }
+
+    private void NavigateToMovie(string? tmdbId)
+    {
+        if (!string.IsNullOrEmpty(tmdbId))
+        {
+            NavigationManager.NavigateTo($"/movie/{tmdbId}");
+        }
+    }
+
+    private void GoBack()
+    {
+        NavigationManager.NavigateTo("/movies");
+    }
+}

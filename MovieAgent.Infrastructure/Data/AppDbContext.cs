@@ -11,6 +11,8 @@ public class AppDbContext : DbContext
     public DbSet<MovieReview> MovieReviews => Set<MovieReview>();
     public DbSet<WatchPlan> WatchPlans => Set<WatchPlan>();
     public DbSet<ConversationRecord> ConversationRecords => Set<ConversationRecord>();
+    public DbSet<Person> Persons => Set<Person>();
+    public DbSet<Company> Companies => Set<Company>();
 
     public AppDbContext(DbContextOptions<AppDbContext> options) : base(options) { }
 
@@ -20,10 +22,11 @@ public class AppDbContext : DbContext
     /// </summary>
     public async Task EnsureSchemaUpdatedAsync()
     {
-        // 确保数据库存在
         await Database.EnsureCreatedAsync();
 
-        // Movies 表需要添加的新列
+        await CreatePersonTableIfNotExistsAsync();
+        await CreateCompanyTableIfNotExistsAsync();
+
         var movieNewColumns = new Dictionary<string, string>
         {
             { "ImdbId", "NVARCHAR(50)" },
@@ -59,12 +62,15 @@ public class AppDbContext : DbContext
             { "Writer", "NVARCHAR(2000)" },
             { "PlaybackPosition", "REAL" },
             { "EmbeddingText", "NVARCHAR(10000)" },
-            { "EmbeddingAt", "TEXT" }
+            { "EmbeddingAt", "TEXT" },
+            { "DirectorTmdbId", "NVARCHAR(500)" },
+            { "WriterTmdbIds", "NVARCHAR(2000)" },
+            { "CastTmdbIds", "NVARCHAR(4000)" },
+            { "ProductionCompanyIds", "NVARCHAR(2000)" }
         };
 
         await AddMissingColumnsAsync("Movies", movieNewColumns);
 
-        // ConversationRecords 表需要添加的列
         var conversationNewColumns = new Dictionary<string, string>
         {
             { "UserId", "NVARCHAR(100) NOT NULL DEFAULT 'default'" },
@@ -75,6 +81,86 @@ public class AppDbContext : DbContext
         };
 
         await AddMissingColumnsAsync("ConversationRecords", conversationNewColumns);
+    }
+
+    private async Task CreatePersonTableIfNotExistsAsync()
+    {
+        try
+        {
+            var tableExists = await Database
+                .SqlQueryRaw<string>("SELECT name FROM sqlite_master WHERE type='table' AND name='Persons'")
+                .AnyAsync();
+
+            if (!tableExists)
+            {
+                await Database.ExecuteSqlRawAsync(@"
+                    CREATE TABLE Persons (
+                        Id INTEGER PRIMARY KEY AUTOINCREMENT,
+                        TmdbId NVARCHAR(100),
+                        Name NVARCHAR(500) NOT NULL,
+                        OriginalName NVARCHAR(500),
+                        Biography NVARCHAR(5000),
+                        ProfilePath NVARCHAR(500),
+                        Birthday TEXT,
+                        Deathday TEXT,
+                        PlaceOfBirth NVARCHAR(200),
+                        Gender NVARCHAR(50),
+                        KnownForDepartment NVARCHAR(200),
+                        Popularity REAL,
+                        AlsoKnownAs NVARCHAR(2000),
+                        KnownForTitles NVARCHAR(2000),
+                        Credits NVARCHAR(5000),
+                        Company NVARCHAR(500),
+                        CreatedAt TEXT,
+                        UpdatedAt TEXT,
+                        INDEX idx_persons_tmdbid ON Persons(TmdbId),
+                        INDEX idx_persons_name ON Persons(Name),
+                        INDEX idx_persons_popularity ON Persons(Popularity)
+                    )");
+                Console.WriteLine("[AppDbContext] Created Persons table");
+            }
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"[AppDbContext] Failed to create Persons table: {ex.Message}");
+        }
+    }
+
+    private async Task CreateCompanyTableIfNotExistsAsync()
+    {
+        try
+        {
+            var tableExists = await Database
+                .SqlQueryRaw<string>("SELECT name FROM sqlite_master WHERE type='table' AND name='Companies'")
+                .AnyAsync();
+
+            if (!tableExists)
+            {
+                await Database.ExecuteSqlRawAsync(@"
+                    CREATE TABLE Companies (
+                        Id INTEGER PRIMARY KEY AUTOINCREMENT,
+                        TmdbId NVARCHAR(100),
+                        Name NVARCHAR(500) NOT NULL,
+                        Description NVARCHAR(5000),
+                        LogoPath NVARCHAR(500),
+                        OriginCountry NVARCHAR(200),
+                        Headquarters NVARCHAR(500),
+                        Homepage NVARCHAR(500),
+                        ParentCompany NVARCHAR(500),
+                        MovieList NVARCHAR(5000),
+                        PersonList NVARCHAR(5000),
+                        CreatedAt TEXT,
+                        UpdatedAt TEXT,
+                        INDEX idx_companies_tmdbid ON Companies(TmdbId),
+                        INDEX idx_companies_name ON Companies(Name)
+                    )");
+                Console.WriteLine("[AppDbContext] Created Companies table");
+            }
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"[AppDbContext] Failed to create Companies table: {ex.Message}");
+        }
     }
 
     /// <summary>
@@ -342,6 +428,53 @@ public class AppDbContext : DbContext
 
             entity.HasIndex(c => c.UserId);
             entity.HasIndex(c => c.Timestamp);
+        });
+
+        // ==================== Person 实体配置 ====================
+        modelBuilder.Entity<Person>(entity =>
+        {
+            entity.ToTable("Persons");
+            entity.HasKey(p => p.Id);
+            entity.Property(p => p.Id).ValueGeneratedOnAdd();
+
+            entity.Property(p => p.TmdbId).HasMaxLength(100);
+            entity.Property(p => p.Name).IsRequired().HasMaxLength(500);
+            entity.Property(p => p.OriginalName).HasMaxLength(500);
+            entity.Property(p => p.Biography).HasMaxLength(5000);
+            entity.Property(p => p.ProfilePath).HasMaxLength(500);
+            entity.Property(p => p.PlaceOfBirth).HasMaxLength(200);
+            entity.Property(p => p.Gender).HasMaxLength(50);
+            entity.Property(p => p.KnownForDepartment).HasMaxLength(200);
+            entity.Property(p => p.AlsoKnownAs).HasMaxLength(2000);
+            entity.Property(p => p.KnownForTitles).HasMaxLength(2000);
+            entity.Property(p => p.Credits).HasMaxLength(5000);
+            entity.Property(p => p.Company).HasMaxLength(500);
+
+            entity.HasIndex(p => p.TmdbId);
+            entity.HasIndex(p => p.Name);
+            entity.HasIndex(p => p.Popularity);
+        });
+
+        // ==================== Company 实体配置 ====================
+        modelBuilder.Entity<Company>(entity =>
+        {
+            entity.ToTable("Companies");
+            entity.HasKey(c => c.Id);
+            entity.Property(c => c.Id).ValueGeneratedOnAdd();
+
+            entity.Property(c => c.TmdbId).HasMaxLength(100);
+            entity.Property(c => c.Name).IsRequired().HasMaxLength(500);
+            entity.Property(c => c.Description).HasMaxLength(5000);
+            entity.Property(c => c.LogoPath).HasMaxLength(500);
+            entity.Property(c => c.OriginCountry).HasMaxLength(200);
+            entity.Property(c => c.Headquarters).HasMaxLength(500);
+            entity.Property(c => c.Homepage).HasMaxLength(500);
+            entity.Property(c => c.ParentCompany).HasMaxLength(500);
+            entity.Property(c => c.MovieList).HasMaxLength(5000);
+            entity.Property(c => c.PersonList).HasMaxLength(5000);
+
+            entity.HasIndex(c => c.TmdbId);
+            entity.HasIndex(c => c.Name);
         });
     }
 }

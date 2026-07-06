@@ -1,0 +1,519 @@
+@using MovieAgent.Core.Interfaces
+@inject IJSRuntime JSRuntime
+
+<div class="draggable-sprite" 
+     style="position: fixed; top: @_topPosition; left: @_leftPosition; z-index: 9999; cursor: grab;"
+     @onmousedown="StartDrag"
+     @onmouseup="EndDrag"
+     @onmousemove="OnMouseMove">
+    <div class="sprite-container" style="width: 100px; height: 130px; position: relative;">
+        @if (State == SpriteState.Sleeping)
+        {
+            <div class="sleeping-indicator">
+                <span>💤</span>
+            </div>
+        }
+        
+        @if (State == SpriteState.Working)
+        {
+            <div class="working-indicator">
+                <span>⚡</span>
+            </div>
+        }
+        
+        <div class="sprite-body" style="position: absolute; bottom: 0; left: 50%; transform: translateX(-50%);">
+            <div class="sprite-head" style="@GetHeadStyle()">
+                <div class="sprite-hair" style="@GetHairStyle()"></div>
+                <div class="sprite-face">
+                    <div class="sprite-eyes" style="@GetEyesStyle()">
+                        <div class="sprite-eye left"></div>
+                        <div class="sprite-eye right"></div>
+                    </div>
+                    <div class="sprite-mouth" style="@GetMouthStyle()"></div>
+                    @if (State == SpriteState.Sleeping)
+                    {
+                        <div class="sleep-eyes">
+                            <span>z</span>
+                            <span>z</span>
+                            <span>z</span>
+                        </div>
+                    }
+                </div>
+                <div class="sprite-ears">
+                    <div class="sprite-ear left"></div>
+                    <div class="sprite-ear right"></div>
+                </div>
+            </div>
+            <div class="sprite-body-main" style="@GetBodyStyle()">
+                <div class="sprite-arms">
+                    <div class="sprite-arm left" style="@GetLeftArmStyle()"></div>
+                    <div class="sprite-arm right" style="@GetRightArmStyle()"></div>
+                </div>
+                <div class="sprite-dress"></div>
+            </div>
+            <div class="sprite-legs">
+                <div class="sprite-leg left"></div>
+                <div class="sprite-leg right"></div>
+            </div>
+        </div>
+        
+        @if (_isSpeaking)
+        {
+            <div class="speech-bubble" style="@GetSpeechBubbleStyle()">
+                <div class="speech-content">
+                    @foreach (var (text, isFinal) in _speechTexts)
+                    {
+                        <span>@text</span>
+                    }
+                    @if (_isTyping)
+                    {
+                        <span class="typing-indicator">|</span>
+                    }
+                </div>
+            </div>
+        }
+        
+        @if (State == SpriteState.Listening)
+        {
+            <div class="listening-indicator">
+                <div class="wave"></div>
+                <div class="wave"></div>
+                <div class="wave"></div>
+            </div>
+        }
+    </div>
+</div>
+
+<style>
+    .draggable-sprite:active {
+        cursor: grabbing;
+    }
+    
+    .sprite-head {
+        width: 50px;
+        height: 45px;
+        background: linear-gradient(180deg, #FFE4C9 0%, #FFD4A8 100%);
+        border-radius: 50% 50% 45% 45%;
+        position: relative;
+        transition: transform 0.3s ease;
+        z-index: 3;
+    }
+
+    .sprite-hair {
+        position: absolute;
+        top: -12px;
+        left: -4px;
+        width: 58px;
+        height: 28px;
+        background: linear-gradient(180deg, #4A3728 0%, #2D2016 100%);
+        border-radius: 50% 50% 0 0;
+    }
+    
+    .sprite-hair.sleeping {
+        animation: hairToss 2s ease-in-out infinite;
+    }
+
+    .sprite-face {
+        position: absolute;
+        top: 12px;
+        left: 50%;
+        transform: translateX(-50%);
+    }
+
+    .sprite-eyes {
+        display: flex;
+        gap: 10px;
+        margin-bottom: 6px;
+    }
+
+    .sprite-eye {
+        width: 10px;
+        height: 10px;
+        background: #2C3E50;
+        border-radius: 50%;
+        position: relative;
+        transition: all 0.3s ease;
+    }
+
+    .sprite-eye::after {
+        content: '';
+        position: absolute;
+        top: 2px;
+        right: 2px;
+        width: 3px;
+        height: 3px;
+        background: white;
+        border-radius: 50%;
+    }
+    
+    .sprite-eyes.sleeping .sprite-eye {
+        transform: scaleY(0.1);
+    }
+
+    .sprite-mouth {
+        width: 16px;
+        height: 6px;
+        background: #E94560;
+        border-radius: 0 0 8px 8px;
+        margin: 0 auto;
+        transition: all 0.3s ease;
+    }
+
+    .sprite-mouth.speaking {
+        animation: mouthMove 0.3s ease-in-out infinite;
+    }
+
+    .sprite-mouth.surprised {
+        border-radius: 50%;
+        height: 10px;
+        width: 12px;
+    }
+    
+    .sprite-mouth.sleeping {
+        border-radius: 50%;
+        height: 3px;
+        width: 8px;
+        background: #999;
+    }
+
+    .sprite-ears {
+        position: absolute;
+        top: 16px;
+        width: 65px;
+        left: -8px;
+    }
+
+    .sprite-ear {
+        position: absolute;
+        width: 10px;
+        height: 16px;
+        background: #FFE4C9;
+        border-radius: 50%;
+    }
+
+    .sprite-ear.left { left: 0; }
+    .sprite-ear.right { right: 0; }
+
+    .sprite-body-main {
+        width: 42px;
+        height: 42px;
+        background: linear-gradient(180deg, #E94560 0%, #C73E54 100%);
+        border-radius: 12px 12px 8px 8px;
+        position: relative;
+        margin: -4px auto 0;
+        transition: transform 0.3s ease;
+    }
+    
+    .sprite-body-main.working {
+        animation: bodyWork 1s ease-in-out infinite;
+    }
+
+    .sprite-dress {
+        position: absolute;
+        bottom: 0;
+        left: 50%;
+        transform: translateX(-50%);
+        width: 42px;
+        height: 20px;
+        background: #E94560;
+        border-radius: 0 0 8px 8px;
+    }
+
+    .sprite-arms {
+        position: absolute;
+        top: 4px;
+        width: 65px;
+        left: -12px;
+    }
+
+    .sprite-arm {
+        position: absolute;
+        width: 10px;
+        height: 28px;
+        background: #FFE4C9;
+        border-radius: 5px;
+        transition: transform 0.3s ease;
+    }
+
+    .sprite-arm.left { left: 0; }
+    .sprite-arm.right { right: 0; }
+
+    .sprite-legs {
+        display: flex;
+        justify-content: center;
+        gap: 6px;
+        margin-top: -4px;
+    }
+
+    .sprite-leg {
+        width: 12px;
+        height: 20px;
+        background: #2D2D44;
+        border-radius: 2px 2px 6px 6px;
+    }
+
+    .speech-bubble {
+        position: absolute;
+        top: -70px;
+        left: 50%;
+        transform: translateX(-50%);
+        background: white;
+        padding: 8px 12px;
+        border-radius: 12px 12px 12px 4px;
+        box-shadow: 0 3px 12px rgba(0,0,0,0.2);
+        max-width: 180px;
+        z-index: 10;
+        font-size: 11px;
+        color: #333;
+    }
+
+    .speech-bubble::after {
+        content: '';
+        position: absolute;
+        bottom: -6px;
+        left: 15px;
+        width: 12px;
+        height: 12px;
+        background: white;
+        transform: rotate(45deg);
+    }
+
+    .typing-indicator {
+        animation: blink 0.8s infinite;
+    }
+
+    .listening-indicator {
+        position: absolute;
+        top: 50%;
+        left: 50%;
+        transform: translate(-50%, -50%);
+        display: flex;
+        gap: 3px;
+        z-index: 5;
+    }
+
+    .wave {
+        width: 3px;
+        height: 16px;
+        background: #4CAF50;
+        border-radius: 2px;
+        animation: wave 1s ease-in-out infinite;
+    }
+
+    .wave:nth-child(2) { animation-delay: 0.2s; }
+    .wave:nth-child(3) { animation-delay: 0.4s; }
+    
+    .sleeping-indicator {
+        position: absolute;
+        top: -30px;
+        right: -10px;
+        font-size: 16px;
+        animation: floatUp 3s ease-in-out infinite;
+        z-index: 5;
+    }
+    
+    .working-indicator {
+        position: absolute;
+        top: -25px;
+        right: -5px;
+        font-size: 18px;
+        animation: sparkle 1.5s ease-in-out infinite;
+        z-index: 5;
+    }
+    
+    .sleep-eyes {
+        position: absolute;
+        top: -15px;
+        right: -20px;
+        display: flex;
+        flex-direction: column;
+        gap: 2px;
+        animation: floatUp 2s ease-in-out infinite;
+    }
+    
+    .sleep-eyes span {
+        font-size: 10px;
+        color: #666;
+        opacity: 0.6;
+    }
+    
+    .sleep-eyes span:nth-child(2) { margin-left: 5px; animation-delay: 0.5s; }
+    .sleep-eyes span:nth-child(3) { margin-left: 10px; animation-delay: 1s; }
+</style>
+
+@code {
+    [Parameter] public SpriteState State { get; set; } = SpriteState.Sleeping;
+    [Parameter] public List<(string Text, bool IsFinal)> SpeechTexts { get; set; } = new();
+    [Parameter] public bool IsTyping { get; set; } = false;
+    [Parameter] public EventCallback<SpriteState> OnSpriteClick { get; set; }
+    
+    private bool _isSpeaking => State == SpriteState.Speaking;
+    private List<(string Text, bool IsFinal)> _speechTexts = new();
+    private bool _isTyping;
+    
+    private string _topPosition = "80%";
+    private string _leftPosition = "20px";
+    private bool _isDragging = false;
+    private double _dragStartX = 0;
+    private double _dragStartY = 0;
+    private double _elementStartX = 0;
+    private double _elementStartY = 0;
+
+    protected override void OnParametersSet()
+    {
+        _speechTexts = SpeechTexts;
+        _isTyping = IsTyping;
+    }
+    
+    protected override async Task OnInitializedAsync()
+    {
+        await LoadPosition();
+    }
+
+    private async Task LoadPosition()
+    {
+        try
+        {
+            var savedPos = await JSRuntime.InvokeAsync<string>("localStorage.getItem", "spritePosition");
+            if (!string.IsNullOrEmpty(savedPos))
+            {
+                var parts = savedPos.Split(',');
+                if (parts.Length == 2)
+                {
+                    _topPosition = parts[0];
+                    _leftPosition = parts[1];
+                }
+            }
+        }
+        catch { }
+    }
+
+    private async Task SavePosition()
+    {
+        try
+        {
+            await JSRuntime.InvokeVoidAsync("localStorage.setItem", "spritePosition", $"{_topPosition},{_leftPosition}");
+        }
+        catch { }
+    }
+
+    private void StartDrag(MouseEventArgs e)
+    {
+        _isDragging = true;
+        _dragStartX = e.ClientX;
+        _dragStartY = e.ClientY;
+        
+        _elementStartX = double.Parse(_leftPosition.Replace("px", ""));
+        _elementStartY = double.Parse(_topPosition.Replace("px", "").Replace("%", "")) / 100 * 800;
+        
+        if (State == SpriteState.Sleeping)
+        {
+            State = SpriteState.Idle;
+            OnSpriteClick.InvokeAsync(State);
+        }
+    }
+
+    private void OnMouseMove(MouseEventArgs e)
+    {
+        if (!_isDragging) return;
+        
+        var deltaX = e.ClientX - _dragStartX;
+        var deltaY = e.ClientY - _dragStartY;
+        
+        var newX = Math.Max(0, Math.Min(90, _elementStartX + deltaX));
+        var newY = Math.Max(0, Math.Min(90, _elementStartY + deltaY));
+        
+        _leftPosition = $"{newX}px";
+        _topPosition = $"{newY}%";
+        
+        StateHasChanged();
+    }
+
+    private async void EndDrag(MouseEventArgs e)
+    {
+        _isDragging = false;
+        await SavePosition();
+    }
+
+    private string GetHeadStyle()
+    {
+        return State switch
+        {
+            SpriteState.Sleeping => "transform: translateX(-50%) rotate(-15deg);",
+            SpriteState.Listening => "transform: translateX(-50%); animation: headNod 1s ease-in-out infinite;",
+            SpriteState.Speaking => "transform: translateX(-50%); animation: headBob 0.5s ease-in-out infinite;",
+            SpriteState.Idle => "transform: translateX(-50%); animation: idleBreathe 3s ease-in-out infinite;",
+            SpriteState.Working => "transform: translateX(-50%); animation: headWork 1s ease-in-out infinite;",
+            SpriteState.Surprised => "transform: translateX(-50%) scale(1.1);",
+            SpriteState.Thinking => "transform: translateX(-50%); animation: headThink 2s ease-in-out infinite;",
+            _ => ""
+        };
+    }
+    
+    private string GetHairStyle()
+    {
+        return State switch
+        {
+            SpriteState.Sleeping => "class=\"sleeping\"",
+            _ => ""
+        };
+    }
+
+    private string GetEyesStyle()
+    {
+        return State switch
+        {
+            SpriteState.Sleeping => "class=\"sleeping\"",
+            _ => ""
+        };
+    }
+
+    private string GetMouthStyle()
+    {
+        return State switch
+        {
+            SpriteState.Speaking => "class=\"speaking\"",
+            SpriteState.Surprised => "class=\"surprised\"",
+            SpriteState.Sleeping => "class=\"sleeping\"",
+            _ => ""
+        };
+    }
+    
+    private string GetBodyStyle()
+    {
+        return State switch
+        {
+            SpriteState.Working => "class=\"working\"",
+            _ => ""
+        };
+    }
+
+    private string GetLeftArmStyle()
+    {
+        return State switch
+        {
+            SpriteState.Sleeping => "transform: rotate(45deg);",
+            SpriteState.Listening => "transform: rotate(15deg);",
+            SpriteState.Speaking => "animation: waveLeft 0.8s ease-in-out infinite;",
+            SpriteState.Working => "animation: workArmLeft 0.6s ease-in-out infinite;",
+            _ => ""
+        };
+    }
+
+    private string GetRightArmStyle()
+    {
+        return State switch
+        {
+            SpriteState.Sleeping => "transform: rotate(-45deg);",
+            SpriteState.Listening => "transform: rotate(-15deg);",
+            SpriteState.Speaking => "animation: waveRight 0.8s ease-in-out infinite;",
+            SpriteState.Working => "animation: workArmRight 0.6s ease-in-out infinite;",
+            _ => ""
+        };
+    }
+
+    private string GetSpeechBubbleStyle()
+    {
+        return _speechTexts.Any() ? "opacity: 1; transition: opacity 0.3s;" : "opacity: 0; pointer-events: none;";
+    }
+}

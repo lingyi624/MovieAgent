@@ -3,6 +3,8 @@ using Microsoft.AspNetCore.Components.WebView.Wpf;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Win32;
 using MovieAgent.Controls;
+using MovieAgent.Controls.Window;
+using MovieAgent.Controls.Window.D3D9Window;
 using MovieAgent.Core.Interfaces;
  using MovieAgent.FFmpegDecoder;
 using MovieAgent.Infrastructure.Services;
@@ -72,7 +74,7 @@ public partial class MainWindow : Window
             // 订阅PlaybackRequestedByBlazor事件，当Blazor请求播放时显示视频overlay
             _playerService.PlaybackRequestedByBlazor += OnPlaybackRequestedByBlazor;
             Console.WriteLine("[MainWindow] 已订阅 PlaybackRequestedByBlazor 事件");
-
+        
         }
         catch (Exception ex)
         {
@@ -144,96 +146,78 @@ public partial class MainWindow : Window
     }
 
     private void PlayMovieInNewWindow(string filePath)
-    {
-        // 1. 处理 BDMV/ISO 逻辑（和原来的 PlayMovie 前半部分一样）
-        // ... 获取 actualPlayPath, _currentMovieTitle 等
-        StopPlaybackInternal();
-
-        bool isFile = File.Exists(filePath);
-        bool isDir = Directory.Exists(filePath);
-
-        if (!isFile && !isDir)
         {
-            MessageBox.Show($"路径不存在: {filePath}", "错误", MessageBoxButton.OK, MessageBoxImage.Error);
-            return;
-        }
+            StopPlaybackInternal();
 
-        // 检测 BDMV / ISO 蓝光，显示标题选择对话框
-        string actualPlayPath = filePath;
-        string? isoMountPoint = null;
+            bool isFile = File.Exists(filePath);
+            bool isDir = Directory.Exists(filePath);
 
-        // ISO 文件：先挂载
-        if (isFile && filePath.EndsWith(".iso", StringComparison.OrdinalIgnoreCase))
-        {
-            isoMountPoint = MountIsoForBdmv(filePath);
-            if (!string.IsNullOrEmpty(isoMountPoint) && LocalPlayerService.IsBdmvStructure(isoMountPoint))
+            if (!isFile && !isDir)
             {
-                actualPlayPath = ShowBdmvTitleDialog(isoMountPoint, $"ISO: {Path.GetFileName(filePath)}");
+                MessageBox.Show($"路径不存在: {filePath}", "错误", MessageBoxButton.OK, MessageBoxImage.Error);
+                return;
+            }
+
+            string actualPlayPath = filePath;
+            string? isoMountPoint = null;
+
+            if (isFile && filePath.EndsWith(".iso", StringComparison.OrdinalIgnoreCase))
+            {
+                isoMountPoint = MountIsoForBdmv(filePath);
+                if (!string.IsNullOrEmpty(isoMountPoint) && LocalPlayerService.IsBdmvStructure(isoMountPoint))
+                {
+                    actualPlayPath = ShowBdmvTitleDialog(isoMountPoint, $"ISO: {Path.GetFileName(filePath)}");
+                    if (string.IsNullOrEmpty(actualPlayPath))
+                    {
+                        DismountIso(filePath);
+                        return;
+                    }
+                }
+                else if (!string.IsNullOrEmpty(isoMountPoint))
+                {
+                    actualPlayPath = filePath;
+                }
+            }
+            else if (isDir && LocalPlayerService.IsBdmvStructure(filePath))
+            {
+                actualPlayPath = ShowBdmvTitleDialog(filePath, Path.GetFileName(filePath));
                 if (string.IsNullOrEmpty(actualPlayPath))
                 {
-                    // 用户取消，卸载ISO
-                    DismountIso(filePath);
                     return;
                 }
             }
-            else if (!string.IsNullOrEmpty(isoMountPoint))
+
+            _currentPlayingFilePath = actualPlayPath;
+            _currentIsoMountPoint = isoMountPoint;
+
+            string _currentMovieTitle = Path.GetFileNameWithoutExtension(filePath);
+            if (string.IsNullOrEmpty(_currentMovieTitle))
+                _currentMovieTitle = Path.GetFileName(filePath);
+
+            var CurrentD3dModel = D3DMode.D3D11;
+            if (CurrentD3dModel == D3DMode.D3D9)
             {
-                // 非BDMV结构的ISO，直接播放ISO文件
-                actualPlayPath = filePath;
-            }
+                var videoWindow = new VideoWindow(_playerService!, actualPlayPath, _currentMovieTitle);
+                videoWindow.Show();
+                videoWindow.Activate();
+ 
         }
-        // BDMV 文件夹
-        else if (isDir && LocalPlayerService.IsBdmvStructure(filePath))
-        {
-            actualPlayPath = ShowBdmvTitleDialog(filePath, Path.GetFileName(filePath));
-            if (string.IsNullOrEmpty(actualPlayPath))
+        else if (CurrentD3dModel == D3DMode.D3D11)
             {
-                return; // 用户取消
+                //var videoWindow = new MovieAgent.D3D11Window.VideoWindow();
+                // videoWindow.Show();
+                var controlWindow = new MovieAgent.D3D11Window.ControlWindow();
+                controlWindow.Show();
+                 _ = controlWindow.StartPlaybackAsync(actualPlayPath, _currentMovieTitle);
             }
+            else if (CurrentD3dModel == D3DMode.D3D12)
+            {
+                var videoWindow = new MovieAgent.D3D12Window.VideoWindow(); 
+                videoWindow.Show();
+               var controlWindow = new MovieAgent.D3D12Window.ControlWindow(videoWindow);
+                _ = controlWindow.StartPlaybackAsync(actualPlayPath, _currentMovieTitle);
+            } 
         }
-
-        // 保存当前播放文件路径，用于性能警告时切换到系统播放器
-         _currentPlayingFilePath = actualPlayPath;
-          _currentIsoMountPoint = isoMountPoint;
-
-        // 提取电影标题（从文件路径中获取）
-        string _currentMovieTitle = Path.GetFileNameWithoutExtension(filePath);
-        if (string.IsNullOrEmpty(_currentMovieTitle))
-            _currentMovieTitle = Path.GetFileName(filePath);
-
-        // 2. 创建并显示视频窗口
-        var CurrentD3dModel = D3DMode.D3D12;
-         if (CurrentD3dModel == D3DMode.D3D11)
-        {
-            var videoWindow = new MovieAgent.D3D11Window.VideoWindow();
-            videoWindow.Hide();
-            videoWindow.Show();
-            // videoWindow.Dispatcher.InvokeAsync(() => { }, System.Windows.Threading.DispatcherPriority.Loaded);
-            // 3. 创建控制窗口，传入视频窗口引用
-            var controlWindow = new MovieAgent.D3D11Window.ControlWindow(videoWindow);
-            controlWindow.Show();
-            // controlWindow.Hide();
-            controlWindow.Activate();
-            // 4. 让控制窗口开始播放（设备就绪、播放、UI更新都在控制窗口内部完成）
-            _ = controlWindow.StartPlaybackAsync(actualPlayPath, _currentMovieTitle);
-        }
-        else if (CurrentD3dModel == D3DMode.D3D12)
-        {
-            var videoWindow = new MovieAgent.D3D12Window.VideoWindow(); 
-            videoWindow.Show();
-            // videoWindow.Dispatcher.InvokeAsync(() => { }, System.Windows.Threading.DispatcherPriority.Loaded);
-            // 3. 创建控制窗口，传入视频窗口引用
-           var controlWindow = new MovieAgent.D3D12Window.ControlWindow(videoWindow);
-           // controlWindow.Show();
-           //  controlWindow.Hide();
-          //  controlWindow.Activate();
-            // 4. 让控制窗口开始播放（设备就绪、播放、UI更新都在控制窗口内部完成）
-            _ = controlWindow.StartPlaybackAsync(actualPlayPath, _currentMovieTitle);
-        } 
-
-        // 5. 可选：隐藏主窗口（取决于你的需求）
-        // this.Hide();
-    }
     /// <summary>
     /// 卸载 ISO 虚拟驱动器
     /// </summary>
@@ -402,5 +386,35 @@ public partial class MainWindow : Window
 
         bool? result = dialog.ShowDialog();
         return result == true ? selectedPath : null;
+    }
+
+    protected override void OnClosing(System.ComponentModel.CancelEventArgs e)
+    {
+        base.OnClosing(e);
+
+        try
+        {
+            _logger.Debug("[MainWindow] 正在关闭，释放所有资源...");
+
+            if (_playerService != null)
+            {
+                _playerService.PlaybackRequestedByBlazor -= OnPlaybackRequestedByBlazor;
+                _playerService.StopAsync().Wait();
+                _logger.Debug("[MainWindow] 播放器服务已停止");
+            }
+
+            if (!string.IsNullOrEmpty(_currentIsoMountPoint))
+            {
+                DismountIso(_currentPlayingFilePath ?? "");
+                _currentIsoMountPoint = null;
+                _logger.Debug("[MainWindow] ISO挂载点已卸载");
+            }
+
+            _logger.Debug("[MainWindow] 所有资源已释放");
+        }
+        catch (Exception ex)
+        {
+            _logger.Error(ex, "[MainWindow] 关闭时释放资源出错");
+        }
     }
 }

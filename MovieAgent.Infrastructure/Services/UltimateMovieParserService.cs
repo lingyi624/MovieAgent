@@ -11,6 +11,7 @@ namespace MovieAgent.Infrastructure.Services
     using System.IO;
     using System.Linq;
     using System.Text.RegularExpressions;
+    using System.Windows.Shapes;
 
     public class UltimateMovieParser
     {
@@ -315,14 +316,14 @@ namespace MovieAgent.Infrastructure.Services
             if (string.IsNullOrWhiteSpace(filePath)) return null;
 
             string fileName;
-            try { fileName = Path.GetFileNameWithoutExtension(filePath); }
+            try { fileName = System.IO.Path.GetFileNameWithoutExtension(filePath); }
             catch (ArgumentException) { return null; }
 
             if (string.IsNullOrWhiteSpace(fileName)) return null;
 
             // 特殊处理：如果是纯数字文件名，尝试从目录名获取信息
-            string directoryName = Path.GetDirectoryName(filePath) ?? "";
-            string dirName = Path.GetFileName(directoryName);
+            string directoryName = System.IO.Path.GetDirectoryName(filePath) ?? "";
+            string dirName = System.IO.Path.GetFileName(directoryName);
 
             var context = new ParseContext
             {
@@ -382,6 +383,8 @@ namespace MovieAgent.Infrastructure.Services
 
             if (string.IsNullOrWhiteSpace(context.Title))
                 return null;
+            //最新再次清理标题，确保最终结果干净
+            context.Title = MovieTitleExtractor.ExtractTitle(context.Title);
 
             return new Movie
             {

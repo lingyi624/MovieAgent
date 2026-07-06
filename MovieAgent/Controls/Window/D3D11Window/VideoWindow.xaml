@@ -2,7 +2,7 @@
         xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
  xmlns:controls="clr-namespace:MovieAgent.D3D11Window"  Width="1200" Height="800"   
-        Title="FFmpeg D3D11VA Player"  WindowState="Maximized"
+        Title="FFmpeg D3D11VA Player"   
         >
     <!--<Grid>
         --><!-- 直接作为 Image 使用，支持所有 Image 的布局属性 -->

@@ -7,7 +7,7 @@
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
     <RootNamespace>MovieAgent</RootNamespace>
-    <ApplicationTitle>Movie Agent</ApplicationTitle>
+    <ApplicationTitle>Movie Agent(小雪雪)</ApplicationTitle>
     <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
     <ApplicationIcon>Resources\appicon.ico</ApplicationIcon>
     <StartupObject>MovieAgent.Program</StartupObject>
@@ -81,6 +81,9 @@
       <SubType>Code</SubType>
     </Compile>
     <Compile Update="Controls\Window\D3D11Window\VideoWindow.xaml.cs">
+      <SubType>Code</SubType>
+    </Compile>
+    <Compile Update="Controls\Window\D3D9Window\VideoWindow.xaml.cs">
       <SubType>Code</SubType>
     </Compile>
   </ItemGroup>

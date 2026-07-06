@@ -3,19 +3,26 @@
 @inject ILocalizationService LocalizationService
 @inject IJSRuntime JSRuntime
 
-<MudTextField T="string" 
-              @bind-Value="_searchText"
-              Placeholder="@LocalizationService.Translate("SearchPlaceholder")"
-              Adornment="Adornment.End"
-              AdornmentIcon="@Icons.Material.Filled.Search"
-              Style="@TextFieldStyle"
-              color="Color.Inherit" OnAdornmentClick="@ShowSearchPanel"
-              Variant="Variant.Outlined"
-              OnKeyUp="HandleKeyUp"
-              @onfocus="ShowSearchPanel"
-              @onblur="HandleBlur"
-              inputStyle="@InputStyle"
-              AdornmentColor="Color.Inherit" />
+<div style="display: flex; align-items: center; gap: 8px;">
+    <MudTextField T="string" 
+                  @bind-Value="_searchText"
+                  Placeholder="@LocalizationService.Translate("SearchPlaceholder")"
+                  Adornment="Adornment.End"
+                  AdornmentIcon="@Icons.Material.Filled.Search"
+                  Style="@TextFieldStyle"
+                  color="Color.Inherit" OnAdornmentClick="@ShowSearchPanel"
+                  Variant="Variant.Outlined"
+                  OnKeyUp="HandleKeyUp"
+                  @onfocus="ShowSearchPanel"
+                  @onblur="HandleBlur"
+                  inputStyle="@InputStyle"
+                  AdornmentColor="Color.Inherit" />
+    
+    <button @onclick="NavigateToSprite" 
+            style="width: 42px; height: 42px; border-radius: 50%; background: linear-gradient(135deg, #E94560 0%, #FF6B6B 100%); border: none; cursor: pointer; display: flex; align-items: center; justify-content: center; box-shadow: 0 2px 10px rgba(233, 69, 96, 0.4); transition: transform 0.2s;">
+        <span style="font-size: 20px;">🧚</span>
+    </button>
+</div>
 
 <MudPopover @bind-open="_showSearchPanel" 
             AnchorOrigin="Origin.BottomRight" 
@@ -183,6 +190,11 @@
     {
         _showSearchPanel = false;
         NavigationManager.NavigateTo($"/movies?search={Uri.EscapeDataString(_searchText)}");
+    }
+
+    private void NavigateToSprite()
+    {
+        NavigationManager.NavigateTo("/sprite");
     }
 
     public void Dispose()

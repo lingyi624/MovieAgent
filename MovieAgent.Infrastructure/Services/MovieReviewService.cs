@@ -39,7 +39,7 @@ public class MovieReviewService : IMovieReviewService
             MovieId = movieId,
             Content = content,
             Rating = Math.Clamp(rating, 1, 5),
-            CreatedAt = DateTime.UtcNow
+            CreatedAt = DateTime.Now
         };
         
         return await _repo.AddAsync(review);
@@ -53,7 +53,7 @@ public class MovieReviewService : IMovieReviewService
         
         review.Content = content;
         review.Rating = Math.Clamp(rating, 1, 5);
-        review.UpdatedAt = DateTime.UtcNow;
+        review.UpdatedAt = DateTime.Now;
         
         return await _repo.UpdateAsync(review);
     }

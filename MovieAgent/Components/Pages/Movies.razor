@@ -678,10 +678,16 @@ else
                 _editingMovie.Director = tmdbInfo.Director;
                 _editingMovie.Writer = tmdbInfo.Writer;
                 _editingMovie.Cast = tmdbInfo.Cast;
+                _editingMovie.DirectorTmdbId = tmdbInfo.DirectorTmdbId;
+                _editingMovie.WriterTmdbIds = System.Text.Json.JsonSerializer.Serialize(tmdbInfo.WriterTmdbIds ?? new List<string>());
+                _editingMovie.CastTmdbIds = System.Text.Json.JsonSerializer.Serialize(tmdbInfo.CastTmdbIds ?? new List<string>());
                 if (tmdbInfo.Languages.Any())
                     _editingMovie.Language = string.Join(", ", tmdbInfo.Languages);
                 if (tmdbInfo.Countries.Any())
                     _editingMovie.Country = string.Join(", ", tmdbInfo.Countries);
+
+                // 制片公司ID
+                _editingMovie.ProductionCompanyIds = System.Text.Json.JsonSerializer.Serialize(tmdbInfo.ProductionCompanyIds ?? new List<string>());
 
                 // 标识
                 _editingMovie.ImdbId = tmdbInfo.ImdbId;

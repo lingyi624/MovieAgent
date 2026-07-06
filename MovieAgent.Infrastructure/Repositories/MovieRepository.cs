@@ -3,10 +3,11 @@ using MovieAgent.Core.Entities;
 using MovieAgent.Core.Interfaces;
 using MovieAgent.Core.Models;
 using MovieAgent.Infrastructure.Data;
-using System.IO;
-using System.Text.Json;
 using System.Drawing;
 using System.Drawing.Imaging;
+using System.IO;
+using System.Linq.Expressions;
+using System.Text.Json;
 
 namespace MovieAgent.Infrastructure.Repositories;
 
@@ -25,11 +26,15 @@ public class MovieRepository : IMovieRepository
             if (!string.IsNullOrWhiteSpace(filter.SearchKeyword))
                 query = query.Where(m => m.Title.Contains(filter.SearchKeyword));
             if (filter.Genres is { Count: > 0 })
-                foreach (var genre in filter.Genres)
-                {
-                    string likePattern = $"%\"{genre}\"%";
-                    query = query.Where(m => m.Genres != null && EF.Functions.Like(m.Genres, likePattern));
-                }
+            {
+                //string likePattern = $"%\"{EscapeJsonString(genre)}\"%";
+                //query = query.Where(m => m.Genres != null && EF.Functions.Like(m.Genres, likePattern));
+
+                // query = query.Where(m => m.Genres != null && EF.Functions.Like(m.Genres, $"%{filter.Genres[0]}%"));
+                var escapedGenres = filter.Genres.Select(g => EscapeJsonString(g)).ToList();
+                string es = EscapeJsonString(filter.Genres[0]);
+                query = query.Where(m => m.Genres != null && m.Genres.IndexOf(es) > -1);
+            }
             if (filter.MinYear.HasValue)
                 query = query.Where(m => m.ReleaseYear >= filter.MinYear);
             if (filter.MaxYear.HasValue)
@@ -309,11 +314,10 @@ public class MovieRepository : IMovieRepository
    
             if (filter.Genres is { Count: > 0 })
             {
-                foreach (var genre in filter.Genres)
-                {
-                    string likePattern = $"%\"{genre}\"%";
-                    query = query.Where(m => m.Genres != null && EF.Functions.Like(m.Genres, likePattern));
-                }
+                var escapedGenres = filter.Genres.Select(g => EscapeJsonString(g)).ToList();
+                string es = EscapeJsonString(filter.Genres[0]);
+                query = query.Where(m => m.Genres != null && m.Genres.IndexOf(es)>-1); 
+
             }
             if (filter.MinYear.HasValue)
                 query = query.Where(m => m.ReleaseYear >= filter.MinYear);
@@ -379,7 +383,7 @@ public class MovieRepository : IMovieRepository
 
         return grouped;
     }
-
+     
     public async Task<int> GetUniqueMovieCountAsync(MovieFilter? filter = null)
     {
         var query = _db.Movies.AsQueryable();
@@ -389,12 +393,16 @@ public class MovieRepository : IMovieRepository
             if (!string.IsNullOrWhiteSpace(filter.SearchKeyword))
                 query = query.Where(m => m.Title.Contains(filter.SearchKeyword) ||
                                m.Director.Contains(filter.SearchKeyword) ||
-                               m.Cast.Contains(filter.SearchKeyword)); if (filter.Genres is { Count: > 0 })
-                foreach (var genre in filter.Genres)
+                               m.Cast.Contains(filter.SearchKeyword));
+            if (filter.Genres is { Count: > 0 })
                 {
-                    string likePattern = $"%\"{genre}\"%";
-                    query = query.Where(m => m.Genres != null && EF.Functions.Like(m.Genres, likePattern));
-                }
+                //var escapedGenres = filter.Genres.Select(g => EscapeJsonString(g)).ToList();
+                // query = query.Where(m => m.Genres != null && escapedGenres.Any(genre => EF.Functions.Like(m.Genres, $"%{genre}%")));
+                //query = query.Where(m => m.Genres != null &&   EF.Functions.Like(m.Genres, $"%{filter.Genres[0]}%"));
+                var escapedGenres = filter.Genres.Select(g => EscapeJsonString(g)).ToList();
+                string es = EscapeJsonString(filter.Genres[0]);
+                query = query.Where(m => m.Genres != null && m.Genres.IndexOf(es) > -1);
+            }
             if (filter.MinYear.HasValue)
                 query = query.Where(m => m.ReleaseYear >= filter.MinYear);
             if (filter.MaxYear.HasValue)
@@ -431,6 +439,23 @@ public class MovieRepository : IMovieRepository
 
     public async Task<List<Movie>> GetUnwatchedAsync()
         => await _db.Movies.Where(m => !m.IsWatched).OrderByDescending(m => m.Rating).Take(50).ToListAsync();
+
+    private string EscapeJsonString(string input)
+    {
+        var sb = new System.Text.StringBuilder();
+        foreach (char c in input)
+        {
+            if (c >= '\u0080')
+            {
+                sb.Append($"\\u{(int)c:X4}");
+            }
+            else
+            {
+                sb.Append(c);
+            }
+        }
+        return sb.ToString();
+    }
 
     public async Task<List<Movie>> GetRecentlyAddedAsync(int count = 20)
         => await _db.Movies.OrderByDescending(m => m.CreatedAt).Take(count).ToListAsync();

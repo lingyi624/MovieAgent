@@ -10,6 +10,8 @@ public interface ISpeechService
     
     Task<string> RecognizeFromMicrophoneAsync(int durationMs = 5000);
     
+    Task<string> ListenAsync();
+    
     Task SpeakAsync(string text, string language = "zh");
     
     void StartListening(Action<string> onResult);

@@ -1,13 +1,3 @@
- 
-//针对你提出的软解黑边不对称和硬解撕裂、拉动的问题，主要是由以下几个原因导致的：
-//1. **软解黑边不对称**：软解渲染中调用 `RSSetViewport` 时，错误地将目标矩形的 `Right` 和 `Bottom`（绝对坐标）作为 `Width` 和 `Height`（相对大小）传入，导致视口大小计算错误、画面拉伸溢出。
-//2. **硬解撕裂与拉动**：硬解渲染时在 `using` 块和 `finally` 中过早释放了输入纹理的 `inputView` 和外部解码器纹理引用。由于 D3D11 的 GPU 命令是异步执行的，资源在 `VideoProcessorBlt` 还未真正完成时就被释放或交还给了解码器，从而引发严重的画面撕裂和拉动。
-//3. **资源频繁重建**：每帧硬解渲染都在重新获取 SwapChain BackBuffer 并重建 OutputView，不仅造成性能损耗，也易引发画面状态跳动。
-//4. **缺少逐行扫描标识**：未显式设置视频流为逐行扫描，部分显卡驱动可能会错误地进行反交错处理，导致画面微抖。
-
-//以下是经过深度优化与修复后的代码：
-
-//```csharp
 using MovieAgent.FFmpegDecoder;
 using SharpGen.Runtime;
 using System;
@@ -31,6 +21,9 @@ namespace MovieAgent.D3D11Window
         // Win32
         private const uint WS_CHILD = 0x40000000, WS_VISIBLE = 0x10000000,
             WS_CLIPSIBLINGS = 0x04000000, WS_CLIPCHILDREN = 0x02000000;
+
+        private const uint WM_SIZE = 0x0005;
+        private const int SIZE_RESTORED = 0;
 
         private delegate IntPtr WndProcDelegate(IntPtr hWnd, uint msg, IntPtr wParam, IntPtr lParam);
         private static readonly WndProcDelegate _wndProc = WndProc;
@@ -69,8 +62,12 @@ namespace MovieAgent.D3D11Window
         private ID3D11VideoProcessor? _videoProcessor;
         private ID3D11VideoProcessorEnumerator? _vpEnumerator;
         private ID3D11VideoProcessorOutputView? _vpOutputView;
-        private ID3D11VideoProcessorInputView? _lastInputView;
-        private ID3D11Texture2D? _lastDecoderTexture;
+        
+        // 三缓冲输入视图：GPU 异步执行 Blt，必须保证释放前 GPU 已完成
+        // 槽位 0=当前帧, 1=上一帧(GPU可能在使用), 2=上上帧(GPU可能在使用)
+        private const int InputViewSlots = 5;
+        private readonly ID3D11VideoProcessorInputView?[] _inputViews = new ID3D11VideoProcessorInputView?[InputViewSlots];
+        private int _inputViewIndex = 0;
 
         // 软解
         private ID3D11VertexShader? _vertexShader;
@@ -175,7 +172,8 @@ namespace MovieAgent.D3D11Window
             var flags = DeviceCreationFlags.BgraSupport | DeviceCreationFlags.VideoSupport;
 #if DEBUG
             flags |= DeviceCreationFlags.Debug;
-#endif
+ 
+#endif 
             var result = D3D11.D3D11CreateDevice(null, DriverType.Hardware, flags, 
                 new[] { FeatureLevel.Level_11_1, FeatureLevel.Level_11_0 },
                 out _d3dDevice, out var fl, out _d3dContext);
@@ -214,12 +212,26 @@ namespace MovieAgent.D3D11Window
                 BufferUsage = Usage.RenderTargetOutput,
                 SwapEffect = SwapEffect.FlipSequential,
                 Scaling = Scaling.Stretch,
-                AlphaMode = AlphaMode.Ignore
+                AlphaMode = AlphaMode.Ignore,
+                Flags = SwapChainFlags.None // 视频播放不需要 AllowTearing，VSYNC 同步更稳定
             };
             _swapChain = _dxgiFactory!.CreateSwapChainForHwnd(_d3dDevice!, _hwnd, desc);
             _dxgiFactory.MakeWindowAssociation(_parentHwnd, WindowAssociationFlags.IgnoreAll);
             CreateBackBufferRtv();
             DebugLogger.WriteLine($"交换链创建: {_swapChainWidth}x{_swapChainHeight}");
+
+            //// 获取当前输出
+            //using var output = _swapChain.GetContainingOutput();
+            //var desc2 = output.Description;
+            //// 检查 HDR 支持：通过 IDXGIOutput6 查询色彩空间
+            //var output6 = output.QueryInterface<IDXGIOutput6>();
+            //if (output6 != null)
+            //{
+            //    var desc1 = output6.Description1;
+            //    // desc1.ColorSpace 是否为 HDR 空间，或者通过 CheckHardwareCompositionSupport 等判断
+            //    // 但直接判断更简单：检查系统是否报告 HDR 支持（需要 Windows 10 1703+）
+            //}
+
         }
 
         private void CreateBackBufferRtv()
@@ -233,7 +245,67 @@ namespace MovieAgent.D3D11Window
 
         private static IntPtr WndProc(IntPtr hWnd, uint msg, IntPtr wParam, IntPtr lParam)
         {
+            // 处理 WM_SIZE：当子窗口尺寸变化时，调整交换链尺寸
+            // 这是消除画面抖动的关键：交换链尺寸必须与显示区域匹配
+            if (msg == WM_SIZE && _currentRenderer != null)
+            {
+                int newWidth = (int)(lParam & 0xFFFF);
+                int newHeight = (int)((lParam >> 16) & 0xFFFF);
+                if (newWidth > 0 && newHeight > 0)
+                {
+                    _currentRenderer.OnWindowSizeChanged(newWidth, newHeight);
+                }
+            }
             return DefWindowProc(hWnd, msg, wParam, lParam);
+        }
+
+        // ==================== 交换链尺寸调整 ====================
+        private void OnWindowSizeChanged(int newWidth, int newHeight)
+        {
+            if (_d3dDevice == null || _swapChain == null || !_d3dInitialized) return;
+            if (newWidth == _swapChainWidth && newHeight == _swapChainHeight) return;
+            if (newWidth <= 0 || newHeight <= 0) return;
+
+            // 必须在 UI 线程执行，因为涉及 D3D 资源重建
+            if (!_uiDispatcher.CheckAccess())
+            {
+                _uiDispatcher.BeginInvoke(DispatcherPriority.Normal, () => OnWindowSizeChanged(newWidth, newHeight));
+                return;
+            }
+
+            try
+            {
+                // 强制 GPU 完成所有挂起命令
+                _d3dContext?.ClearState();
+                _d3dContext?.Flush();
+
+                // 释放依赖于交换链缓冲区的资源
+                SafeDispose(ref _vpOutputView);
+                SafeDispose(ref _backBufferRtv);
+                SafeDispose(ref _backBufferTexture);
+
+                // 调整交换链缓冲区尺寸
+                _swapChain.ResizeBuffers(2, (uint)newWidth, (uint)newHeight,
+                    Format.B8G8R8A8_UNorm, SwapChainFlags.None);
+                _swapChainWidth = newWidth;
+                _swapChainHeight = newHeight;
+
+                // 重建 RTV 和 VpOutputView
+                CreateBackBufferRtv();
+
+                // 重建 VideoProcessor 以适配新尺寸
+                if (_videoWidth > 0 && _videoHeight > 0)
+                {
+                    _lastAppliedVideoW = -1; // 强制更新视口
+                    RecreateVideoProcessor(_videoWidth, _videoHeight);
+                }
+
+                DebugLogger.WriteLine($"交换链尺寸调整: {newWidth}x{newHeight}");
+            }
+            catch (Exception ex)
+            {
+                DebugLogger.WriteLine($"交换链尺寸调整失败: {ex.Message}");
+            }
         }
 
         // ==================== 视口计算 ====================
@@ -379,90 +451,134 @@ namespace MovieAgent.D3D11Window
         }
 
         // ==================== 硬解渲染（最终版） ====================
+        // 注意：FFmpegDecoderEngine 在 av_frame_unref 之前已将 ArraySlice 复制到私有纹理
+        // 渲染器收到的 texturePtr 指向 FFmpeg 端的私有纹理（非数组），可直接使用，无需再复制
         public void RenderD3D11VATexture(IntPtr texturePtr, int width, int height, uint arraySlice = 0)
         {
             if (_stopRequested || !_d3dInitialized || _videoContext == null || _videoDevice == null ||
                 _vpEnumerator == null || _videoProcessor == null) return;
             if (!_swapChainReady) return;
 
+            // 调用方已在 UI 线程调度，无需二次切换；若不在 UI 线程，简单丢弃以避免并发问题
             if (!_uiDispatcher.CheckAccess())
             {
-                _uiDispatcher.BeginInvoke(() => RenderD3D11VATexture(texturePtr, width, height, arraySlice));
+                _uiDispatcher.BeginInvoke(DispatcherPriority.Render,
+                    () => RenderD3D11VATexture(texturePtr, width, height, arraySlice));
                 return;
             }
             if (texturePtr == IntPtr.Zero) return;
 
-            lock (_resizeLock)
+            // 检测设备丢失（如设备切换、驱动升级、TDR 等）
+            if (CheckDeviceLost()) return;
+
+            try
             {
-                // 释放上一帧的输入资源，确保 GPU 已完成上一帧的 Blt
-                _lastInputView?.Dispose();
-                _lastInputView = null;
-                _lastDecoderTexture?.Release();
-                _lastDecoderTexture = null;
+                // 释放"3 帧前"使用的 InputView（环形缓冲：当前槽位即将被复用）
+                _inputViews[_inputViewIndex]?.Dispose();
+                _inputViews[_inputViewIndex] = null;
 
-                ID3D11Texture2D? decoderTexture = null;
-                try
+                // 用传入的纹理（FFmpeg 端私有纹理）创建 InputView，不持有引用，不释放
+                var frameTexture = new ID3D11Texture2D(texturePtr);
+                var texDesc = frameTexture.Description;
+                if ((_vpEnumerator.CheckVideoProcessorFormat(texDesc.Format) & VideoProcessorFormatSupport.Input) == 0) return;
+                if ((texDesc.BindFlags & (BindFlags.Decoder | BindFlags.VideoEncoder)) == 0) return;
+
+                _videoWidth = width; _videoHeight = height;
+                if (_lastAppliedVideoW != width || _lastAppliedVideoH != height)
+                    RecreateVideoProcessor(width, height);
+                UpdateViewportOnce();
+
+                if (_vpOutputView == null) return;
+
+                // 传入的纹理已经是 FFmpeg 端的私有纹理（ArraySize=1），arraySlice 应为 0
+                uint safeIndex = (uint)Math.Min(arraySlice, texDesc.ArraySize - 1);
+                var inputDesc = new VideoProcessorInputViewDescription
                 {
-                    decoderTexture = new ID3D11Texture2D(texturePtr);
-                    decoderTexture.AddRef();   // 防止外部提前释放
+                    FourCC = 0, // 0 = 使用纹理原生格式，自动适配 NV12/P010 等
+                    ViewDimension = VideoProcessorInputViewDimension.Texture2D,
+                    Texture2D = new Texture2DVideoProcessorInputView { MipSlice = 0, ArraySlice = safeIndex }
+                };
 
-                    var texDesc = decoderTexture.Description;
-                    if ((_vpEnumerator.CheckVideoProcessorFormat(texDesc.Format) & VideoProcessorFormatSupport.Input) == 0) return;
-                    if ((texDesc.BindFlags & (BindFlags.Decoder | BindFlags.VideoEncoder)) == 0) return;
+                var inputView = _videoDevice.CreateVideoProcessorInputView(frameTexture, _vpEnumerator, inputDesc);
+                if (inputView == null) return;
 
-                    _videoWidth = width; _videoHeight = height;
-                    if (_lastAppliedVideoW != width || _lastAppliedVideoH != height)
-                        RecreateVideoProcessor(width, height);
-                    UpdateViewportOnce();
+                _inputViews[_inputViewIndex] = inputView;
 
-                    if (_vpOutputView == null) return;
+                _videoContext.VideoProcessorSetStreamAutoProcessingMode(_videoProcessor, 0, false);
+                _videoContext.VideoProcessorSetStreamColorSpace(_videoProcessor, 0, new VideoProcessorColorSpace
+                { Usage = 0, YCbCr_xvYCC = 0, Nominal_Range = 2, RGB_Range = 0, YCbCr_Matrix = 1 });
 
-                    uint safeIndex = (uint)Math.Min(arraySlice, texDesc.ArraySize - 1);
-                    var inputDesc = new VideoProcessorInputViewDescription
+                var streams = new[]
+                {
+                    new VideoProcessorStream
                     {
-                        FourCC = 0x3231564E,
-                        ViewDimension = VideoProcessorInputViewDimension.Texture2D,
-                        Texture2D = new Texture2DVideoProcessorInputView { MipSlice = 0, ArraySlice = safeIndex }
-                    };
-
-                    var inputView = _videoDevice.CreateVideoProcessorInputView(decoderTexture, _vpEnumerator, inputDesc);
-                    if (inputView == null) return;
-
-                    _lastInputView = inputView;
-                    _lastDecoderTexture = decoderTexture;
-                    decoderTexture = null; // 转移所有权，防止 finally 释放
-
-                    _videoContext.VideoProcessorSetStreamAutoProcessingMode(_videoProcessor, 0, false);
-                    _videoContext.VideoProcessorSetStreamColorSpace(_videoProcessor, 0, new VideoProcessorColorSpace
-                    { Usage = 0, YCbCr_xvYCC = 0, Nominal_Range = 2, RGB_Range = 0, YCbCr_Matrix = 1 });
-
-                    var streams = new[]
-                    {
-                        new VideoProcessorStream
-                        {
-                            Enable = true, OutputIndex = 0, InputFrameOrField = 0,
-                            PastFrames = 0, FutureFrames = 0, InputSurface = _lastInputView
-                        }
-                    };
-
-                    var result = _videoContext.VideoProcessorBlt(_videoProcessor, _vpOutputView, 0, 1, streams);
-                    if (result.Failure)
-                    {
-                        DebugLogger.WriteLine($"Blt 失败: 0x{result.Code:X}");
-                        return;
+                        Enable = true, OutputIndex = 0, InputFrameOrField = 0,
+                        PastFrames = 0, FutureFrames = 0, InputSurface = _inputViews[_inputViewIndex]
                     }
+                };
 
-                    _d3dContext.Flush();
-                    _swapChain!.Present(1, PresentFlags.None);
-                }
-                catch (Exception ex)
+                var result = _videoContext.VideoProcessorBlt(_videoProcessor, _vpOutputView, 0, 1, streams);
+                if (result.Failure)
                 {
-                    DebugLogger.WriteLine($"硬解渲染异常: {ex.Message}");
+                    DebugLogger.WriteLine($"Blt 失败: 0x{result.Code:X}");
+                    return;
                 }
-                finally
+
+                // 切换到下一个槽位：确保当前帧 InputView 在后续 2 帧内不被释放
+                // Present(1) 启用 VSYNC，与 SwapChain 配合实现稳定帧节奏
+                _swapChain!.Present(1, PresentFlags.None);
+
+                _inputViewIndex = (_inputViewIndex + 1) % InputViewSlots;
+            }
+            catch (SharpGenException ex)
+            {
+                DebugLogger.WriteLine($"硬解渲染 SharpGen 异常: {ex.Message} (ResultCode=0x{ex.ResultCode:X})");
+                HandleDeviceLost();
+            }
+            catch (Exception ex)
+            {
+                DebugLogger.WriteLine($"硬解渲染异常: {ex.Message}");
+            }
+        }
+
+        // ==================== 设备丢失处理 ====================
+        private bool CheckDeviceLost()
+        {
+            if (_d3dDevice == null) return true;
+            try
+            {
+                // 检测设备removed：GetDeviceRemovedReason 不会抛异常
+                var reason = _d3dDevice.DeviceRemovedReason;
+                if (reason.Failure)
                 {
-                    decoderTexture?.Release(); // 如果未转移所有权(中途失败退出)，则释放
+                    DebugLogger.WriteLine($"D3D11 设备丢失: 0x{reason.Code:X}");
+                    HandleDeviceLost();
+                    return true;
                 }
+            }
+            catch
+            {
+                return true;
+            }
+            return false;
+        }
+
+        private void HandleDeviceLost()
+        {
+            try
+            {
+                DebugLogger.WriteLine("D3D11 设备丢失，尝试重建...");
+                CleanupD3D();
+                _stopRequested = false;
+                _d3dInitialized = false;
+                _lastAppliedVideoW = -1;
+                _lastAppliedVideoH = -1;
+                InitializeD3D();
+                DebugLogger.WriteLine("D3D11 设备重建成功");
+            }
+            catch (Exception ex)
+            {
+                DebugLogger.WriteLine($"D3D11 设备重建失败: {ex.Message}");
             }
         }
 
@@ -675,6 +791,35 @@ float4 main_ps(float4 pos : SV_POSITION, float2 tex : TEXCOORD) : SV_TARGET {
             _swapChain?.Present(1, PresentFlags.None);
         }
 
+        /// <summary>
+        /// 重置渲染缓冲（Seek 后调用）。
+        /// 清空三缓冲 InputView，避免渲染器继续使用旧帧纹理导致卡顿。
+        /// </summary>
+        public void ResetBuffers()
+        {
+            if (!_uiDispatcher.CheckAccess())
+            {
+                _uiDispatcher.BeginInvoke(DispatcherPriority.Normal, ResetBuffers);
+                return;
+            }
+            try
+            {
+                for (int i = 0; i < InputViewSlots; i++)
+                {
+                    _inputViews[i]?.Dispose();
+                    _inputViews[i] = null;
+                }
+                _inputViewIndex = 0;
+                // 强制 GPU 完成所有挂起命令，确保旧帧不再被使用
+                _d3dContext?.ClearState();
+                _d3dContext?.Flush();
+            }
+            catch (Exception ex)
+            {
+                DebugLogger.WriteLine($"重置渲染缓冲失败: {ex.Message}");
+            }
+        }
+
         // ==================== 清理 ====================
         private void CleanupShaderPipeline()
         {
@@ -698,10 +843,13 @@ float4 main_ps(float4 pos : SV_POSITION, float2 tex : TEXCOORD) : SV_TARGET {
             CleanupShaderPipeline();
             CleanupYUVTextures();
 
-            _lastInputView?.Dispose();
-            _lastInputView = null;
-            _lastDecoderTexture?.Release();
-            _lastDecoderTexture = null;
+            // 释放三缓冲输入视图
+            for (int i = 0; i < InputViewSlots; i++)
+            {
+                _inputViews[i]?.Dispose();
+                _inputViews[i] = null;
+            }
+            _inputViewIndex = 0;
 
             SafeDispose(ref _vpOutputView);
             SafeDispose(ref _backBufferRtv); SafeDispose(ref _backBufferTexture);

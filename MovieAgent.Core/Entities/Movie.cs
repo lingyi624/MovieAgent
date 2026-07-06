@@ -190,13 +190,25 @@ public class Movie
     [MaxLength(500)]
     public string? Director { get; set; }
 
+    [MaxLength(500)]
+    public string? DirectorTmdbId { get; set; }
+
     /// <summary>编剧</summary>
     [MaxLength(2000)]
     public string? Writer { get; set; }
 
+    [MaxLength(2000)]
+    public string? WriterTmdbIds { get; set; }
+
     /// <summary>演员列表</summary>
     [MaxLength(4000)]
     public string? Cast { get; set; }
+
+    [MaxLength(4000)]
+    public string? CastTmdbIds { get; set; }
+
+    [MaxLength(2000)]
+    public string? ProductionCompanyIds { get; set; }
 
     /// <summary>---------------------------------------</summary>
     /// 其他信息

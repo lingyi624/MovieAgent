@@ -2207,11 +2207,11 @@ public partial class ControlWindow : Window
         _currentMovieTitle = movieTitle;
         if (_playerService == null) return;
 
-        _videoWindow.Width = 1200;
-        _videoWindow.Height = 800;
-        _videoWindow.Left = 100;
-        _videoWindow.Top = 100;
-        _videoWindow.WindowState = WindowState.Normal;
+        //_videoWindow.Width = 1200;
+        //_videoWindow.Height = 800;
+        //_videoWindow.Left = 100;
+        //_videoWindow.Top = 100;
+       // _videoWindow.WindowState = WindowState.Normal;
         _videoWindow.Topmost = false;
         SyncControlPosition();
 

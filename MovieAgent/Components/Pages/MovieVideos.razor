@@ -73,11 +73,12 @@ else
                             <MudIcon Icon="@Icons.Material.Filled.PlayArrow" Style="margin-right: 4px;" />
                             播放
                         </MudButton>
-                        @if (_movie.IsFavorite)
+                   @*      @if (_movie.IsFavorite)
                         {
                             <MudButton Variant="Variant.Outlined" Color="Color.Error" Size="Size.Small" Icon="@Icons.Material.Filled.Favorite">
+                                收藏
                             </MudButton>
-                        }
+                        } *@
                     </MudStack>
                 </MudCardContent>
             </MudCard>
@@ -167,7 +168,7 @@ else
                         {
                             <MudItem xs="12" sm="6">
                                 <MudText Typo="Typo.caption" Style="color: #888;">导演</MudText>
-                                <MudText Typo="Typo.body2" Style="color: white;">@_movie.Director</MudText>
+                                @RenderDirectorLinks(_movie.Director, _movie.DirectorTmdbId)
                             </MudItem>
                         }
                         
@@ -175,7 +176,7 @@ else
                         {
                             <MudItem xs="12" sm="6">
                                 <MudText Typo="Typo.caption" Style="color: #888;">编剧</MudText>
-                                <MudText Typo="Typo.body2" Style="color: white;">@_movie.Writer</MudText>
+                                @RenderWriterLinks(_movie.Writer, _movie.WriterTmdbIds)
                             </MudItem>
                         }
 
@@ -194,7 +195,7 @@ else
                         {
                             <MudItem xs="12" sm="6">
                                 <MudText Typo="Typo.caption" Style="color: #888;">制片公司</MudText>
-                                <MudText Typo="Typo.body2" Style="color: white;">@GetCompaniesList(_movie.ProductionCompanies)</MudText>
+                                @RenderCompanyLinks(_movie.ProductionCompanies, _movie.ProductionCompanyIds)
                             </MudItem>
                         }
 
@@ -279,7 +280,7 @@ else
                         {
                             <MudItem xs="12">
                                 <MudText Typo="Typo.caption" Style="color: #888;">主演</MudText>
-                                <MudText Typo="Typo.body2" Style="color: white;">@_movie.Cast</MudText>
+                                @RenderCastLinks(_movie.Cast, _movie.CastTmdbIds)
                             </MudItem>
                         }
 
@@ -783,5 +784,185 @@ else
     private async Task GoBackAsync()
     {
         await JSRuntime.InvokeVoidAsync("history.back");
+    }
+
+    private RenderFragment RenderDirectorLinks(string director, string? directorTmdbId)
+    {
+        return builder =>
+        {
+            if (!string.IsNullOrEmpty(directorTmdbId) && long.TryParse(directorTmdbId, out var id))
+            {
+                builder.OpenComponent<MudLink>(0);
+                builder.AddAttribute(1, "Href", NavigationManager.ToAbsoluteUri($"/person/{id}").ToString());
+                builder.AddAttribute(2, "Style", "color: #E94560; text-decoration: none;");
+                builder.AddAttribute(3, "ChildContent", (RenderFragment)(b =>
+                {
+                    b.AddContent(0, director);
+                }));
+                builder.CloseComponent();
+            }
+            else
+            {
+                builder.OpenComponent<MudText>(0);
+                builder.AddAttribute(1, "Typo", Typo.body2);
+                builder.AddAttribute(2, "Style", "color: white;");
+                builder.AddAttribute(3, "ChildContent", (RenderFragment)(b =>
+                {
+                    b.AddContent(0, director);
+                }));
+                builder.CloseComponent();
+            }
+        };
+    }
+
+    private RenderFragment RenderWriterLinks(string writers, string? writerTmdbIds)
+    {
+        return builder =>
+        {
+            var writerList = writers.Split(',');
+            var idList = ParseIdList(writerTmdbIds);
+            
+            for (int i = 0; i < writerList.Length; i++)
+            {
+                var writer = writerList[i].Trim();
+                var tmdbId = i < idList.Count ? idList[i] : null;
+                
+                if (!string.IsNullOrEmpty(tmdbId) && long.TryParse(tmdbId, out var id))
+                {
+                    builder.OpenComponent<MudLink>(i * 2);
+                    builder.AddAttribute(i * 2 + 1, "Href", NavigationManager.ToAbsoluteUri($"/person/{id}").ToString());
+                    builder.AddAttribute(i * 2 + 2, "Style", "color: #E94560; text-decoration: none;");
+                    builder.AddAttribute(i * 2 + 3, "ChildContent", (RenderFragment)(b =>
+                    {
+                        b.AddContent(0, writer);
+                    }));
+                    builder.CloseComponent();
+                }
+                else
+                {
+                    builder.OpenComponent<MudText>(i * 2);
+                    builder.AddAttribute(i * 2 + 1, "Typo", Typo.body2);
+                    builder.AddAttribute(i * 2 + 2, "Style", "color: white;");
+                    builder.AddAttribute(i * 2 + 3, "ChildContent", (RenderFragment)(b =>
+                    {
+                        b.AddContent(0, writer);
+                    }));
+                    builder.CloseComponent();
+                }
+                
+                if (i < writerList.Length - 1)
+                {
+                    builder.AddContent(i * 2 + 4, "、");
+                }
+            }
+        };
+    }
+
+    private RenderFragment RenderCastLinks(string cast, string? castTmdbIds)
+    {
+        return builder =>
+        {
+            var castList = cast.Split(',');
+            var idList = ParseIdList(castTmdbIds);
+            
+            for (int i = 0; i < castList.Length; i++)
+            {
+                var actor = castList[i].Trim();
+                var tmdbId = i < idList.Count ? idList[i] : null;
+                
+                if (!string.IsNullOrEmpty(tmdbId) && long.TryParse(tmdbId, out var id))
+                {
+                    builder.OpenComponent<MudLink>(i * 2);
+                    builder.AddAttribute(i * 2 + 1, "Href", NavigationManager.ToAbsoluteUri($"/person/{id}").ToString());
+                    builder.AddAttribute(i * 2 + 2, "Style", "color: #E94560; text-decoration: none;");
+                    builder.AddAttribute(i * 2 + 3, "ChildContent", (RenderFragment)(b =>
+                    {
+                        b.AddContent(0, actor);
+                    }));
+                    builder.CloseComponent();
+                }
+                else
+                {
+                    builder.OpenComponent<MudText>(i * 2);
+                    builder.AddAttribute(i * 2 + 1, "Typo", Typo.body2);
+                    builder.AddAttribute(i * 2 + 2, "Style", "color: white;");
+                    builder.AddAttribute(i * 2 + 3, "ChildContent", (RenderFragment)(b =>
+                    {
+                        b.AddContent(0, actor);
+                    }));
+                    builder.CloseComponent();
+                }
+                
+                if (i < castList.Length - 1)
+                {
+                    builder.AddContent(i * 2 + 4, "、");
+                }
+            }
+        };
+    }
+
+    private RenderFragment RenderCompanyLinks(string companies, string? companyIds)
+    {
+        return builder =>
+        {
+            List<string> companyList;
+            try
+            {
+                companyList = System.Text.Json.JsonSerializer.Deserialize<List<string>>(companies) ?? new List<string>();
+            }
+            catch
+            {
+                companyList = companies.Split('、').ToList();
+            }
+            
+            var idList = ParseIdList(companyIds);
+            
+            for (int i = 0; i < Math.Min(companyList.Count, 3); i++)
+            {
+                var company = companyList[i];
+                var tmdbId = i < idList.Count ? idList[i] : null;
+                
+                if (!string.IsNullOrEmpty(tmdbId) && long.TryParse(tmdbId, out var id))
+                {
+                    builder.OpenComponent<MudLink>(i * 2);
+                    builder.AddAttribute(i * 2 + 1, "Href", NavigationManager.ToAbsoluteUri($"/company/{id}").ToString());
+                    builder.AddAttribute(i * 2 + 2, "Style", "color: #E94560; text-decoration: none;");
+                    builder.AddAttribute(i * 2 + 3, "ChildContent", (RenderFragment)(b =>
+                    {
+                        b.AddContent(0, company);
+                    }));
+                    builder.CloseComponent();
+                }
+                else
+                {
+                    builder.OpenComponent<MudText>(i * 2);
+                    builder.AddAttribute(i * 2 + 1, "Typo", Typo.body2);
+                    builder.AddAttribute(i * 2 + 2, "Style", "color: white;");
+                    builder.AddAttribute(i * 2 + 3, "ChildContent", (RenderFragment)(b =>
+                    {
+                        b.AddContent(0, company);
+                    }));
+                    builder.CloseComponent();
+                }
+                
+                if (i < Math.Min(companyList.Count, 3) - 1)
+                {
+                    builder.AddContent(i * 2 + 4, "、");
+                }
+            }
+        };
+    }
+
+    private List<string> ParseIdList(string? jsonIds)
+    {
+        if (string.IsNullOrEmpty(jsonIds)) return new List<string>();
+        try
+        {
+            return System.Text.Json.JsonSerializer.Deserialize<List<string>>(jsonIds) ?? new List<string>();
+        }
+        catch
+        {
+            return new List<string>();
+        }
     }
 }

@@ -1,6 +1,7 @@
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
+using MovieAgent.Controls.Window;
 using MovieAgent.Core.Interfaces;
 using MovieAgent.FFmpegDecoder;
 using MovieAgent.Infrastructure.Data;
@@ -12,6 +13,7 @@ using SQLitePCL;
 using System;
 using System.IO;
 using System.Runtime.InteropServices;
+using System.Text;
 using System.Windows;
  
 namespace MovieAgent;
@@ -107,17 +109,21 @@ public partial class App : Application
             
             // 核心服务
             services.AddScoped<IMovieRepository, MovieRepository>();
+            services.AddScoped<IPersonRepository, PersonRepository>();
+            services.AddScoped<ICompanyRepository, CompanyRepository>();
             services.AddSingleton<IMediaInfoService, MediaInfoService>();
-            services.AddScoped<IMovieScannerService, MovieScannerService>();  // 现在可以正确注入向量数据库服务
+            services.AddScoped<IMovieScannerService, MovieScannerService>();
             services.AddScoped<IMovieUpdateService, MovieUpdateService>();
             services.AddScoped<IPlayHistoryService, PlayHistoryService>();
             services.AddScoped<ITagService, TagService>();
             services.AddScoped<IReportService, ReportService>();
+            services.AddScoped<IPersonService, PersonService>();
+            services.AddScoped<ICompanyService, CompanyService>();
             services.AddSingleton<FileWatcherService>();
             services.AddSingleton<IConversationMemoryService, ConversationMemoryService>();
             services.AddSingleton<ISearchCacheService, SearchCacheService>();
             services.AddScoped<IHybridSearchService, HybridSearchService>();
-            services.AddSingleton<ISpeechService, SpeechService>();
+            services.AddSingleton<ISpeechService, WindowsSpeechService>();
             services.AddSingleton<IPlayerService, LocalPlayerService>();
             services.AddSingleton<ILoggerService, LoggerService>();
             services.AddSingleton<ILocalizationService, LocalizationService>();
@@ -158,7 +164,7 @@ public partial class App : Application
                     sp.GetRequiredService<IConversationMemoryService>(),
                     sp.GetRequiredService<IHybridSearchService>(),
                     sp.GetRequiredService<IVectorDatabaseService>(),
-                    modelUrl, modelName));
+                    sp.GetRequiredService<IConfiguration>()));
             services.AddScoped<IMovieRecommendationService, MovieRecommendationService>();
 
             AppendLog("服务注册完成");
@@ -190,7 +196,17 @@ public partial class App : Application
 
             AppendLog("开始显示主窗口...");
             mainWindow.Show();
-            AppendLog("主窗口显示完成，启动成功！");
+            AppendLog("主窗口显示完成");
+            
+            AppendLog("开始创建精灵窗口...");
+            var spriteWindow = new Controls.Window.SpriteWindow();
+            spriteWindow.SpriteClicked += (s, args) =>
+            {
+                Application.Current.MainWindow?.Activate();
+            };
+            spriteWindow.Show();
+            AppendLog("精灵窗口显示完成，启动成功！");
+           
         }
         catch (Exception ex)
         {

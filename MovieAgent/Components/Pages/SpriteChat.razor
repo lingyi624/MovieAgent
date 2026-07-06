@@ -1,0 +1,294 @@
+@page "/sprite"
+@inject IAgentService AgentService
+@inject IPlayerService PlayerService
+@inject IHybridSearchService SearchService
+@inject ISpeechService SpeechService
+@inject ISnackbar Snackbar
+@inject NavigationManager NavigationManager
+@using MovieAgent.Core.Interfaces
+@using MovieAgent.Components.Controls
+@using System.Text.RegularExpressions
+
+<PageTitle>精灵管家</PageTitle>
+
+<div style="display: flex; flex-direction: column; height: 100%; background: linear-gradient(135deg, #1A1A2E 0%, #2D2D44 100%);">
+    <div style="padding: 16px; background: rgba(233, 69, 96, 0.1); border-bottom: 1px solid rgba(255,255,255,0.1);">
+        <div style="display: flex; align-items: center; justify-content: space-between;">
+            <div style="display: flex; align-items: center; gap: 12px;">
+                <SpriteAnimation State="@_spriteState" 
+                                SpeechTexts="@_speechTexts" 
+                                IsTyping="@_isTyping"
+                                OnSpriteClick="OnSpriteClicked" />
+                <div>
+                    <h2 style="color: #E94560; margin: 0; font-size: 18px;">精灵管家</h2>
+                    <p style="color: #888; margin: 4px 0 0; font-size: 12px;">@_statusText</p>
+                </div>
+            </div>
+            <div style="display: flex; gap: 8px;">
+                <MudButton Icon="@Icons.Material.Filled.Mic" 
+                           Variant="Variant.Outlined" 
+                           Color="@(_isListening ? Color.Error : Color.Secondary)"
+                           Style="color: white;" 
+                           OnClick="ToggleListening">监听</MudButton>
+                <MudButton Icon="@Icons.Material.Filled.PowerSettingsNew" 
+                           Variant="Variant.Outlined" 
+                           Color="Color.Secondary"
+                           Style="color: white;"
+                           OnClick="ExitSprite" >退出</MudButton>
+            </div>
+        </div>
+    </div>
+
+    <div style="flex: 1; overflow-y: auto; padding: 16px; display: flex; flex-direction: column; gap: 12px;">
+        @foreach (var msg in _messages)
+        {
+            <div style="display: flex; gap: 8px; @(msg.IsUser ? "justify-content: flex-end;" : "justify-content: flex-start;")">
+                @if (!msg.IsUser)
+                {
+                    <SpriteAnimation State="@SpriteState.Idle" Style="width: 40px; height: 50px;" />
+                }
+                <div style="max-width: 70%; padding: 12px 16px; border-radius: 16px; @(msg.IsUser ? "background: #E94560; color: white; border-radius: 16px 4px 16px 16px;" : "background: #3D3D5C; color: #E0E0E0; border-radius: 4px 16px 16px 16px;")">
+                    <p style="margin: 0; font-size: 14px; line-height: 1.5;">@msg.Content</p>
+                </div>
+                @if (msg.IsUser)
+                {
+                    <div style="width: 40px; height: 40px; border-radius: 50%; background: #4CAF50; display: flex; align-items: center; justify-content: center;">
+                        <span style="color: white; font-size: 16px;">👤</span>
+                    </div>
+                }
+            </div>
+            
+            @if (msg.Movies != null && msg.Movies.Any())
+            {
+                <div style="margin-top: 8px; padding: 12px; background: rgba(255,255,255,0.05); border-radius: 12px;">
+                    <p style="color: #888; font-size: 12px; margin-bottom: 8px;">找到相关电影：</p>
+                    <div style="display: flex; flex-wrap: gap: 8px;">
+                        @foreach (var movie in msg.Movies)
+                        {
+                            <MudChip T="string" Text="@movie.Title" 
+                                     Color="Color.Primary"
+                                     Style="background: rgba(233, 69, 96, 0.3); color: #E94560; cursor: pointer;"
+                                     OnClick="() => PlayMovie(movie.FilePath)" />
+                        }
+                    </div>
+                </div>
+            }
+        }
+        
+        @if (_isTyping)
+        {
+            <div style="display: flex; gap: 8px; justify-content: flex-start;">
+                <SpriteAnimation State="@SpriteState.Speaking" Style="width: 40px; height: 50px;" />
+                <div style="background: #3D3D5C; padding: 12px 16px; border-radius: 4px 16px 16px 16px;">
+                    <div style="display: flex; gap: 4px;">
+                        <span style="width: 6px; height: 6px; background: #888; border-radius: 50%; animation: dotScale 1.4s infinite ease-in-out both;"></span>
+                        <span style="width: 6px; height: 6px; background: #888; border-radius: 50%; animation: dotScale 1.4s infinite ease-in-out both; animation-delay: 0.2s;"></span>
+                        <span style="width: 6px; height: 6px; background: #888; border-radius: 50%; animation: dotScale 1.4s infinite ease-in-out both; animation-delay: 0.4s;"></span>
+                    </div>
+                </div>
+            </div>
+        }
+    </div>
+
+    <div style="padding: 16px; background: rgba(0,0,0,0.2); border-top: 1px solid rgba(255,255,255,0.1);">
+        <div style="display: flex; gap: 8px;">
+            <MudTextField @bind-Value="_inputText" 
+                          Placeholder="输入指令或语音..."
+                          Variant="Variant.Outlined"
+                          Style="flex: 1; background: #2D2D44; color: white;"
+                          OnKeyDown="OnKeyDown" />
+            <MudButton Icon="@Icons.Material.Filled.Send" 
+                       Variant="Variant.Filled" 
+                       Color="Color.Primary"
+                       Style="background: #E94560;"
+                       OnClick="SendMessage"
+                       Disabled="@(string.IsNullOrWhiteSpace(_inputText) || _isProcessing)" />
+        </div>
+    </div>
+</div>
+
+@code {
+    private SpriteState _spriteState = SpriteState.Idle;
+    private string _statusText = "准备就绪";
+    private bool _isTyping = false;
+    private bool _isProcessing = false;
+    private bool _isListening = false;
+    private string _inputText = string.Empty;
+    private List<(string Text, bool IsFinal)> _speechTexts = new();
+    private List<ChatMessage> _messages = new();
+
+    protected override async Task OnInitializedAsync()
+    {
+        if (!AgentService.IsAvailable)
+        {
+            await AgentService.InitializeAsync();
+        }
+        
+        if (AgentService.IsAvailable)
+        {
+            _statusText = "AI 已连接";
+            _messages.Add(new ChatMessage { Content = "你好！我是你的电影智能小管家（小雪雪）。我可以帮你：\n\n🎬 播放/暂停电影\n🔊 切换音频\n📝 加载字幕\n🔍 搜索本地电影\n📋 查询电影信息\n\n请告诉我你想做什么？", IsUser = false });
+        }
+        else
+        {
+            _statusText = "AI 未连接";
+            _messages.Add(new ChatMessage { Content = "抱歉，AI 服务暂时不可用。请检查配置后重试。", IsUser = false });
+        }
+        
+        AgentService.OnStreamDataReceived += OnStreamDataReceived;
+    }
+
+    private void OnStreamDataReceived(string chunk)
+    {
+        if (_messages.Count == 0) return;
+        
+        var lastMsg = _messages.Last();
+        if (lastMsg.IsUser)
+        {
+            _messages.Add(new ChatMessage { Content = chunk, IsUser = false });
+        }
+        else
+        {
+            lastMsg.Content += chunk;
+        }
+        StateHasChanged();
+    }
+
+    private async void SendMessage()
+    {
+        if (string.IsNullOrWhiteSpace(_inputText) || _isProcessing) return;
+
+        var userMsg = _inputText.Trim();
+        _messages.Add(new ChatMessage { Content = userMsg, IsUser = true });
+        _inputText = string.Empty;
+        _isProcessing = true;
+        _isTyping = true;
+        _spriteState = SpriteState.Speaking;
+        StateHasChanged();
+
+        try
+        {
+            var response = await AgentService.ChatAsync(userMsg);
+            _isTyping = false;
+            _spriteState = SpriteState.Idle;
+            
+            var movies = await ParseMoviesFromResponse(response);
+            _messages.Add(new ChatMessage { Content = response, IsUser = false, Movies = movies });
+            
+            if (!string.IsNullOrEmpty(response))
+            {
+                await SpeechService.SpeakAsync(response);
+            }
+        }
+        catch (Exception ex)
+        {
+            _messages.Add(new ChatMessage { Content = $"发生错误: {ex.Message}", IsUser = false });
+            _spriteState = SpriteState.Surprised;
+        }
+        finally
+        {
+            _isProcessing = false;
+            StateHasChanged();
+        }
+    }
+
+    private async Task<List<Movie>> ParseMoviesFromResponse(string response)
+    {
+        var movies = new List<Movie>();
+        try
+        {
+            var keywords = ExtractKeywords(response);
+            foreach (var keyword in keywords.Take(3))
+            {
+                var results = await SearchService.SearchAsync(keyword);
+                movies.AddRange(results);
+            }
+        }
+        catch { }
+        return movies.DistinctBy(m => m.Title).Take(5).ToList();
+    }
+
+    private List<string> ExtractKeywords(string text)
+    {
+        var keywords = new List<string>();
+        var patterns = new[] { "《(.*?)》", "\"(.*?)\"", "播放(.*?)(电影|影片|片)" };
+        foreach (var pattern in patterns)
+        {
+            var matches = Regex.Matches(text, pattern);
+            foreach (Match match in matches)
+            {
+                if (match.Groups.Count > 1)
+                {
+                    var keyword = match.Groups[1].Value.Trim();
+                    if (!string.IsNullOrEmpty(keyword) && !keywords.Contains(keyword))
+                    {
+                        keywords.Add(keyword);
+                    }
+                }
+            }
+        }
+        return keywords;
+    }
+
+    private async void PlayMovie(string filePath)
+    {
+        try
+        {
+            await PlayerService.PlayAsync(filePath);
+            Snackbar.Add($"正在播放: {filePath}", Severity.Success);
+        }
+        catch (Exception ex)
+        {
+            Snackbar.Add($"播放失败: {ex.Message}", Severity.Error);
+        }
+    }
+
+    private void OnKeyDown(KeyboardEventArgs e)
+    {
+        if (e.Key == "Enter" && !e.ShiftKey)
+        {
+            SendMessage();
+        }
+    }
+
+    private async void ToggleListening()
+    {
+        _isListening = !_isListening;
+        
+        if (_isListening)
+        {
+            _spriteState = SpriteState.Listening;
+            _statusText = "正在听...";
+            StateHasChanged();
+            
+            var text = await SpeechService.ListenAsync();
+            if (!string.IsNullOrEmpty(text))
+            {
+                _inputText = text;
+                SendMessage();
+            }
+            
+            _isListening = false;
+            _spriteState = SpriteState.Idle;
+            _statusText = "准备就绪";
+            StateHasChanged();
+        }
+    }
+
+    private void OnSpriteClicked()
+    {
+        Snackbar.Add("点击精灵可以唤醒她哦！", Severity.Info);
+    }
+
+    private void ExitSprite()
+    {
+        NavigationManager.NavigateTo("/");
+    }
+
+    public class ChatMessage
+    {
+        public string Content { get; set; } = string.Empty;
+        public bool IsUser { get; set; }
+        public List<Movie>? Movies { get; set; }
+    }
+}

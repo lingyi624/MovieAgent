@@ -22,6 +22,11 @@ public class SpeechService : ISpeechService
         return Task.FromResult("语音识别功能暂不可用");
     }
 
+    public Task<string> ListenAsync()
+    {
+        return Task.FromResult("语音监听功能暂不可用");
+    }
+
     public Task SpeakAsync(string text, string language = "zh")
     {
         return Task.CompletedTask;

@@ -1,0 +1,553 @@
+<Window x:Class="MovieAgent.Controls.Window.SpriteWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+        xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+        mc:Ignorable="d"
+        Title="MovieAgent - 小雪雪"
+        Width="160" Height="200"
+        WindowStyle="None"
+        AllowsTransparency="True"
+        Background="Transparent"
+        Topmost="True"
+        ShowInTaskbar="False"
+        ResizeMode="NoResize"
+        Cursor="Hand"
+        MouseRightButtonDown="OnRightMouseDown"  >
+    
+    <Window.Resources>
+        <Style x:Key="SpriteStyle" TargetType="Border">
+            <Setter Property="RenderTransformOrigin" Value="0.5,0.5"/>
+        </Style>
+        
+        <LinearGradientBrush x:Key="SnowBrush" StartPoint="0.5,0" EndPoint="0.5,1">
+            <GradientStop Color="#FFFFFF" Offset="0"/>
+            <GradientStop Color="#E8F4F8" Offset="0.5"/>
+            <GradientStop Color="#D4E8F0" Offset="1"/>
+        </LinearGradientBrush>
+        
+        <LinearGradientBrush x:Key="DarkBrush" StartPoint="0.5,0" EndPoint="0.5,1">
+            <GradientStop Color="#3D3D3D" Offset="0"/>
+            <GradientStop Color="#2D2D2D" Offset="1"/>
+        </LinearGradientBrush>
+        
+        <LinearGradientBrush x:Key="RedBrush" StartPoint="0.5,0" EndPoint="0.5,1">
+            <GradientStop Color="#FF6B6B" Offset="0"/>
+            <GradientStop Color="#E94560" Offset="1"/>
+        </LinearGradientBrush>
+        
+        <LinearGradientBrush x:Key="YellowBrush" StartPoint="0.5,0" EndPoint="0.5,1">
+            <GradientStop Color="#FFE66D" Offset="0"/>
+            <GradientStop Color="#FFD93D" Offset="1"/>
+        </LinearGradientBrush>
+
+        <LinearGradientBrush x:Key="PopcornBrush" StartPoint="0.5,0" EndPoint="0.5,1">
+            <GradientStop Color="#FFF8DC" Offset="0"/>
+            <GradientStop Color="#FFE4B5" Offset="1"/>
+        </LinearGradientBrush>
+
+        <Storyboard x:Key="SleepingAnimation" RepeatBehavior="Forever">
+            <DoubleAnimation Storyboard.TargetName="Head" Storyboard.TargetProperty="(UIElement.RenderTransform).(RotateTransform.Angle)"
+                             From="-10" To="-5" Duration="0:0:2" AutoReverse="True"/>
+            <DoubleAnimation Storyboard.TargetName="ZText1" Storyboard.TargetProperty="(UIElement.RenderTransform).(TranslateTransform.Y)"
+                             From="0" To="-20" Duration="0:0:3" AutoReverse="False"/>
+            <DoubleAnimation Storyboard.TargetName="ZText1" Storyboard.TargetProperty="Opacity"
+                             From="0.6" To="0" Duration="0:0:3"/>
+            <DoubleAnimation Storyboard.TargetName="ZText2" Storyboard.TargetProperty="(UIElement.RenderTransform).(TranslateTransform.Y)"
+                             From="0" To="-25" Duration="0:0:3" AutoReverse="False" BeginTime="0:0:0.5"/>
+            <DoubleAnimation Storyboard.TargetName="ZText2" Storyboard.TargetProperty="Opacity"
+                             From="0.6" To="0" Duration="0:0:3" BeginTime="0:0:0.5"/>
+            <DoubleAnimation Storyboard.TargetName="ZText3" Storyboard.TargetProperty="(UIElement.RenderTransform).(TranslateTransform.Y)"
+                             From="0" To="-30" Duration="0:0:3" AutoReverse="False" BeginTime="0:0:1"/>
+            <DoubleAnimation Storyboard.TargetName="ZText3" Storyboard.TargetProperty="Opacity"
+                             From="0.6" To="0" Duration="0:0:3" BeginTime="0:0:1"/>
+        </Storyboard>
+        
+        <Storyboard x:Key="IdleAnimation" RepeatBehavior="Forever">
+            <DoubleAnimation Storyboard.TargetName="Head" Storyboard.TargetProperty="(UIElement.RenderTransform).(RotateTransform.Angle)"
+                             From="-2" To="2" Duration="0:0:3" AutoReverse="True"/>
+            <DoubleAnimation Storyboard.TargetName="Body" Storyboard.TargetProperty="(UIElement.RenderTransform).(ScaleTransform.ScaleY)"
+                             From="1" To="0.98" Duration="0:0:3" AutoReverse="True"/>
+            <DoubleAnimation Storyboard.TargetName="LeftEye" Storyboard.TargetProperty="Height"
+                             From="8" To="2" Duration="0:0:3" AutoReverse="True"/>
+            <DoubleAnimation Storyboard.TargetName="RightEye" Storyboard.TargetProperty="Height"
+                             From="8" To="2" Duration="0:0:3" AutoReverse="True"/>
+        </Storyboard>
+        
+        <Storyboard x:Key="ListeningAnimation" RepeatBehavior="Forever">
+            <DoubleAnimation Storyboard.TargetName="Head" Storyboard.TargetProperty="(UIElement.RenderTransform).(RotateTransform.Angle)"
+                             From="-5" To="5" Duration="0:0:1" AutoReverse="True"/>
+            <DoubleAnimation Storyboard.TargetName="Wave1" Storyboard.TargetProperty="Height"
+                             From="8" To="20" Duration="0:0:0.3" AutoReverse="True"/>
+            <DoubleAnimation Storyboard.TargetName="Wave2" Storyboard.TargetProperty="Height"
+                             From="8" To="25" Duration="0:0:0.3" AutoReverse="True" BeginTime="0:0:0.1"/>
+            <DoubleAnimation Storyboard.TargetName="Wave3" Storyboard.TargetProperty="Height"
+                             From="8" To="20" Duration="0:0:0.3" AutoReverse="True" BeginTime="0:0:0.2"/>
+        </Storyboard>
+        
+        <Storyboard x:Key="SpeakingAnimation" RepeatBehavior="Forever">
+            <DoubleAnimation Storyboard.TargetName="Head" Storyboard.TargetProperty="(UIElement.RenderTransform).(RotateTransform.Angle)"
+                             From="-3" To="3" Duration="0:0:0.5" AutoReverse="True"/>
+            <DoubleAnimation Storyboard.TargetName="Mouth" Storyboard.TargetProperty="StrokeThickness"
+                             From="1.5" To="3" Duration="0:0:0.2" AutoReverse="True"/>
+            <DoubleAnimation Storyboard.TargetName="LeftArm" Storyboard.TargetProperty="(UIElement.RenderTransform).(RotateTransform.Angle)"
+                             From="0" To="-45" Duration="0:0:0.4" AutoReverse="True"/>
+            <DoubleAnimation Storyboard.TargetName="RightArm" Storyboard.TargetProperty="(UIElement.RenderTransform).(RotateTransform.Angle)"
+                             From="0" To="45" Duration="0:0:0.4" AutoReverse="True"/>
+        </Storyboard>
+        
+        <Storyboard x:Key="WorkingAnimation" RepeatBehavior="Forever">
+            <DoubleAnimation Storyboard.TargetName="Head" Storyboard.TargetProperty="(UIElement.RenderTransform).(RotateTransform.Angle)"
+                             From="-5" To="5" Duration="0:0:0.6" AutoReverse="True"/>
+            <DoubleAnimation Storyboard.TargetName="Body" Storyboard.TargetProperty="(UIElement.RenderTransform).(ScaleTransform.ScaleY)"
+                             From="1" To="1.05" Duration="0:0:0.5" AutoReverse="True"/>
+            <DoubleAnimation Storyboard.TargetName="LeftArm" Storyboard.TargetProperty="(UIElement.RenderTransform).(RotateTransform.Angle)"
+                             From="30" To="-30" Duration="0:0:0.4" AutoReverse="True"/>
+            <DoubleAnimation Storyboard.TargetName="RightArm" Storyboard.TargetProperty="(UIElement.RenderTransform).(RotateTransform.Angle)"
+                             From="-30" To="30" Duration="0:0:0.4" AutoReverse="True"/>
+            <DoubleAnimation Storyboard.TargetName="Sparkle" Storyboard.TargetProperty="Opacity"
+                             From="1" To="0.3" Duration="0:0:0.5" AutoReverse="True"/>
+            <DoubleAnimation Storyboard.TargetName="Sparkle" Storyboard.TargetProperty="(UIElement.RenderTransform).(ScaleTransform.ScaleX)"
+                             From="1" To="1.3" Duration="0:0:0.5" AutoReverse="True"/>
+            <DoubleAnimation Storyboard.TargetName="Sparkle" Storyboard.TargetProperty="(UIElement.RenderTransform).(ScaleTransform.ScaleY)"
+                             From="1" To="1.3" Duration="0:0:0.5" AutoReverse="True"/>
+        </Storyboard>
+        
+        <Storyboard x:Key="ThinkingAnimation" RepeatBehavior="Forever">
+            <DoubleAnimation Storyboard.TargetName="Head" Storyboard.TargetProperty="(UIElement.RenderTransform).(RotateTransform.Angle)"
+                             From="-3" To="3" Duration="0:0:2" AutoReverse="True"/>
+            <DoubleAnimation Storyboard.TargetName="LeftArm" Storyboard.TargetProperty="(UIElement.RenderTransform).(RotateTransform.Angle)"
+                             From="0" To="20" Duration="0:0:1" AutoReverse="True"/>
+            <DoubleAnimation Storyboard.TargetName="Thought1" Storyboard.TargetProperty="(UIElement.RenderTransform).(TranslateTransform.Y)"
+                             From="0" To="-15" Duration="0:0:2" AutoReverse="False"/>
+            <DoubleAnimation Storyboard.TargetName="Thought1" Storyboard.TargetProperty="Opacity"
+                             From="0.8" To="0" Duration="0:0:2"/>
+            <DoubleAnimation Storyboard.TargetName="Thought2" Storyboard.TargetProperty="(UIElement.RenderTransform).(TranslateTransform.Y)"
+                             From="0" To="-20" Duration="0:0:2" AutoReverse="False" BeginTime="0:0:0.5"/>
+            <DoubleAnimation Storyboard.TargetName="Thought2" Storyboard.TargetProperty="Opacity"
+                             From="0.8" To="0" Duration="0:0:2" BeginTime="0:0:0.5"/>
+        </Storyboard>
+        
+        <Storyboard x:Key="SurprisedAnimation" Duration="0:0:0.3">
+            <DoubleAnimation Storyboard.TargetName="Head" Storyboard.TargetProperty="(UIElement.RenderTransform).(ScaleTransform.ScaleX)"
+                             From="1" To="1.15" Duration="0:0:0.2"/>
+            <DoubleAnimation Storyboard.TargetName="Head" Storyboard.TargetProperty="(UIElement.RenderTransform).(ScaleTransform.ScaleY)"
+                             From="1" To="1.15" Duration="0:0:0.2"/>
+            <DoubleAnimation Storyboard.TargetName="Mouth" Storyboard.TargetProperty="Height"
+                             From="3" To="10" Duration="0:0:0.2"/>
+        </Storyboard>
+        
+        <Storyboard x:Key="HappyAnimation" RepeatBehavior="Forever">
+            <DoubleAnimation Storyboard.TargetName="Head" Storyboard.TargetProperty="(UIElement.RenderTransform).(ScaleTransform.ScaleY)"
+                             From="1" To="1.1" Duration="0:0:0.2" AutoReverse="True"/>
+            <DoubleAnimation Storyboard.TargetName="Body" Storyboard.TargetProperty="(UIElement.RenderTransform).(TranslateTransform.Y)"
+                             From="0" To="-5" Duration="0:0:0.3" AutoReverse="True"/>
+            <DoubleAnimation Storyboard.TargetName="LeftArm" Storyboard.TargetProperty="(UIElement.RenderTransform).(RotateTransform.Angle)"
+                             From="0" To="-60" Duration="0:0:0.3" AutoReverse="True"/>
+            <DoubleAnimation Storyboard.TargetName="RightArm" Storyboard.TargetProperty="(UIElement.RenderTransform).(RotateTransform.Angle)"
+                             From="0" To="60" Duration="0:0:0.3" AutoReverse="True"/>
+            <DoubleAnimation Storyboard.TargetName="Heart1" Storyboard.TargetProperty="(UIElement.RenderTransform).(TranslateTransform.Y)"
+                             From="0" To="-20" Duration="0:0:0.8" AutoReverse="False"/>
+            <DoubleAnimation Storyboard.TargetName="Heart1" Storyboard.TargetProperty="Opacity"
+                             From="1" To="0" Duration="0:0:0.8"/>
+            <DoubleAnimation Storyboard.TargetName="Heart2" Storyboard.TargetProperty="(UIElement.RenderTransform).(TranslateTransform.Y)"
+                             From="0" To="-15" Duration="0:0:0.8" AutoReverse="False" BeginTime="0:0:0.3"/>
+            <DoubleAnimation Storyboard.TargetName="Heart2" Storyboard.TargetProperty="Opacity"
+                             From="1" To="0" Duration="0:0:0.8" BeginTime="0:0:0.3"/>
+        </Storyboard>
+        
+        <Storyboard x:Key="WaveAnimation" RepeatBehavior="3x">
+            <DoubleAnimation Storyboard.TargetName="RightArm" Storyboard.TargetProperty="(UIElement.RenderTransform).(RotateTransform.Angle)"
+                             From="0" To="80" Duration="0:0:0.2" AutoReverse="True"/>
+        </Storyboard>
+        
+        <Storyboard x:Key="MouseOverAnimation">
+            <DoubleAnimation Storyboard.TargetName="MainGrid" Storyboard.TargetProperty="(UIElement.RenderTransform).(ScaleTransform.ScaleX)"
+                             From="1" To="1.1" Duration="0:0:0.2"/>
+            <DoubleAnimation Storyboard.TargetName="MainGrid" Storyboard.TargetProperty="(UIElement.RenderTransform).(ScaleTransform.ScaleY)"
+                             From="1" To="1.1" Duration="0:0:0.2"/>
+        </Storyboard>
+        
+        <Storyboard x:Key="MouseLeaveAnimation">
+            <DoubleAnimation Storyboard.TargetName="MainGrid" Storyboard.TargetProperty="(UIElement.RenderTransform).(ScaleTransform.ScaleX)"
+                             From="1.1" To="1" Duration="0:0:0.2"/>
+            <DoubleAnimation Storyboard.TargetName="MainGrid" Storyboard.TargetProperty="(UIElement.RenderTransform).(ScaleTransform.ScaleY)"
+                             From="1.1" To="1" Duration="0:0:0.2"/>
+        </Storyboard>
+    </Window.Resources>
+    
+    <Grid x:Name="MainGrid" Width="140" Height="170" Margin="10" Background="#01000000"
+              MouseDown="OnMouseDown" MouseMove="OnMouseMove" MouseUp="OnMouseUp"
+              MouseEnter="OnMouseEnter" MouseLeave="OnMouseLeave">
+        <Grid.RenderTransform>
+            <ScaleTransform x:Name="MainGridScale" ScaleX="1" ScaleY="1"/>
+        </Grid.RenderTransform>
+        
+        <Grid x:Name="TheaterBackground" Margin="0,0,0,0">
+            <Rectangle Width="140" Height="170" Fill="#1a1a2e" RadiusX="8" RadiusY="8"/>
+            
+            <Rectangle Width="120" Height="80" Fill="#16213e" Margin="10,5,10,0" VerticalAlignment="Top" RadiusX="4" RadiusY="4"/>
+            
+            <Rectangle x:Name="Screen" Width="100" Height="60" Fill="#ffffff" Margin="20,15,20,0" VerticalAlignment="Top" 
+                       Stroke="#4a4a6a" StrokeThickness="2">
+                <Rectangle.Effect>
+                    <DropShadowEffect Color="#000000" BlurRadius="8" ShadowDepth="2"/>
+                </Rectangle.Effect>
+            </Rectangle>
+            
+            <Grid Margin="0,15,0,0" VerticalAlignment="Top">
+                <!--<Border x:Name="LeftCurtain" Width="25" Height="64" Background="#8b0000" 
+                        Margin="18,0,0,0" HorizontalAlignment="Left"
+                        CornerRadius="0,20,0,20">
+                    <Border.RenderTransformOrigin>
+                        <Point X="1" Y="0.5"/>
+                    </Border.RenderTransformOrigin>
+                    <Border.RenderTransform>
+                        <RotateTransform Angle="15"/>
+                    </Border.RenderTransform>
+                    <Border.Effect>
+                        <DropShadowEffect Color="#4a0000" BlurRadius="4" ShadowDepth="2"/>
+                    </Border.Effect>
+                </Border>-->
+                
+                <!--<Border x:Name="RightCurtain" Width="25" Height="64" Background="#8b0000" 
+                        Margin="0,0,18,0" HorizontalAlignment="Right"
+                        CornerRadius="20,0,20,0">
+                    <Border.RenderTransformOrigin>
+                        <Point X="0" Y="0.5"/>
+                    </Border.RenderTransformOrigin>
+                    <Border.RenderTransform>
+                        <RotateTransform Angle="-15"/>
+                    </Border.RenderTransform>
+                    <Border.Effect>
+                        <DropShadowEffect Color="#4a0000" BlurRadius="4" ShadowDepth="2"/>
+                    </Border.Effect>
+                </Border>-->
+            </Grid>
+            
+            <Grid Margin="0,78,0,0" VerticalAlignment="Top">
+                <Rectangle Width="130" Height="8" Fill="#2d2d44" Margin="5,0,5,0" RadiusX="2" RadiusY="2"/>
+                <Ellipse Width="3" Height="3" Fill="#ffd700" Margin="15,2,0,0" HorizontalAlignment="Left"/>
+                <Ellipse Width="3" Height="3" Fill="#ffd700" Margin="45,2,0,0" HorizontalAlignment="Left"/>
+                <Ellipse Width="3" Height="3" Fill="#ffd700" Margin="75,2,0,0" HorizontalAlignment="Left"/>
+                <Ellipse Width="3" Height="3" Fill="#ffd700" Margin="105,2,0,0" HorizontalAlignment="Left"/>
+                <Ellipse Width="3" Height="3" Fill="#ffd700" Margin="125,2,0,0" HorizontalAlignment="Left"/>
+            </Grid>
+            
+            <Grid Margin="0,88,0,0" VerticalAlignment="Top">
+                <Grid Margin="0,0,0,0">
+                    <Grid Margin="0,0,0,0">
+                        <Border Width="22" Height="18" Background="#3d3d5c" Margin="15,0,0,0" HorizontalAlignment="Left" CornerRadius="0,0,4,4">
+                            <Rectangle Width="22" Height="8" Fill="#2d2d44" VerticalAlignment="Bottom"/>
+                        </Border>
+                        <Border Width="22" Height="18" Background="#3d3d5c" Margin="49,0,0,0" HorizontalAlignment="Left" CornerRadius="0,0,4,4">
+                            <Rectangle Width="22" Height="8" Fill="#2d2d44" VerticalAlignment="Bottom"/>
+                        </Border>
+                        <Border Width="22" Height="18" Background="#3d3d5c" Margin="83,0,0,0" HorizontalAlignment="Left" CornerRadius="0,0,4,4">
+                            <Rectangle Width="22" Height="8" Fill="#2d2d44" VerticalAlignment="Bottom"/>
+                        </Border>
+                    </Grid>
+                    
+                    <Grid Margin="0,20,0,0">
+                        <Border Width="22" Height="18" Background="#3d3d5c" Margin="15,0,0,0" HorizontalAlignment="Left" CornerRadius="0,0,4,4">
+                            <Rectangle Width="22" Height="8" Fill="#2d2d44" VerticalAlignment="Bottom"/>
+                        </Border>
+                        <Border Width="22" Height="18" Background="#3d3d5c" Margin="49,0,0,0" HorizontalAlignment="Left" CornerRadius="0,0,4,4">
+                            <Rectangle Width="22" Height="8" Fill="#2d2d44" VerticalAlignment="Bottom"/>
+                        </Border>
+                        <Border Width="22" Height="18" Background="#3d3d5c" Margin="83,0,0,0" HorizontalAlignment="Left" CornerRadius="0,0,4,4">
+                            <Rectangle Width="22" Height="8" Fill="#2d2d44" VerticalAlignment="Bottom"/>
+                        </Border>
+                    </Grid>
+                    
+                    <Grid Margin="0,40,0,0">
+                        <Border Width="22" Height="18" Background="#3d3d5c" Margin="15,0,0,0" HorizontalAlignment="Left" CornerRadius="0,0,4,4">
+                            <Rectangle Width="22" Height="8" Fill="#2d2d44" VerticalAlignment="Bottom"/>
+                        </Border>
+                        <Border x:Name="CenterSeat" Width="22" Height="18" Background="#e94560" Margin="49,0,0,0" HorizontalAlignment="Left" CornerRadius="0,0,4,4">
+                            <Rectangle Width="22" Height="8" Fill="#c73e54" VerticalAlignment="Bottom"/>
+                        </Border>
+                        <Border Width="22" Height="18" Background="#3d3d5c" Margin="83,0,0,0" HorizontalAlignment="Left" CornerRadius="0,0,4,4">
+                            <Rectangle Width="22" Height="8" Fill="#2d2d44" VerticalAlignment="Bottom"/>
+                        </Border>
+                    </Grid>
+                </Grid>
+            </Grid>
+        </Grid>
+        
+        <TextBlock x:Name="ZText1" Text="z" Foreground="#666666" FontSize="12" 
+                   HorizontalAlignment="Right" Margin="0,0,5,0"
+                   RenderTransformOrigin="0.5,0.5">
+            <TextBlock.RenderTransform>
+                <TranslateTransform Y="0"/>
+            </TextBlock.RenderTransform>
+        </TextBlock>
+        <TextBlock x:Name="ZText2" Text="z" Foreground="#666666" FontSize="10" 
+                   HorizontalAlignment="Right" Margin="0,0,12,0"
+                   RenderTransformOrigin="0.5,0.5">
+            <TextBlock.RenderTransform>
+                <TranslateTransform Y="0"/>
+            </TextBlock.RenderTransform>
+        </TextBlock>
+        <TextBlock x:Name="ZText3" Text="z" Foreground="#666666" FontSize="8" 
+                   HorizontalAlignment="Right" Margin="0,0,18,0"
+                   RenderTransformOrigin="0.5,0.5">
+            <TextBlock.RenderTransform>
+                <TranslateTransform Y="0"/>
+            </TextBlock.RenderTransform>
+        </TextBlock>
+        
+        <TextBlock x:Name="SleepIcon" Text="💤" FontSize="18" 
+                   HorizontalAlignment="Right" Margin="0,0,-5,0"
+                   RenderTransformOrigin="0.5,0.5">
+            <TextBlock.RenderTransform>
+                <TranslateTransform Y="-25"/>
+            </TextBlock.RenderTransform>
+        </TextBlock>
+        
+        <TextBlock x:Name="Sparkle" Text="🎬" FontSize="20" 
+                   HorizontalAlignment="Right" Margin="0,0,-5,0"
+                   RenderTransformOrigin="0.5,0.5">
+            <TextBlock.RenderTransform>
+                <TransformGroup>
+                    <TranslateTransform Y="-30"/>
+                    <ScaleTransform ScaleX="1" ScaleY="1"/>
+                </TransformGroup>
+            </TextBlock.RenderTransform>
+        </TextBlock>
+        
+        <TextBlock x:Name="Heart1" Text="❤️" FontSize="12" 
+                   HorizontalAlignment="Right" Margin="0,0,-5,0"
+                   RenderTransformOrigin="0.5,0.5">
+            <TextBlock.RenderTransform>
+                <TranslateTransform Y="-20"/>
+            </TextBlock.RenderTransform>
+        </TextBlock>
+        <TextBlock x:Name="Heart2" Text="❤️" FontSize="10" 
+                   HorizontalAlignment="Right" Margin="0,0,5,0"
+                   RenderTransformOrigin="0.5,0.5">
+            <TextBlock.RenderTransform>
+                <TranslateTransform Y="-15"/>
+            </TextBlock.RenderTransform>
+        </TextBlock>
+        
+        <Border x:Name="Thought1" Width="12" Height="12" 
+                Background="White" CornerRadius="6"
+                HorizontalAlignment="Right" Margin="0,0,-5,0"
+                RenderTransformOrigin="0.5,0.5"
+                BorderBrush="#CCC" BorderThickness="1">
+            <Border.RenderTransform>
+                <TranslateTransform Y="-25"/>
+            </Border.RenderTransform>
+        </Border>
+        <Border x:Name="Thought2" Width="8" Height="8" 
+                Background="White" CornerRadius="4"
+                HorizontalAlignment="Right" Margin="0,0,5,0"
+                RenderTransformOrigin="0.5,0.5"
+                BorderBrush="#CCC" BorderThickness="1">
+            <Border.RenderTransform>
+                <TranslateTransform Y="-30"/>
+            </Border.RenderTransform>
+        </Border>
+        
+        <Grid Margin="0,10,0,0" HorizontalAlignment="Center" RenderTransformOrigin="0.5,0.5">
+            <Grid.RenderTransform>
+                <ScaleTransform ScaleX="1" ScaleY="1"/>
+            </Grid.RenderTransform>
+            
+            <Grid x:Name="Hat" Margin="0,0,0,0">
+                <Ellipse Width="40" Height="8" Fill="#2D2D2D" Margin="0,0,0,0"/>
+                <Rectangle Width="24" Height="20" Fill="#2D2D2D" Margin="8,0,0,8" RadiusX="2" RadiusY="2"/>
+                <Rectangle Width="24" Height="5" Fill="#E94560" Margin="8,0,0,28"/>
+            </Grid>
+            
+            <Grid x:Name="Head" Width="38" Height="36" 
+                  Margin="0,25,0,0"
+                  RenderTransformOrigin="0.5,0.5">
+                <Grid.RenderTransform>
+                    <RotateTransform Angle="0"/>
+                </Grid.RenderTransform>
+                <Ellipse Fill="{StaticResource SnowBrush}" Stroke="#C0C0C0" StrokeThickness="1"/>
+                
+                <Grid Margin="4,10,4,0">
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="*"/>
+                        <ColumnDefinition Width="*"/>
+                    </Grid.ColumnDefinitions>
+                    
+                    <Ellipse x:Name="LeftEye" Grid.Column="0" Width="6" Height="7" 
+                             Fill="#2C3E50" Margin="4,0,0,0"/>
+                    <Ellipse x:Name="RightEye" Grid.Column="1" Width="6" Height="7" 
+                             Fill="#2C3E50" Margin="0,0,4,0"/>
+                    
+                    <Ellipse Grid.Column="0" Width="2" Height="2" 
+                             Fill="White" Margin="0,1,7,0"/>
+                    <Ellipse Grid.Column="1" Width="2" Height="2" 
+                             Fill="White" Margin="7,1,0,0"/>
+                </Grid>
+                
+                <Polygon x:Name="Nose" Points="0,0 2,10 -2,10" 
+                         Fill="#FF6B35" Margin="0,18,0,0"
+                         HorizontalAlignment="Center"/>
+                
+                <Path x:Name="Mouth" Margin="0,25,0,0" HorizontalAlignment="Center"
+                      Stroke="#2C3E50" StrokeThickness="1.5"  
+                      Data="M -5,2 Q 0,5 5,2"/>
+                
+                <Ellipse Width="5" Height="3" Fill="#FFB6C1" Margin="-12,15,0,0" HorizontalAlignment="Left" Opacity="0.7"/>
+                <Ellipse Width="5" Height="3" Fill="#FFB6C1" Margin="0,15,-12,0" HorizontalAlignment="Right" Opacity="0.7"/>
+            </Grid>
+            
+            <Grid Margin="0,0,0,0" HorizontalAlignment="Center">
+                <Rectangle x:Name="Scarf" Width="40" Height="10" Fill="#E94560" Margin="0,58,0,0"/>
+                <Rectangle x:Name="ScarfEnd1" Width="6" Height="16" Fill="#E94560" Margin="-10,58,0,0" HorizontalAlignment="Left" RadiusX="3" RadiusY="3"/>
+                <Rectangle x:Name="ScarfEnd2" Width="6" Height="12" Fill="#E94560" Margin="10,58,0,0" HorizontalAlignment="Right" RadiusX="3" RadiusY="3"/>
+            </Grid>
+            
+            <Grid x:Name="Body" Width="48" Height="44" 
+                  Margin="0,62,0,0"
+                  RenderTransformOrigin="0.5,0.5">
+                <Grid.RenderTransform>
+                    <ScaleTransform ScaleX="1" ScaleY="1"/>
+                </Grid.RenderTransform>
+                <Ellipse Fill="{StaticResource SnowBrush}" Stroke="#C0C0C0" StrokeThickness="1"/>
+            </Grid>
+            
+            <Grid Margin="0,58,0,0" HorizontalAlignment="Center">
+                <Rectangle x:Name="LeftArm" Width="5" Height="26" 
+                           Fill="#8B4513" Margin="-28,-3,0,0" 
+                           HorizontalAlignment="Left"
+                           RenderTransformOrigin="1,0"
+                           RadiusX="2" RadiusY="2">
+                    <Rectangle.RenderTransform>
+                        <RotateTransform Angle="20"/>
+                    </Rectangle.RenderTransform>
+                </Rectangle>
+                <Rectangle x:Name="RightArm" Width="5" Height="26" 
+                           Fill="#8B4513" Margin="0,-3,-28,0" 
+                           HorizontalAlignment="Right"
+                           RenderTransformOrigin="0,0"
+                           RadiusX="2" RadiusY="2">
+                    <Rectangle.RenderTransform>
+                        <RotateTransform Angle="-20"/>
+                    </Rectangle.RenderTransform>
+                </Rectangle>
+            </Grid>
+            
+            <Grid Margin="0,45,-25,0" HorizontalAlignment="Right">
+                <Border Width="16" Height="20" Background="#8B4513" CornerRadius="2,2,4,4" RenderTransformOrigin="0.5,1">
+                    <Border.RenderTransform>
+                        <RotateTransform Angle="30"/>
+                    </Border.RenderTransform>
+                    <StackPanel VerticalAlignment="Bottom" Margin="2">
+                        <Ellipse Width="3" Height="3" Fill="{StaticResource PopcornBrush}" Margin="0,1,0,0"/>
+                        <Ellipse Width="2" Height="2" Fill="{StaticResource PopcornBrush}" Margin="3,-2,0,0"/>
+                        <Ellipse Width="3" Height="3" Fill="{StaticResource PopcornBrush}" Margin="-2,-2,0,0"/>
+                        <Ellipse Width="2" Height="2" Fill="{StaticResource PopcornBrush}" Margin="4,-2,0,0"/>
+                    </StackPanel>
+                </Border>
+            </Grid>
+            
+            <Grid Margin="0,98,0,0" HorizontalAlignment="Center">
+                <Ellipse Width="56" Height="32" 
+                         Fill="{StaticResource SnowBrush}"
+                         Stroke="#C0C0C0" StrokeThickness="1"/>
+            </Grid>
+            
+            <Grid Margin="0,82,0,0" HorizontalAlignment="Center">
+                <Ellipse Width="6" Height="6" Fill="#2C3E50" Margin="-16,0,0,0"/>
+                <Ellipse Width="6" Height="6" Fill="#2C3E50" Margin="0,0,0,0"/>
+                <Ellipse Width="6" Height="6" Fill="#2C3E50" Margin="16,0,0,0"/>
+            </Grid>
+        </Grid>
+        
+        <Border x:Name="SpeechBubble" Background="White" CornerRadius="12,12,12,4"
+                Margin="0,-60,0,0" Padding="8,6" 
+                HorizontalAlignment="Center"
+                Visibility="Collapsed"
+                MaxWidth="200">
+            <Border.Effect>
+                <DropShadowEffect Color="#333" BlurRadius="8" ShadowDepth="4"/>
+            </Border.Effect>
+            <StackPanel Orientation="Horizontal">
+                <TextBlock x:Name="SpeechTextBlock" Text="" Foreground="#333" FontSize="11" 
+                           MaxWidth="180" TextWrapping="Wrap"/>
+                <TextBlock x:Name="TypingIndicator" Text="|" Foreground="#E94560" 
+                           FontSize="11" Margin="2,0,0,0"/>
+            </StackPanel>
+            <Border.Triggers>
+                <EventTrigger RoutedEvent="Loaded">
+                    <BeginStoryboard>
+                        <Storyboard>
+                            <DoubleAnimation Storyboard.TargetProperty="Opacity"
+                                             From="0" To="1" Duration="0:0:0.2"/>
+                        </Storyboard>
+                    </BeginStoryboard>
+                </EventTrigger>
+            </Border.Triggers>
+        </Border>
+        
+        <Grid x:Name="ListeningWave" Margin="0,40,0,0" HorizontalAlignment="Center" Visibility="Collapsed">
+            <StackPanel Orientation="Horizontal">
+                <Border x:Name="Wave1" Width="3" Height="8" Background="#4CAF50" 
+                        CornerRadius="2" HorizontalAlignment="Center" Margin="0,0,3,0"/>
+                <Border x:Name="Wave2" Width="3" Height="8" Background="#4CAF50" 
+                        CornerRadius="2" HorizontalAlignment="Center" Margin="0,0,3,0"/>
+                <Border x:Name="Wave3" Width="3" Height="8" Background="#4CAF50" 
+                        CornerRadius="2" HorizontalAlignment="Center"/>
+            </StackPanel>
+        </Grid>
+        
+        <Grid x:Name="StatusBar" Margin="0,0,0,5" VerticalAlignment="Bottom" HorizontalAlignment="Center" Visibility="Visible">
+            <StackPanel Orientation="Horizontal">
+                <Border Background="#E94560" CornerRadius="3" Padding="2,1" ToolTip="好感度">
+                    <StackPanel Orientation="Horizontal">
+                        <TextBlock Text="❤️" FontSize="8"/>
+                        <TextBlock x:Name="AffectionText" Text="50" Foreground="White" FontSize="8" FontWeight="Bold" Margin="1,0,0,0"/>
+                    </StackPanel>
+                </Border>
+                <Border Background="#FFD700" CornerRadius="3" Padding="2,1" ToolTip="心情" Margin="4,0,0,0">
+                    <StackPanel Orientation="Horizontal">
+                        <TextBlock Text="😊" FontSize="8"/>
+                        <TextBlock x:Name="MoodText" Text="80" Foreground="#333" FontSize="8" FontWeight="Bold" Margin="1,0,0,0"/>
+                    </StackPanel>
+                </Border>
+                <Border Background="#4CAF50" CornerRadius="3" Padding="2,1" ToolTip="体力" Margin="4,0,0,0">
+                    <StackPanel Orientation="Horizontal">
+                        <TextBlock Text="❄️" FontSize="8"/>
+                        <TextBlock x:Name="EnergyText" Text="100" Foreground="White" FontSize="8" FontWeight="Bold"/>
+                    </StackPanel>
+                </Border>
+            </StackPanel>
+        </Grid>
+        
+        <Popup x:Name="ContextMenuPopup" StaysOpen="False" Placement="Mouse" AllowsTransparency="True">
+            <Border Background="White" CornerRadius="8" Padding="4" BorderBrush="#E94560" BorderThickness="1"
+                    Width="140">
+                <StackPanel>
+                    <!--<MenuItem Header="打开聊天" Click="OpenChat_Click">
+                        <MenuItem.Icon>
+                            <TextBlock Text="💬"  FontSize="14"/>
+                        </MenuItem.Icon>
+                    </MenuItem>
+                    <MenuItem Header="播放电影" Click="PlayMovie_Click">
+                        <MenuItem.Icon>
+                            <TextBlock Text="🎬" FontSize="14"/>
+                        </MenuItem.Icon>
+                    </MenuItem>
+                    <MenuItem Header="电影推荐" Click="RecommendMovie_Click">
+                        <MenuItem.Icon>
+                            <TextBlock Text="⭐" FontSize="14"/>
+                        </MenuItem.Icon>
+                    </MenuItem>
+                    <Separator/>
+                    <MenuItem Header="隐藏小雪雪" Click="HideSprite_Click">
+                        <MenuItem.Icon>
+                            <TextBlock Text="🙈" FontSize="14"/>
+                        </MenuItem.Icon>
+                    </MenuItem>-->
+                </StackPanel>
+            </Border>
+        </Popup>
+    </Grid>
+</Window>

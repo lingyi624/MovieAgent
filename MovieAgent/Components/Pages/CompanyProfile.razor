@@ -1,0 +1,173 @@
+@page "/company/{TmdbId}"
+@inject ICompanyService CompanyService
+@inject NavigationManager NavigationManager
+
+<PageTitle>@(_company?.Name ?? "公司档案")</PageTitle>
+
+@if (_isLoading || _company == null)
+{
+    <div style="display: flex; justify-content: center; align-items: center; min-height: 300px;">
+        <MudProgressCircular Color="Color.Primary" Indeterminate="true" Size="Size.Large" />
+    </div>
+}
+else
+{
+    <MudStack Row="true" Justify="Justify.SpaceBetween" AlignItems="AlignItems.Center" Style="margin-bottom: 20px;">
+        <MudText Typo="Typo.h4" Style="color: #E94560;">公司档案</MudText>
+        <MudButton Icon="@Icons.Material.Filled.ArrowBack" Color="Color.Default" OnClick="@GoBack">返回</MudButton>
+    </MudStack>
+
+    <MudGrid>
+        <MudItem xs="12" md="3">
+            <MudImage Src="@GetLogoUrl(_company.LogoPath)" Height="200" ObjectFit="ObjectFit.Contain" Elevation="8" Style="border-radius:10px; background: #1A1A2E;" />
+        </MudItem>
+        <MudItem xs="12" md="8">
+            <MudText Typo="Typo.h3" Style="color: #E94560; font-weight: bold;">@_company.Name</MudText>
+
+            <MudChipSet T="string" Style="margin: 12px 0;">
+                @if (!string.IsNullOrEmpty(_company.OriginCountry))
+                {
+                    <MudChip T="string" Size="Size.Small" Color="Color.Primary">@_company.OriginCountry</MudChip>
+                }
+            </MudChipSet>
+
+            @if (!string.IsNullOrEmpty(_company.Headquarters))
+            {
+                <MudText Typo="Typo.body1" Style="margin-bottom: 8px;">
+                    <span style="color: #888;">总部所在地:</span> <span style="color: #E0E0E0;">@_company.Headquarters</span>
+                </MudText>
+            }
+
+            @if (!string.IsNullOrEmpty(_company.Homepage))
+            {
+                <MudText Typo="Typo.body1" Style="margin-bottom: 8px;">
+                    <span style="color: #888;">官方网站:</span> <a href="@_company.Homepage" target="_blank" style="color: #E94560;">@_company.Homepage</a>
+                </MudText>
+            }
+
+            @if (!string.IsNullOrEmpty(_company.ParentCompany))
+            {
+                <MudText Typo="Typo.body1" Style="margin-bottom: 8px;">
+                    <span style="color: #888;">母公司:</span> <span style="color: #E0E0E0;">@_company.ParentCompany</span>
+                </MudText>
+            }
+        </MudItem>
+    </MudGrid>
+
+    @if (!string.IsNullOrEmpty(_company.Description))
+    {
+        <MudPaper Elevation="1" Style="padding: 16px; margin-top: 16px; background: #2D2D44;">
+            <MudText Typo="Typo.h6" Style="color: #E94560; margin-bottom: 8px;">公司简介</MudText>
+            <MudText Typo="Typo.body1" Style="color: #E0E0E0; line-height: 1.6;">@_company.Description</MudText>
+        </MudPaper>
+    }
+
+    @if (_movies.Any())
+    {
+        <MudPaper Elevation="1" Style="padding: 16px; margin-top: 16px; background: #2D2D44;">
+            <MudText Typo="Typo.h6" Style="color: #E94560; margin-bottom: 12px;">代表作品</MudText>
+            <MudGrid>
+                @foreach (var movie in _movies)
+                {
+                    <MudItem xs="6" md="4" lg="3">
+                        <div style="cursor: pointer;" @onclick="@(() => NavigateToMovie(movie.TmdbId))">
+                            <MudImage Src="@GetPosterUrl(movie.PosterPath)" Height="200" ObjectFit="ObjectFit.Cover" Elevation="4" Style="border-radius:8px;" />
+                            <MudText Typo="Typo.body2" Style="color: #E0E0E0; margin-top: 8px; display: block;">@movie.Title</MudText>
+                            @if (movie.ReleaseDate.HasValue)
+                            {
+                                <MudText Typo="Typo.caption" Style="color: #888;">@movie.ReleaseDate.Value.Year</MudText>
+                            }
+                        </div>
+                    </MudItem>
+                }
+            </MudGrid>
+        </MudPaper>
+    }
+
+    @if (_persons.Any())
+    {
+        <MudPaper Elevation="1" Style="padding: 16px; margin-top: 16px; background: #2D2D44;">
+            <MudText Typo="Typo.h6" Style="color: #E94560; margin-bottom: 12px;">相关人员</MudText>
+            <MudChipSet T="string">
+                @foreach (var person in _persons)
+                {
+                    <MudChip T="string" Color="Color.Secondary" Style="cursor: pointer;" @onclick="@(() => NavigateToPerson(person))">@person</MudChip>
+                }
+            </MudChipSet>
+        </MudPaper>
+    }
+}
+
+@code {
+    [Parameter]
+    public string TmdbId { get; set; } = "";
+
+    private Company? _company;
+    private bool _isLoading = true;
+    private List<CompanyMovie> _movies = new();
+    private List<string> _persons = new();
+
+    protected override async Task OnInitializedAsync()
+    {
+        await LoadCompanyAsync();
+    }
+
+    private async Task LoadCompanyAsync()
+    {
+        _isLoading = true;
+        _company = await CompanyService.GetOrCreateCompanyAsync(TmdbId);
+        
+        if (_company != null && !string.IsNullOrEmpty(_company.MovieList))
+        {
+            try
+            {
+                _movies = System.Text.Json.JsonSerializer.Deserialize<List<CompanyMovie>>(_company.MovieList) ?? new List<CompanyMovie>();
+            }
+            catch { }
+        }
+        
+        if (_company != null && !string.IsNullOrEmpty(_company.PersonList))
+        {
+            try
+            {
+                _persons = System.Text.Json.JsonSerializer.Deserialize<List<string>>(_company.PersonList) ?? new List<string>();
+            }
+            catch { }
+        }
+        
+        _isLoading = false;
+        StateHasChanged();
+    }
+
+    private string GetLogoUrl(string? logoPath)
+    {
+        if (string.IsNullOrWhiteSpace(logoPath))
+            return "https://via.placeholder.com/300x150?text=No+Logo";
+        return $"https://image.tmdb.org/t/p/w300{logoPath}";
+    }
+
+    private string GetPosterUrl(string? posterPath)
+    {
+        if (string.IsNullOrWhiteSpace(posterPath))
+            return "https://via.placeholder.com/200x300?text=No+Poster";
+        return $"https://image.tmdb.org/t/p/w200{posterPath}";
+    }
+
+    private void NavigateToMovie(string? tmdbId)
+    {
+        if (!string.IsNullOrEmpty(tmdbId))
+        {
+            NavigationManager.NavigateTo($"/movie/{tmdbId}");
+        }
+    }
+
+    private void NavigateToPerson(string personName)
+    {
+        NavigationManager.NavigateTo($"/person/{personName}");
+    }
+
+    private void GoBack()
+    {
+        NavigationManager.NavigateTo("/movies");
+    }
+}
