@@ -7,6 +7,7 @@
 @inject NavigationManager NavigationManager
 @using MovieAgent.Core.Interfaces
 @using MovieAgent.Components.Controls
+@using MovieAgent.Infrastructure.Services
 @using System.Text.RegularExpressions
 
 <PageTitle>精灵管家</PageTitle>
@@ -15,10 +16,10 @@
     <div style="padding: 16px; background: rgba(233, 69, 96, 0.1); border-bottom: 1px solid rgba(255,255,255,0.1);">
         <div style="display: flex; align-items: center; justify-content: space-between;">
             <div style="display: flex; align-items: center; gap: 12px;">
-                <SpriteAnimation State="@_spriteState" 
+               @*  <SpriteAnimation State="@_spriteState" 
                                 SpeechTexts="@_speechTexts" 
                                 IsTyping="@_isTyping"
-                                OnSpriteClick="OnSpriteClicked" />
+                                OnSpriteClick="OnSpriteClicked" /> *@
                 <div>
                     <h2 style="color: #E94560; margin: 0; font-size: 18px;">精灵管家</h2>
                     <p style="color: #888; margin: 4px 0 0; font-size: 12px;">@_statusText</p>
@@ -45,7 +46,7 @@
             <div style="display: flex; gap: 8px; @(msg.IsUser ? "justify-content: flex-end;" : "justify-content: flex-start;")">
                 @if (!msg.IsUser)
                 {
-                    <SpriteAnimation State="@SpriteState.Idle" Style="width: 40px; height: 50px;" />
+                   @*  <SpriteAnimation State="@SpriteState.Idle" Style="width: 40px; height: 50px;" /> *@
                 }
                 <div style="max-width: 70%; padding: 12px 16px; border-radius: 16px; @(msg.IsUser ? "background: #E94560; color: white; border-radius: 16px 4px 16px 16px;" : "background: #3D3D5C; color: #E0E0E0; border-radius: 4px 16px 16px 16px;")">
                     <p style="margin: 0; font-size: 14px; line-height: 1.5;">@msg.Content</p>
@@ -78,7 +79,7 @@
         @if (_isTyping)
         {
             <div style="display: flex; gap: 8px; justify-content: flex-start;">
-                <SpriteAnimation State="@SpriteState.Speaking" Style="width: 40px; height: 50px;" />
+               @*  <SpriteAnimation State="@SpriteState.Speaking" Style="width: 40px; height: 50px;" /> *@
                 <div style="background: #3D3D5C; padding: 12px 16px; border-radius: 4px 16px 16px 16px;">
                     <div style="display: flex; gap: 4px;">
                         <span style="width: 6px; height: 6px; background: #888; border-radius: 50%; animation: dotScale 1.4s infinite ease-in-out both;"></span>
@@ -100,9 +101,10 @@
             <MudButton Icon="@Icons.Material.Filled.Send" 
                        Variant="Variant.Filled" 
                        Color="Color.Primary"
-                       Style="background: #E94560;"
-                       OnClick="SendMessage"
-                       Disabled="@(string.IsNullOrWhiteSpace(_inputText) || _isProcessing)" />
+                       Style="background: #E94560; min-width: 60px;"
+                       Disabled="@(string.IsNullOrWhiteSpace(_inputText) || _isProcessing)"
+                       OnClick="SendMessage">发送</MudButton>
+
         </div>
     </div>
 </div>
@@ -119,23 +121,60 @@
 
     protected override async Task OnInitializedAsync()
     {
-        if (!AgentService.IsAvailable)
+        _messages.Add(new ChatMessage { Content = "正在连接AI服务...", IsUser = false });
+
+        var movieAgentService = AgentService as MovieAgentService;
+
+        if (!movieAgentService.IsAvailable)
         {
-            await AgentService.InitializeAsync();
-        }
-        
-        if (AgentService.IsAvailable)
-        {
-            _statusText = "AI 已连接";
-            _messages.Add(new ChatMessage { Content = "你好！我是你的电影智能小管家（小雪雪）。我可以帮你：\n\n🎬 播放/暂停电影\n🔊 切换音频\n📝 加载字幕\n🔍 搜索本地电影\n📋 查询电影信息\n\n请告诉我你想做什么？", IsUser = false });
+            _ = InitializeAgentAsync(movieAgentService);
         }
         else
         {
-            _statusText = "AI 未连接";
-            _messages.Add(new ChatMessage { Content = "抱歉，AI 服务暂时不可用。请检查配置后重试。", IsUser = false });
+            _statusText = "AI 已连接";
+            _messages.RemoveAll(m => m.Content == "正在连接AI服务...");
+            _messages.Add(new ChatMessage { Content = "你好！我是你的电影智能小管家（小雪雪）。我可以帮你：\n\n🎬 播放/暂停电影\n🔊 切换音频\n📝 加载字幕\n🔍 搜索本地电影\n📋 查询电影信息\n\n请告诉我你想做什么？", IsUser = false });
+            movieAgentService.OnStreamDataReceived += OnStreamDataReceived;
         }
-        
-        AgentService.OnStreamDataReceived += OnStreamDataReceived;
+    }
+
+    private async Task InitializeAgentAsync(MovieAgentService movieAgentService)
+    {
+        try
+        {
+             await movieAgentService.InitializeAsync();
+             
+            if (movieAgentService.IsAvailable)
+            {
+                _statusText = "AI 已连接";
+                _messages.RemoveAll(m => m.Content == "正在连接AI服务...");
+                _messages.Add(new ChatMessage { Content = "你好！我是你的电影智能小管家（小雪雪）。我可以帮你：\n\n🎬 播放/暂停电影\n🔊 切换音频\n📝 加载字幕\n🔍 搜索本地电影\n📋 查询电影信息\n\n请告诉我你想做什么？", IsUser = false });
+                movieAgentService.OnStreamDataReceived += OnStreamDataReceived;
+            }
+            else
+            {
+                _statusText = "AI 连接失败";
+                _messages.RemoveAll(m => m.Content == "正在连接AI服务...");
+                _messages.Add(new ChatMessage { Content = $"AI 连接失败: {movieAgentService.LastError}", IsUser = false });
+            }
+            
+            await InvokeAsync(StateHasChanged);
+        }
+        catch (Exception ex)
+        {
+            _statusText = "AI 初始化异常";
+            _messages.RemoveAll(m => m.Content == "正在连接AI服务...");
+            _messages.Add(new ChatMessage { Content = $"AI 初始化异常: {ex.Message}", IsUser = false });
+            await InvokeAsync(StateHasChanged);
+        }
+    }
+    public async ValueTask DisposeAsync()
+    {
+        var movieAgentService = AgentService as MovieAgentService; 
+        if (movieAgentService != null)
+        {
+            movieAgentService.OnStreamDataReceived -= OnStreamDataReceived;
+        }
     }
 
     private void OnStreamDataReceived(string chunk)
@@ -192,6 +231,14 @@
         }
     }
 
+    private void OnKeyDown(KeyboardEventArgs e)
+    {
+        if (e.Key == "Enter" && !e.ShiftKey)
+        {
+            SendMessage();
+        }
+    }
+
     private async Task<List<Movie>> ParseMoviesFromResponse(string response)
     {
         var movies = new List<Movie>();
@@ -243,13 +290,9 @@
         }
     }
 
-    private void OnKeyDown(KeyboardEventArgs e)
-    {
-        if (e.Key == "Enter" && !e.ShiftKey)
-        {
-            SendMessage();
-        }
-    }
+ 
+
+ 
 
     private async void ToggleListening()
     {

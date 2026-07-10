@@ -14,7 +14,8 @@ public interface IChatProvider
 public enum ModelProviderType
 {
     Ollama,
-    DeepSeek
+    DeepSeek,
+    LlamaCpp
 }
 
 public class ModelConfig

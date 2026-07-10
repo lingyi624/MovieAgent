@@ -2,9 +2,11 @@ using MovieAgent.FFmpegDecoder;
 using SharpGen.Runtime;
 using System;
 using System.Collections.Concurrent;
+using System.Reflection.Metadata;
 using System.Runtime.InteropServices;
 using System.Threading;
 using System.Windows;
+using System.Windows.Input;
 using System.Windows.Interop;
 using System.Windows.Threading;
 using Vortice;
@@ -148,6 +150,7 @@ namespace MovieAgent.D3D11Window
             InitializeD3D();
             return new HandleRef(this, _hwnd);
         }
+        private const int WM_MOUSEMOVE = 0x0200;
 
         protected override void DestroyWindowCore(HandleRef hwnd)
         {
@@ -242,7 +245,7 @@ namespace MovieAgent.D3D11Window
             _backBufferRtv = _d3dDevice!.CreateRenderTargetView(_backBufferTexture);
             CreateVpOutputView();
         }
-
+ 
         private static IntPtr WndProc(IntPtr hWnd, uint msg, IntPtr wParam, IntPtr lParam)
         {
             // 处理 WM_SIZE：当子窗口尺寸变化时，调整交换链尺寸
@@ -255,10 +258,39 @@ namespace MovieAgent.D3D11Window
                 {
                     _currentRenderer.OnWindowSizeChanged(newWidth, newHeight);
                 }
-            }
-            return DefWindowProc(hWnd, msg, wParam, lParam);
+            } 
+                    return DefWindowProc(hWnd, msg, wParam, lParam);
         }
+        protected override IntPtr WndProc(IntPtr hwnd, int msg, IntPtr wParam, IntPtr lParam, ref bool handled)
+        {
+            switch (msg)
+            {
+                case WM_MOUSEMOVE:
+                    HandleMouseMove(lParam);
+                    // 如果你不希望此消息继续被默认处理，可以将 handled 设为 true
+                     handled = true;
+                    break; 
+            }
 
+            // 调用基类方法，确保其他消息能被正常处理
+            return base.WndProc(hwnd, msg, wParam, lParam, ref handled);
+        }
+        private void HandleMouseMove(IntPtr lParam)
+        {
+            // 解析坐标（可选，如果不需要可以省略）
+            int x = lParam.ToInt32() & 0xFFFF;
+            int y = (lParam.ToInt32() >> 16) & 0xFFFF;
+
+            // 创建鼠标移动事件参数（使用 MouseEventArgs）
+            var args = new MouseEventArgs(Mouse.PrimaryDevice, Environment.TickCount)
+            {
+                RoutedEvent = UIElement.MouseMoveEvent,
+                Source = this
+            };
+
+            // 通过 InputManager 引发事件
+            InputManager.Current.ProcessInput(args);
+        }
         // ==================== 交换链尺寸调整 ====================
         private void OnWindowSizeChanged(int newWidth, int newHeight)
         {
@@ -479,6 +511,7 @@ namespace MovieAgent.D3D11Window
 
                 // 用传入的纹理（FFmpeg 端私有纹理）创建 InputView，不持有引用，不释放
                 var frameTexture = new ID3D11Texture2D(texturePtr);
+                if (texturePtr == IntPtr.Zero) return;
                 var texDesc = frameTexture.Description;
                 if ((_vpEnumerator.CheckVideoProcessorFormat(texDesc.Format) & VideoProcessorFormatSupport.Input) == 0) return;
                 if ((texDesc.BindFlags & (BindFlags.Decoder | BindFlags.VideoEncoder)) == 0) return;

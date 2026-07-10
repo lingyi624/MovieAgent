@@ -523,7 +523,7 @@
         
         <Popup x:Name="ContextMenuPopup" StaysOpen="False" Placement="Mouse" AllowsTransparency="True">
             <Border Background="White" CornerRadius="8" Padding="4" BorderBrush="#E94560" BorderThickness="1"
-                    Width="140">
+                    Width="160">
                 <StackPanel>
                     <!--<MenuItem Header="打开聊天" Click="OpenChat_Click">
                         <MenuItem.Icon>
@@ -540,12 +540,12 @@
                             <TextBlock Text="⭐" FontSize="14"/>
                         </MenuItem.Icon>
                     </MenuItem>
-                    <Separator/>
+                    <Separator/>-->
                     <MenuItem Header="隐藏小雪雪" Click="HideSprite_Click">
                         <MenuItem.Icon>
                             <TextBlock Text="🙈" FontSize="14"/>
                         </MenuItem.Icon>
-                    </MenuItem>-->
+                    </MenuItem>
                 </StackPanel>
             </Border>
         </Popup>

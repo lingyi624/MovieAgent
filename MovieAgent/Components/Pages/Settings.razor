@@ -4,11 +4,14 @@
 @inject ILocalizationService LocalizationService
 @inject IBackupService BackupService
 @inject IMovieExportService ExportService
+@inject IMovieDownloadService DownloadService
 @inject IMovieRepository MovieRepo
 @using MovieAgent.Infrastructure.Providers
 @using MovieAgent.Core.Interfaces
+@using MovieAgent.Core.Models
 @using System.Text.Json
 @using System.Text
+@using Newtonsoft.Json.Linq;
 
 <PageTitle>@LocalizationService.Translate("Settings")</PageTitle>
 
@@ -93,6 +96,34 @@
                 你可以在 <a href="https://www.opensubtitles.com/" target="_blank" style="color: #E94560;">OpenSubtitles 官网</a> 申请免费的 API Key。
             </MudText>
             <MudButton Variant="Variant.Filled" Color="Color.Primary" OnClick="SaveSubtitleSettings" Style="background: #E94560;">保存</MudButton>
+        </MudPaper>
+    </MudTabPanel>
+
+    <MudTabPanel Text="下载设置" Style="background: #1A1A2E; color: #E0E0E0;">
+        <MudText Typo="Typo.h6" Style="margin: 16px 0;">4K 电影下载配置</MudText>
+        <MudPaper Elevation="1" Style="padding: 16px; background: #2D2D44;">
+            <MudTextField @bind-Value="_downloadDir" Label="本地下载目录" Variant="Variant.Outlined"
+                          Placeholder="D:\Movies\Downloads" Style="margin-bottom: 16px; background: #2D2D44;" />
+            <MudTextField @bind-Value="_nasDownloadDir" Label="NAS 下载目录" Variant="Variant.Outlined"
+                          Placeholder="\\192.168.1.11\disk1\downloads" Style="margin-bottom: 16px; background: #2D2D44;" />
+            <MudSwitch @bind-Value="_useNasForDownload" Label="使用 NAS 作为下载目录" 
+                       Color="Color.Primary" Style="margin-bottom: 16px;" />
+            <MudGrid>
+                <MudItem xs="6">
+                    <MudNumericField @bind-Value="_maxConcurrentDownloads" Label="最大并发下载数" 
+                                     Variant="Variant.Outlined" Min="1" Max="10" Step="1"
+                                     Style="background: #2D2D44;" />
+                </MudItem>
+                <MudItem xs="6">
+                    <MudNumericField @bind-Value="_maxRetries" Label="最大重试次数" 
+                                     Variant="Variant.Outlined" Min="0" Max="10" Step="1"
+                                     Style="background: #2D2D44;" />
+                </MudItem>
+            </MudGrid>
+            <MudButton Variant="Variant.Outlined" Color="Color.Secondary" OnClick="BrowseDownloadDir" 
+                       StartIcon="@Icons.Material.Filled.FolderOpen" Style="margin-top: 16px;">浏览</MudButton>
+            <MudButton Variant="Variant.Filled" Color="Color.Primary" OnClick="SaveDownloadSettings" 
+                       Style="margin-left: 8px; margin-top: 16px; background: #E94560;">保存</MudButton>
         </MudPaper>
     </MudTabPanel>
 
@@ -293,6 +324,13 @@
     private string _exportMessage = "";
     private bool _exportSuccess = false;
 
+    // 下载设置
+    private string _downloadDir = @"D:\Movies\Downloads";
+    private string _nasDownloadDir = "";
+    private bool _useNasForDownload;
+    private int _maxConcurrentDownloads = 3;
+    private int _maxRetries = 3;
+
     // AI 模型配置
     private List<ModelConfig> _availableModels = new();
     private ModelConfig? _selectedModel;
@@ -301,7 +339,7 @@
     private string _deepseekEndpoint = "https://api.deepseek.com/v1";
     private string _aiTestResult = "";
     private bool _aiTestSuccess = false;
-    
+
     // 语音测试配置
     [Inject] private ISpeechService SpeechService { get; set; } = null!;
     private bool _isSpeechAvailable = false;
@@ -321,10 +359,11 @@
         _modelName = Config["AI:ModelName"] ?? "phi3.5:3.8b-mini-instruct-q4_K_M";
         LoadBackups();
         LoadAiModels();
-        
-        await InitializeSpeechService();
+            LoadDownloadSettings();
+
+            await InitializeSpeechService();
     }
-    
+
     private async Task InitializeSpeechService()
     {
         try
@@ -340,7 +379,7 @@
         }
         StateHasChanged();
     }
-    
+
     private void ToggleListening()
     {
         if (!_isSpeechAvailable)
@@ -349,7 +388,7 @@
             StateHasChanged();
             return;
         }
-        
+
         if (_isListening)
         {
             SpeechService.StopListening();
@@ -365,14 +404,14 @@
         }
         StateHasChanged();
     }
-    
+
     private void OnSpeechResult(string text)
     {
         _recognizedText += (string.IsNullOrEmpty(_recognizedText) ? "" : "\n") + text;
         _speechStatus = $"识别成功: {text}";
         StateHasChanged();
     }
-    
+
     private async void TestSpeak()
     {
         try
@@ -388,7 +427,7 @@
         }
         StateHasChanged();
     }
-    
+
     private void ClearRecognition()
     {
         _recognizedText = "";
@@ -398,18 +437,18 @@
     private void LoadAiModels()
     {
         _availableModels = ChatProviderFactory.GetDefaultModels();
-        
+
         var savedModelName = Config["AI:ModelName"] ?? "";
         var savedProvider = Config["AI:Provider"] ?? "Ollama";
-        
+
         _selectedModel = _availableModels.FirstOrDefault(m => 
             m.Name == savedModelName && m.ProviderType.ToString() == savedProvider);
-        
+
         if (_selectedModel == null && _availableModels.Any())
         {
             _selectedModel = _availableModels.First(m => m.IsDefault);
         }
-        
+
         _apiKey = Config["AI:ApiKey"] ?? "";
         _ollamaEndpoint = Config["AI:ModelUrl"] ?? "http://localhost:11434";
         _deepseekEndpoint = Config["AI:DeepSeekUrl"] ?? "https://api.deepseek.com/v1";
@@ -470,7 +509,7 @@
     {
         if (string.IsNullOrEmpty(searchText))
             return _availableModels;
-        
+
         return _availableModels.Where(m => 
             m.Name.Contains(searchText, StringComparison.OrdinalIgnoreCase) ||
             m.ProviderType.ToString().Contains(searchText, StringComparison.OrdinalIgnoreCase));
@@ -480,7 +519,7 @@
     {
         _backupDirectory = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "backups");
         _backups.Clear();
-        
+
         if (Directory.Exists(_backupDirectory))
         {
             var backupDirs = Directory.GetDirectories(_backupDirectory);
@@ -545,7 +584,7 @@
                 "确认恢复",
                 System.Windows.MessageBoxButton.YesNo,
                 System.Windows.MessageBoxImage.Warning);
-            
+
             if (dialog == System.Windows.MessageBoxResult.Yes)
             {
                 await BackupService.RestoreFromBackupAsync(backupPath);
@@ -567,7 +606,7 @@
                 "确认删除",
                 System.Windows.MessageBoxButton.YesNo,
                 System.Windows.MessageBoxImage.Question);
-            
+
             if (dialog == System.Windows.MessageBoxResult.Yes)
             {
                 Directory.Delete(backupPath, recursive: true);
@@ -606,7 +645,7 @@
     {
         if (LocalizationService.CurrentLanguage == language)
             return;
-        
+
         await LocalizationService.SetLanguageAsync(language);
         Snackbar.Add(language == Language.Chinese ? "已切换到中文" : "Switched to English", Severity.Success);
     }
@@ -695,7 +734,8 @@
                 ["AI:ModelName"] = _selectedModel?.Name ?? "",
                 ["AI:Provider"] = _selectedModel?.ProviderType.ToString() ?? "Ollama",
                 ["AI:ApiKey"] = _apiKey
-            };
+            }; 
+
             SaveAppSettings(config);
             Snackbar.Add("AI 模型配置已保存", Severity.Success);
         }
@@ -710,8 +750,8 @@
         try
         {
             var path = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "appsettings.json");
-            var json = File.Exists(path) ? File.ReadAllText(path) : "{}";
-            
+            var json = File.Exists(path) ? File.ReadAllText(path) : "{}"; 
+           
             using var doc = JsonDocument.Parse(json, new JsonDocumentOptions { AllowTrailingCommas = true });
             var root = doc.RootElement.Clone();
             
@@ -977,6 +1017,58 @@
             _exporting = false;
             _exportProgress = "";
             StateHasChanged();
+        }
+    }
+
+    private void LoadDownloadSettings()
+    {
+        _downloadDir = Config["Download:DownloadDirectory"] ?? @"D:\Movies\Downloads";
+        _nasDownloadDir = Config["Download:NasDownloadDirectory"] ?? "";
+        _useNasForDownload = bool.TryParse(Config["Download:UseNasForDownload"], out var un) && un;
+        _maxConcurrentDownloads = int.TryParse(Config["Download:MaxConcurrentDownloads"], out var mc) ? mc : 3;
+        _maxRetries = int.TryParse(Config["Download:MaxRetries"], out var mr) ? mr : 3;
+    }
+
+    private void BrowseDownloadDir()
+    {
+        var dialog = new System.Windows.Forms.FolderBrowserDialog
+        {
+            Description = "选择下载目录",
+            ShowNewFolderButton = true
+        };
+        if (dialog.ShowDialog() == System.Windows.Forms.DialogResult.OK)
+            _downloadDir = dialog.SelectedPath;
+    }
+
+    private async void SaveDownloadSettings()
+    {
+        try
+        {
+            var config = new Dictionary<string, object>
+            {
+                ["Download:DownloadDirectory"] = _downloadDir,
+                ["Download:NasDownloadDirectory"] = _nasDownloadDir,
+                ["Download:UseNasForDownload"] = _useNasForDownload.ToString().ToLower(),
+                ["Download:MaxConcurrentDownloads"] = _maxConcurrentDownloads.ToString(),
+                ["Download:MaxRetries"] = _maxRetries.ToString()
+            };
+
+            SaveAppSettings(config);
+
+            await DownloadService.UpdateSettingsAsync(new DownloadSettings
+            {
+                DownloadDirectory = _downloadDir,
+                NasDownloadDirectory = _nasDownloadDir,
+                UseNasForDownload = _useNasForDownload,
+                MaxConcurrentDownloads = _maxConcurrentDownloads,
+                MaxRetries = _maxRetries
+            });
+
+            Snackbar.Add("下载设置已保存", Severity.Success);
+        }
+        catch (Exception ex)
+        {
+            Snackbar.Add($"保存失败: {ex.Message}", Severity.Error);
         }
     }
 }

@@ -3,8 +3,10 @@ using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using MovieAgent.Controls.Window;
 using MovieAgent.Core.Interfaces;
+using MovieAgent.Core.Models;
 using MovieAgent.FFmpegDecoder;
 using MovieAgent.Infrastructure.Data;
+using MovieAgent.Infrastructure.Providers;
 using MovieAgent.Infrastructure.Repositories;
 using MovieAgent.Infrastructure.Services;
 using MovieAgent.Services;
@@ -45,6 +47,11 @@ public partial class App : Application
             // 如果连日志都写不了，那问题很严重
             try { File.WriteAllText(@"C:\temp\movieagent_error.log", $"[{DateTime.Now}] 日志写入失败: {ex.Message}\r\n"); } catch { }
         }
+        TaskScheduler.UnobservedTaskException += (sender, args) =>
+        {
+            DebugLogger.WriteLine($"{args.Exception} 未观测到的任务异常");
+            args.SetObserved(); // 防止进程退出
+        };
         // 启用全局未处理异常捕获
         this.DispatcherUnhandledException += (s, e) =>
         {
@@ -131,6 +138,17 @@ public partial class App : Application
             services.AddSingleton<IKeyboardShortcutService, Services.KeyboardShortcutService>();
             services.AddSingleton<IMovieExportService, MovieExportService>();
 
+            // 下载服务
+            services.AddHttpClient("DownloadClient", client =>
+            {
+                client.DefaultRequestHeaders.UserAgent.ParseAdd("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36");
+                client.DefaultRequestHeaders.Accept.ParseAdd("application/octet-stream, */*");
+                client.DefaultRequestHeaders.AcceptEncoding.ParseAdd("gzip, deflate");
+                client.DefaultRequestHeaders.AcceptLanguage.ParseAdd("zh-CN,zh;q=0.9,en;q=0.8");
+                client.Timeout = TimeSpan.FromHours(24);
+            });
+           services.AddSingleton<IMovieDownloadService, MovieDownloadService>();
+
             // 配置和备份服务
             var configDir = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "MovieAgent", "Config");
             services.AddSingleton<IConfigStorageService>(new ConfigStorageService(configDir));
@@ -155,6 +173,7 @@ public partial class App : Application
             services.AddScoped<IMovieReviewService, MovieReviewService>();
             services.AddScoped<IWatchPlanRepository, WatchPlanRepository>();
             services.AddScoped<IWatchPlanService, WatchPlanService>();
+            services.AddScoped<ILlamaCppEmbeddingService, LlamaCppEmbeddingService>();
 
             services.AddSingleton<IAgentService>(sp =>
                 new MovieAgentService(
@@ -163,7 +182,7 @@ public partial class App : Application
                     sp.GetRequiredService<IPlayerService>(),
                     sp.GetRequiredService<IConversationMemoryService>(),
                     sp.GetRequiredService<IHybridSearchService>(),
-                    sp.GetRequiredService<IVectorDatabaseService>(),
+                    sp.GetRequiredService<IVectorDatabaseService>(),  
                     sp.GetRequiredService<IConfiguration>()));
             services.AddScoped<IMovieRecommendationService, MovieRecommendationService>();
 
@@ -198,13 +217,13 @@ public partial class App : Application
             mainWindow.Show();
             AppendLog("主窗口显示完成");
             
-            AppendLog("开始创建精灵窗口...");
-            var spriteWindow = new Controls.Window.SpriteWindow();
-            spriteWindow.SpriteClicked += (s, args) =>
-            {
-                Application.Current.MainWindow?.Activate();
-            };
-            spriteWindow.Show();
+            //AppendLog("开始创建精灵窗口...");
+            //var spriteWindow = new Controls.Window.SpriteWindow();
+            //spriteWindow.SpriteClicked += (s, args) =>
+            //{
+            //    Application.Current.MainWindow?.Activate();
+            //};
+            //spriteWindow.Show();
             AppendLog("精灵窗口显示完成，启动成功！");
            
         }

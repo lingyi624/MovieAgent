@@ -1,0 +1,360 @@
+@page "/downloads"
+@inject IMovieDownloadService DownloadService
+@inject ISnackbar Snackbar
+@inject ILocalizationService LocalizationService
+@using MovieAgent.Core.Models
+@implements IDisposable
+
+<PageTitle>下载管理 - Movie Agent</PageTitle>
+
+<MudText Typo="Typo.h4" GutterBottom Style="color: #E94560;">下载管理</MudText>
+
+<MudStack Row="true" Justify="Justify.SpaceBetween" AlignItems="AlignItems.Center" Style="margin-bottom: 16px;">
+    <MudStack Row="true" Spacing="2" AlignItems="AlignItems.Center">
+        <MudChip T="string" Color="Color.Primary" Size="Size.Small">下载中: @_activeCount</MudChip>
+        <MudChip T="string" Color="Color.Default" Size="Size.Small">总数: @_tasks.Count</MudChip>
+        <MudChip T="string" Color="Color.Info" Size="Size.Small">总速度: @FormatSpeed(_totalSpeed)</MudChip>
+    </MudStack>
+    <MudStack Row="true" Spacing="2">
+        <MudButton Variant="Variant.Outlined" Color="Color.Warning" Size="Size.Small"
+                   OnClick="PauseAll" StartIcon="@Icons.Material.Filled.Pause">全部暂停</MudButton>
+        <MudButton Variant="Variant.Outlined" Color="Color.Success" Size="Size.Small"
+                   OnClick="ResumeAll" StartIcon="@Icons.Material.Filled.PlayArrow">全部恢复</MudButton>
+        <MudButton Variant="Variant.Filled" Color="Color.Primary" Size="Size.Small"
+                   OnClick="OpenAddDialog" StartIcon="@Icons.Material.Filled.Add"
+                   Style="background: #E94560;">添加下载</MudButton>
+    </MudStack>
+</MudStack>
+
+@if (_tasks.Count == 0)
+{
+    <MudPaper Elevation="2" Style="padding: 40px; text-align: center; background: #2D2D44;">
+        <MudIcon Icon="@Icons.Material.Filled.CloudDownload" Size="Size.Large" Style="color: #666; font-size: 64px;" />
+        <MudText Typo="Typo.h6" Style="color: #888; margin-top: 16px;">暂无下载任务</MudText>
+        <MudText Typo="Typo.body2" Style="color: #666;">添加磁力链接、BT种子或直接URL开始下载</MudText>
+    </MudPaper>
+}
+else
+{
+    <MudStack Spacing="3">
+        @foreach (var task in _tasks.OrderByDescending(t => t.Priority).ThenBy(t => t.CreatedAt))
+        {
+            <MudPaper Elevation="2" Style="padding: 16px; background: #2D2D44;">
+                <MudStack Row="true" Justify="Justify.SpaceBetween" AlignItems="AlignItems.Center" Style="margin-bottom: 8px;">
+                    <MudStack Row="true" Spacing="2" AlignItems="AlignItems.Center">
+                        <MudText Typo="Typo.body1" Style="color: #E0E0E0; font-weight: bold; max-width: 400px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">
+                            @task.Name
+                        </MudText>
+                        <MudChip T="string" Size="Size.Small" Color="@GetStatusColor(task.Status)">
+                            @GetStatusText(task.Status)
+                        </MudChip>
+                        <MudChip T="string" Size="Size.Small" Color="Color.Default" Style="font-size: 10px;">
+                            @task.SourceType
+                        </MudChip>
+                    </MudStack>
+                    <MudStack Row="true" Spacing="1">
+                        <MudSelect T="DownloadPriority" Value="@task.Priority" ValueChanged="(v) => OnPriorityChanged(task.Id, v)"
+                                   Style="width: 100px; font-size: 12px;" Size="Size.Small" Dense="true">
+                            <MudSelectItem T="DownloadPriority" Value="DownloadPriority.Low">低</MudSelectItem>
+                            <MudSelectItem T="DownloadPriority" Value="DownloadPriority.Normal">中</MudSelectItem>
+                            <MudSelectItem T="DownloadPriority" Value="DownloadPriority.High">高</MudSelectItem>
+                        </MudSelect>
+                    </MudStack>
+                </MudStack>
+
+                @if (task.Status == DownloadStatus.Downloading)
+                {
+                    <MudProgressLinear Color="Color.Primary" Value="@task.ProgressPercent" Style="margin-bottom: 8px;" />
+                }
+                else if (task.Status == DownloadStatus.Completed)
+                {
+                    <MudProgressLinear Color="Color.Success" Value="100" Style="margin-bottom: 8px;" />
+                }
+                else if (task.Status == DownloadStatus.Failed)
+                {
+                    <MudProgressLinear Color="Color.Error" Value="@task.ProgressPercent" Style="margin-bottom: 8px;" />
+                }
+                else
+                {
+                    <MudProgressLinear Color="Color.Default" Value="@task.ProgressPercent" Style="margin-bottom: 8px;" />
+                }
+
+                <MudStack Row="true" Justify="Justify.SpaceBetween" AlignItems="AlignItems.Center">
+                    <MudStack Row="true" Spacing="3">
+                        <MudText Typo="Typo.caption" Style="color: #888;">
+                            @FormatBytes(task.DownloadedBytes) / @FormatBytes(task.TotalBytes)
+                            @if (task.Status == DownloadStatus.Downloading)
+                            {
+                                <span style="color: #4CAF50;"> | @FormatSpeed(task.DownloadSpeedBps)</span>
+                                if (task.DownloadSpeedBps > 0 && task.TotalBytes > 0)
+                                {
+                                    var remaining = task.TotalBytes - task.DownloadedBytes;
+                                    <span style="color: #888;"> | 剩余 @FormatETA(remaining, task.DownloadSpeedBps)</span>
+                                }
+                            }
+                        </MudText>
+                    </MudStack>
+                    <MudStack Row="true" Spacing="1">
+                        @if (task.Status == DownloadStatus.Downloading)
+                        {
+                            <MudIconButton Icon="@Icons.Material.Filled.Pause" Size="Size.Small" Color="Color.Warning"
+                                           OnClick="() => PauseTask(task.Id)" title="暂停" />
+                            <MudIconButton Icon="@Icons.Material.Filled.Stop" Size="Size.Small" Color="Color.Error"
+                                           OnClick="() => CancelTask(task.Id)" title="取消" />
+                        }
+                        else if (task.Status == DownloadStatus.Paused)
+                        {
+                            <MudIconButton Icon="@Icons.Material.Filled.PlayArrow" Size="Size.Small" Color="Color.Success"
+                                           OnClick="() => ResumeTask(task.Id)" title="继续" />
+                            <MudIconButton Icon="@Icons.Material.Filled.Stop" Size="Size.Small" Color="Color.Error"
+                                           OnClick="() => CancelTask(task.Id)" title="取消" />
+                        }
+                        else if (task.Status == DownloadStatus.Queued)
+                        {
+                            <MudIconButton Icon="@Icons.Material.Filled.Stop" Size="Size.Small" Color="Color.Error"
+                                           OnClick="() => CancelTask(task.Id)" title="取消" />
+                        }
+                        else if (task.Status == DownloadStatus.Failed)
+                        {
+                            <MudIconButton Icon="@Icons.Material.Filled.Refresh" Size="Size.Small" Color="Color.Warning"
+                                           OnClick="() => RetryTask(task.Id)" title="重试" />
+                            <MudIconButton Icon="@Icons.Material.Filled.Delete" Size="Size.Small" Color="Color.Error"
+                                           OnClick="() => RemoveTask(task.Id)" title="删除" />
+                        }
+                        else if (task.Status is DownloadStatus.Completed or DownloadStatus.Cancelled)
+                        {
+                            <MudIconButton Icon="@Icons.Material.Filled.Delete" Size="Size.Small" Color="Color.Error"
+                                           OnClick="() => RemoveTask(task.Id)" title="删除" />
+                        }
+                    </MudStack>
+                </MudStack>
+
+                @if (!string.IsNullOrEmpty(task.ErrorMessage))
+                {
+                    <MudText Typo="Typo.caption" Style="color: #FF5252; margin-top: 4px;">错误: @task.ErrorMessage</MudText>
+                }
+            </MudPaper>
+        }
+    </MudStack>
+}
+   @* <MudDialog @bind-IsVisible="_addDialogVisible">  *@
+<MudDialog Visible="_addDialogVisible">
+    <DialogContent>
+        <MudStack Spacing="3" Style="padding: 16px; min-width: 500px;">
+            <MudText Typo="Typo.h6" Style="color: #E94560;">添加下载</MudText>
+            <MudTextField @bind-Value="_addUrl" Label="下载链接" Variant="Variant.Outlined"
+                          Placeholder="magnet:?xt=... 或 https://... 或 .torrent链接"
+                          Lines="3" Style="background: #2D2D44;" />
+            <MudTextField @bind-Value="_addName" Label="自定义名称（可选）" Variant="Variant.Outlined"
+                          Placeholder="留空则自动识别" Style="background: #2D2D44;" />
+            <MudStack Row="true" Justify="Justify.FlexEnd" Spacing="2">
+                <MudButton Variant="Variant.Outlined" OnClick="CloseAddDialog">取消</MudButton>
+                <MudButton Variant="Variant.Filled" Color="Color.Primary" OnClick="AddDownload"
+                           Disabled="@string.IsNullOrEmpty(_addUrl)" Style="background: #E94560;">开始下载</MudButton>
+            </MudStack>
+        </MudStack>
+    </DialogContent>
+</MudDialog>
+
+@code {
+    private List<DownloadTask> _tasks = new();
+    private bool _addDialogVisible=false;
+    private string _addUrl = string.Empty;
+    private string _addName = string.Empty;
+    private System.Timers.Timer? _refreshTimer;
+    private int _activeCount;
+    private double _totalSpeed;
+    private bool _isDisposed;
+
+    protected override async Task OnInitializedAsync()
+    {
+        _tasks = (await DownloadService.GetAllTasksAsync()).ToList();
+        DownloadService.DownloadProgressChanged += OnDownloadProgressChanged;
+
+        _refreshTimer = new System.Timers.Timer(1000);
+        _refreshTimer.Elapsed += async (_, _) =>
+        {
+            if (_isDisposed) return;
+            try { await InvokeAsync(RefreshStats); } catch { }
+        };
+        _refreshTimer.Start();
+
+        _ = Task.Delay(500).ContinueWith(async _ =>
+        {
+            if (_isDisposed) return;
+            try
+            {
+                _tasks = (await DownloadService.GetAllTasksAsync()).ToList();
+                await InvokeAsync(StateHasChanged);
+            }
+            catch { }
+        });
+    }
+
+    private async void OnDownloadProgressChanged(object? sender, DownloadProgressEventArgs e)
+    {
+        if (_isDisposed) return;
+        try
+        {
+            var task = _tasks.FirstOrDefault(t => t.Id == e.TaskId);
+            if (task != null)
+            {
+                task.Status = e.Status;
+                task.DownloadedBytes = e.DownloadedBytes;
+                task.TotalBytes = e.TotalBytes;
+                task.DownloadSpeedBps = e.SpeedBps;
+                task.ErrorMessage = e.ErrorMessage;
+            }
+            else
+            {
+                _tasks = (await DownloadService.GetAllTasksAsync()).ToList();
+            }
+            await InvokeAsync(StateHasChanged);
+        }
+        catch { }
+    }
+
+    private void RefreshStats()
+    {
+        if (_isDisposed) return;
+        try
+        {
+            _activeCount = _tasks.Count(t => t.Status == DownloadStatus.Downloading);
+            _totalSpeed = _tasks.Where(t => t.Status == DownloadStatus.Downloading).Sum(t => t.DownloadSpeedBps);
+            StateHasChanged();
+        }
+        catch { }
+    }
+
+    private void OpenAddDialog()
+    {
+        _addUrl = string.Empty;
+        _addName = string.Empty;
+        _addDialogVisible = true;
+        
+    }
+
+    private void CloseAddDialog() => _addDialogVisible = false;
+
+    private async void AddDownload()
+    {
+        if (string.IsNullOrWhiteSpace(_addUrl)) return;
+
+        _addDialogVisible = false;
+        var taskId = await DownloadService.AddDownloadAsync(_addUrl, string.IsNullOrWhiteSpace(_addName) ? null : _addName);
+        _tasks = (await DownloadService.GetAllTasksAsync()).ToList();
+        Snackbar.Add("下载任务已添加", Severity.Success);
+        StateHasChanged();
+    }
+
+    private async void PauseTask(string taskId)
+    {
+        await DownloadService.PauseDownloadAsync(taskId);
+        Snackbar.Add("已暂停", Severity.Info);
+    }
+
+    private async void ResumeTask(string taskId)
+    {
+        await DownloadService.ResumeDownloadAsync(taskId);
+        Snackbar.Add("已恢复", Severity.Info);
+    }
+
+    private async void CancelTask(string taskId)
+    {
+        await DownloadService.CancelDownloadAsync(taskId);
+        Snackbar.Add("已取消", Severity.Info);
+    }
+
+    private async void RetryTask(string taskId)
+    {
+        await DownloadService.RetryDownloadAsync(taskId);
+        Snackbar.Add("正在重试", Severity.Info);
+    }
+
+    private async void RemoveTask(string taskId)
+    {
+        try
+        {
+            await DownloadService.RemoveDownloadAsync(taskId);
+            _tasks = (await DownloadService.GetAllTasksAsync()).ToList();
+            Snackbar.Add("已删除", Severity.Info);
+            StateHasChanged();
+        }
+        catch { }
+    }
+
+    private async void PauseAll()
+    {
+        foreach (var task in _tasks.Where(t => t.Status == DownloadStatus.Downloading))
+            await DownloadService.PauseDownloadAsync(task.Id);
+        Snackbar.Add("已全部暂停", Severity.Info);
+    }
+
+    private async void ResumeAll()
+    {
+        foreach (var task in _tasks.Where(t => t.Status == DownloadStatus.Paused))
+            await DownloadService.ResumeDownloadAsync(task.Id);
+        Snackbar.Add("正在恢复所有暂停任务", Severity.Info);
+    }
+
+    private async void OnPriorityChanged(string taskId, DownloadPriority priority)
+    {
+        await DownloadService.SetPriorityAsync(taskId, priority);
+    }
+
+    private static Color GetStatusColor(DownloadStatus status) => status switch
+    {
+        DownloadStatus.Downloading => Color.Primary,
+        DownloadStatus.Completed => Color.Success,
+        DownloadStatus.Paused => Color.Warning,
+        DownloadStatus.Failed => Color.Error,
+        DownloadStatus.Cancelled => Color.Default,
+        _ => Color.Default
+    };
+
+    private static string GetStatusText(DownloadStatus status) => status switch
+    {
+        DownloadStatus.Queued => "排队中",
+        DownloadStatus.Downloading => "下载中",
+        DownloadStatus.Paused => "已暂停",
+        DownloadStatus.Completed => "已完成",
+        DownloadStatus.Failed => "失败",
+        DownloadStatus.Cancelled => "已取消",
+        _ => "未知"
+    };
+
+    private static string FormatBytes(long bytes) => bytes switch
+    {
+        < 0 => "未知",
+        < 1024 => $"{bytes} B",
+        < 1024 * 1024 => $"{bytes / 1024.0:F1} KB",
+        < 1024 * 1024 * 1024 => $"{bytes / (1024.0 * 1024):F1} MB",
+        _ => $"{bytes / (1024.0 * 1024 * 1024):F2} GB"
+    };
+
+    private static string FormatSpeed(double bps) => bps switch
+    {
+        < 0 => "0 B/s",
+        < 1024 => $"{bps:F0} B/s",
+        < 1024 * 1024 => $"{bps / 1024:F1} KB/s",
+        < 1024 * 1024 * 1024 => $"{bps / (1024 * 1024):F1} MB/s",
+        _ => $"{bps / (1024 * 1024 * 1024):F2} GB/s"
+    };
+
+    private static string FormatETA(long remainingBytes, double speedBps)
+    {
+        if (speedBps <= 0) return "计算中...";
+        var seconds = remainingBytes / speedBps;
+        if (seconds < 60) return $"{seconds:F0}秒";
+        if (seconds < 3600) return $"{seconds / 60:F0}分{seconds % 60:F0}秒";
+        return $"{(int)(seconds / 3600)}时{(int)(seconds % 3600 / 60)}分";
+    }
+
+    public void Dispose()
+    {
+        _isDisposed = true;
+        DownloadService?.DownloadProgressChanged -= OnDownloadProgressChanged;
+        _refreshTimer?.Stop();
+        _refreshTimer?.Dispose();
+    }
+}

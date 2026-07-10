@@ -65,7 +65,7 @@ public class MovieAgentService : IAgentService
             Debug.WriteLine($"[Agent] Testing connection...");
             
             _chatProvider = ChatProviderFactory.CreateProvider(_modelConfig);
-            IsAvailable = await _chatProvider.InitializeAsync();
+            IsAvailable = await _chatProvider.InitializeAsync();  
             LastError = _chatProvider.LastError;
             
             if (IsAvailable)
@@ -115,7 +115,8 @@ public class MovieAgentService : IAgentService
             Debug.WriteLine($"[Agent] Sending to {_chatProvider.Name}: {userMessage}");
            
             var movieContext = await BuildMovieContextAsync(userMessage);
-            var fullMessage = $"{movieContext}\n\n{userMessage}";
+            var systemPrompt = GetSystemPrompt();
+            var fullMessage = $"{systemPrompt}\n\n{movieContext}\n\n用户查询: {userMessage}";
             
             var response = await _chatProvider.ChatAsync(fullMessage);
             

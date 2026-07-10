@@ -13,6 +13,7 @@ public class AppDbContext : DbContext
     public DbSet<ConversationRecord> ConversationRecords => Set<ConversationRecord>();
     public DbSet<Person> Persons => Set<Person>();
     public DbSet<Company> Companies => Set<Company>();
+    public DbSet<DownloadTaskEntity> DownloadTasks => Set<DownloadTaskEntity>();
 
     public AppDbContext(DbContextOptions<AppDbContext> options) : base(options) { }
 
@@ -26,6 +27,7 @@ public class AppDbContext : DbContext
 
         await CreatePersonTableIfNotExistsAsync();
         await CreateCompanyTableIfNotExistsAsync();
+        await CreateDownloadTasksTableIfNotExistsAsync();
 
         var movieNewColumns = new Dictionary<string, string>
         {
@@ -160,8 +162,48 @@ public class AppDbContext : DbContext
         catch (Exception ex)
         {
             Console.WriteLine($"[AppDbContext] Failed to create Companies table: {ex.Message}");
+            }
         }
-    }
+
+        private async Task CreateDownloadTasksTableIfNotExistsAsync()
+        {
+            try
+            {
+                var tableExists = await Database
+                    .SqlQueryRaw<string>("SELECT name FROM sqlite_master WHERE type='table' AND name='DownloadTasks'")
+                    .AnyAsync();
+
+                if (!tableExists)
+                {
+                    await Database.ExecuteSqlRawAsync(@"
+                        CREATE TABLE DownloadTasks (
+                            Id NVARCHAR(12) PRIMARY KEY,
+                            Name NVARCHAR(500) NOT NULL,
+                            SourceUrl NVARCHAR(2000) NOT NULL,
+                            SourceType INTEGER NOT NULL DEFAULT 0,
+                            Status INTEGER NOT NULL DEFAULT 0,
+                            Priority INTEGER NOT NULL DEFAULT 1,
+                            TotalBytes INTEGER NOT NULL DEFAULT -1,
+                            DownloadedBytes INTEGER NOT NULL DEFAULT 0,
+                            DownloadSpeedBps REAL NOT NULL DEFAULT 0,
+                            SavePath NVARCHAR(2000),
+                            CreatedAt TEXT NOT NULL,
+                            StartedAt TEXT,
+                            CompletedAt TEXT,
+                            ErrorMessage NVARCHAR(2000),
+                            RetryCount INTEGER NOT NULL DEFAULT 0,
+                            MaxRetries INTEGER NOT NULL DEFAULT 3,
+                            INDEX idx_downloadtasks_status ON DownloadTasks(Status),
+                            INDEX idx_downloadtasks_createdat ON DownloadTasks(CreatedAt)
+                        )");
+                    Console.WriteLine("[AppDbContext] Created DownloadTasks table");
+                }
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"[AppDbContext] Failed to create DownloadTasks table: {ex.Message}");
+            }
+        }
 
     /// <summary>
     /// 添加缺失的列（如果不存在）
@@ -475,6 +517,20 @@ public class AppDbContext : DbContext
 
             entity.HasIndex(c => c.TmdbId);
             entity.HasIndex(c => c.Name);
+        });
+
+        // ==================== DownloadTask 实体配置 ====================
+        modelBuilder.Entity<DownloadTaskEntity>(entity =>
+        {
+            entity.ToTable("DownloadTasks");
+            entity.HasKey(t => t.Id);
+            entity.Property(t => t.Id).HasMaxLength(12).ValueGeneratedNever();
+            entity.Property(t => t.Name).IsRequired().HasMaxLength(500);
+            entity.Property(t => t.SourceUrl).IsRequired().HasMaxLength(2000);
+            entity.Property(t => t.SavePath).HasMaxLength(2000);
+            entity.Property(t => t.ErrorMessage).HasMaxLength(2000);
+            entity.HasIndex(t => t.Status);
+            entity.HasIndex(t => t.CreatedAt);
         });
     }
 }

@@ -4,12 +4,11 @@
         WindowStyle="None"
         AllowsTransparency="True"
         Background="#01000000"
-        Topmost="True"         x:Name="MainWindow"    
+        Topmost="False"         x:Name="MainWindow"    
         ShowActivated="True"  
         ShowInTaskbar="False"  xmlns:controls="clr-namespace:MovieAgent.D3D11Window" 
         WindowStartupLocation="Manual" 
-        MouseMove="Window_MouseMove"
-        KeyDown="Window_KeyDown">
+         KeyDown="Window_KeyDown">
     <Window.Resources>
         <!-- 圆角按钮样式 -->
         <Style x:Key="RoundedButtonStyle" TargetType="Button">
@@ -124,9 +123,8 @@
     </Window.Resources>
 
     <Grid x:Name="MainGrid" >
-        <controls:D3D11VideoRenderer     x:Name="VideoView"/>
-
-        <Popup x:Name="TopBarPopup" StaysOpen="True" Placement="Absolute"     IsOpen="True" 
+        <controls:D3D11VideoRenderer  MouseMove="Window_MouseMove"   x:Name="VideoView"/>
+         <Popup x:Name="TopBarPopup" StaysOpen="True" Placement="Absolute"     
 HorizontalOffset="0" VerticalOffset="0" Width="{Binding ActualWidth, ElementName=MainWindow}"
 AllowsTransparency="True" PopupAnimation="Fade">
             <!-- 顶部信息面板（直接显示） -->
@@ -138,6 +136,8 @@ Padding="10">
                         <ColumnDefinition Width="Auto"/>
                         <ColumnDefinition Width="*"/>
                         <ColumnDefinition Width="Auto"/>
+                        <ColumnDefinition Width="Auto"/>  
+
                     </Grid.ColumnDefinitions>
 
                     <StackPanel Grid.Column="0" Orientation="Vertical" Margin="10,5">
@@ -164,16 +164,20 @@ Padding="10">
                    FontWeight="Bold" VerticalAlignment="Center" ToolTip="当前解码方式"/>
                         </StackPanel>
                     </StackPanel>
+                    <StackPanel Orientation="Horizontal" Grid.Column="3">
+                        <Button Click="Min_Click" x:Name="Min" VerticalAlignment="Center"  Style="{StaticResource ControlButtonStyle}" >最小化</Button>
+                        <Button Click="Restore_Click" x:Name="Restore" VerticalAlignment="Center"  Style="{StaticResource ControlButtonStyle}" >还原</Button>
+
+                        <Button Click="CloseWindow_Click" x:Name="CloseWindow" VerticalAlignment="Center"  Style="{StaticResource ControlButtonStyle}" >关闭</Button>
+                    </StackPanel>
                 </Grid>
             </Border>
         </Popup>
-        <Popup x:Name="ControlsPopup" StaysOpen="True" Placement="Absolute"    IsOpen="True" 
+        <Popup x:Name="ControlsPopup" StaysOpen="True" Placement="Absolute"    
        HorizontalOffset="300" VerticalOffset="1000"  Width="{Binding ActualWidth, ElementName=MainWindow}"
 AllowsTransparency="True" PopupAnimation="Fade">
             <Grid>
                 <Grid.RowDefinitions>
-                    
-                    
                     <RowDefinition Height="Auto"/>
                     <RowDefinition Height="Auto"/>
                 </Grid.RowDefinitions>

@@ -11,16 +11,17 @@ public class ChatProviderFactory
     public static ModelConfig? CurrentConfig => _currentConfig;
 
     public static IChatProvider CreateProvider(ModelConfig config)
-    {
-        _currentConfig = config;
-
-        return config.ProviderType switch
         {
-            ModelProviderType.DeepSeek => new DeepSeekProvider(config.ApiKey, config.Name),
-            ModelProviderType.Ollama => new OllamaProvider(config.Endpoint, config.Name),
-            _ => new OllamaProvider(config.Endpoint, config.Name)
-        };
-    }
+            _currentConfig = config;
+
+            return config.ProviderType switch
+            {
+                ModelProviderType.DeepSeek => new DeepSeekProvider(config.ApiKey, config.Name),
+                ModelProviderType.Ollama => new OllamaProvider(config.Endpoint, config.Name),
+                ModelProviderType.LlamaCpp => new LlamaCppProvider(config.Endpoint),
+                _ => new OllamaProvider(config.Endpoint, config.Name)
+            };
+        }
 
     public static async Task<IChatProvider> InitializeProviderAsync(ModelConfig config)
     {
@@ -66,6 +67,14 @@ public class ChatProviderFactory
                 ProviderType = ModelProviderType.Ollama,
                 IsDefault = false
             },
+            new ModelConfig
+            {
+                Name = "Qwen2.5-3B-Instruct",
+                Endpoint = "http://localhost:8080",
+                ApiKey = "",
+                ProviderType = ModelProviderType.LlamaCpp,
+                IsDefault = false
+            }
             //new ModelConfig
             //{
             //    Name = "qwen2.5:3b",

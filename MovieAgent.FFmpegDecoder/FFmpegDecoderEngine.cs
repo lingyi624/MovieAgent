@@ -383,6 +383,7 @@ namespace MovieAgent.FFmpegDecoder
         private volatile bool _isSeeking;
         private volatile bool _isSeekingStabilizing = false;  // Seek后稳定期，暂时禁用同步丢弃逻辑
         private int _seekStabilizingFrameCount = 0;  // Seek后稳定期帧计数
+        private volatile bool _seekFirstFrameLogged = false;  // Seek后首帧日志是否已打印
 
         /// <summary>
         /// 当前帧的 D3D11VA NV12 纹理指针 (零拷贝用)
@@ -1249,6 +1250,7 @@ namespace MovieAgent.FFmpegDecoder
                 _isPaused = false;
                 _isSeeking = false;
                 _clockBase = 0;
+                _seekAudioPositionBytes = 0;
                 _clockStartTicks = Stopwatch.GetTimestamp();
                 _frameCount = 0;
                 _debugFrameSaved = false;
@@ -1368,11 +1370,29 @@ namespace MovieAgent.FFmpegDecoder
                                 continue;
                             }
 
+                            // ========== Seek稳定期：直接渲染前N帧，不丢弃，不检测跳变 ==========
+                            // 必须在所有其他同步逻辑之前，否则 diff>3 的跳变检测会拦截所有帧，
+                            // 导致 _seekStabilizingFrameCount 永远不递增，稳定期永不结束
+                            if (_isSeekingStabilizing)
+                            {
+                                _seekStabilizingFrameCount++;
+                                if (_seekStabilizingFrameCount >= 10)
+                                {
+                                    _isSeekingStabilizing = false;
+                                    audioOffsetInitialized = false; // 稳定期结束后重新对齐音频
+                                    DebugLogger.WriteLine($"[FFmpeg] Seek stabilizing period ended after {_seekStabilizingFrameCount} frames");
+                                }
+                                FrameDecoded?.Invoke(this, frame);
+                                continue;
+                            }
+
                             // ========== 正常播放模式：音画同步（只做必要的音频等待/丢帧） ==========
                             // 1. 初始化音频偏移（首次）
                             if (!audioOffsetInitialized)
                             {
-                                audioStartOffset = GetPlaybackClock();
+                                audioStartOffset = GetPlaybackClock() - frame.VideoTimestamp / 1000.0;  // ✅ 正确
+
+                                //audioStartOffset = GetPlaybackClock();
                                 audioOffsetInitialized = true;
                             }
 
@@ -3612,6 +3632,8 @@ namespace MovieAgent.FFmpegDecoder
         if (sub->num_rects <= 0) return;
 
         StringBuilder subtitleText = new StringBuilder();
+        // 用于保存 ASS 行以便后续解析时间
+        string lastAssLine = null;
 
         for (int i = 0; i < sub->num_rects; i++)
         {
@@ -3631,6 +3653,7 @@ namespace MovieAgent.FFmpegDecoder
                 string assLine = Marshal.PtrToStringUTF8((IntPtr)rect->ass);
                 if (!string.IsNullOrEmpty(assLine))
                 {
+                    lastAssLine = assLine;
                     text = ExtractAssText(assLine);
                 }
             }
@@ -3653,6 +3676,22 @@ namespace MovieAgent.FFmpegDecoder
             double startTime = ptsSeconds + sub->start_display_time / 1000.0;
             double endTime = ptsSeconds + sub->end_display_time / 1000.0;
 
+            // 修复：很多内嵌字幕（特别是 ASS/SSA）的 end_display_time 为 0 或小于等于 start_display_time，
+            // 导致字幕一闪而过。此时从 ASS 行中解析实际结束时间，或使用默认显示时长。
+            if (endTime <= startTime + 0.01)
+            {
+                double assDuration = TryParseAssDuration(lastAssLine, timeBase, pts);
+                if (assDuration > 0)
+                {
+                    endTime = startTime + assDuration;
+                }
+                else
+                {
+                    // 默认显示 3 秒
+                    endTime = startTime + 3.0;
+                }
+            }
+
             // 触发字幕解码事件
             SubtitleDecoded?.Invoke(this, new SubtitleData
             {
@@ -3661,6 +3700,70 @@ namespace MovieAgent.FFmpegDecoder
                 EndTime = endTime
             });
         }
+    }
+
+    /// <summary>
+    /// 从 ASS/SSA Dialogue 行中解析字幕持续时间（秒）。
+    /// ASS 格式: Dialogue: Layer,Start,End,Style,...
+    /// Start/End 格式: H:MM:SS.cc (百分之一秒)
+    /// </summary>
+    private double TryParseAssDuration(string assLine, double timeBase, long pts)
+    {
+        if (string.IsNullOrEmpty(assLine)) return 0;
+
+        try
+        {
+            int dialogueIdx = assLine.IndexOf("Dialogue:");
+            if (dialogueIdx < 0) return 0;
+
+            string content = assLine.Substring(dialogueIdx + 9);
+            string[] fields = content.Split(',');
+
+            // ASS 至少有 10 个字段：Layer,Start,End,Style,Name,MarginL,MarginR,MarginV,Effect,Text
+            if (fields.Length < 4) return 0;
+
+            // fields[1] = Start, fields[2] = End
+            double startSec = ParseAssTime(fields[1]);
+            double endSec = ParseAssTime(fields[2]);
+
+            if (endSec > startSec)
+            {
+                return endSec - startSec;
+            }
+        }
+        catch { }
+
+        return 0;
+    }
+
+    /// <summary>
+    /// 解析 ASS 时间格式 H:MM:SS.cc 为秒
+    /// </summary>
+    private double ParseAssTime(string timeStr)
+    {
+        if (string.IsNullOrEmpty(timeStr)) return 0;
+
+        try
+        {
+            // 格式: H:MM:SS.cc
+            string[] parts = timeStr.Trim().Split(':');
+            if (parts.Length == 3)
+            {
+                int hours = int.Parse(parts[0]);
+                int minutes = int.Parse(parts[1]);
+                double seconds = double.Parse(parts[2], System.Globalization.CultureInfo.InvariantCulture);
+                return hours * 3600 + minutes * 60 + seconds;
+            }
+            else if (parts.Length == 2)
+            {
+                int minutes = int.Parse(parts[0]);
+                double seconds = double.Parse(parts[1], System.Globalization.CultureInfo.InvariantCulture);
+                return minutes * 60 + seconds;
+            }
+        }
+        catch { }
+
+        return 0;
     }
 
     /// <summary>
@@ -3747,14 +3850,39 @@ namespace MovieAgent.FFmpegDecoder
                 Marshal.Copy(packetData.Data, 0, (IntPtr)pkt.data, packetData.Size);
 
                 int ret = ffmpeg.avcodec_send_packet(vCodecCtx, &pkt);
-                if (ret < 0) return;
+                if (ret < 0)
+                {
+                    if (_isSeekingStabilizing)
+                    {
+                        DebugLogger.WriteLine($"[FFmpeg] Seek恢复: avcodec_send_packet 失败 ret={ret}, PTS={packetData.PTS}");
+                    }
+                    return;
+                }
 
                 while (true)
                 {
                     ret = ffmpeg.avcodec_receive_frame(vCodecCtx, frm);
                     if (ret == ffmpeg.AVERROR(ffmpeg.EAGAIN) || ret == ffmpeg.AVERROR_EOF)
+                    {
+                        // Seek恢复期间记录前几次EAGAIN，便于诊断
+                        if (_isSeekingStabilizing && _seekFirstFrameLogged && _seekStabilizingFrameCount < 3)
+                        {
+                            DebugLogger.WriteLine($"[FFmpeg] Seek恢复: 解码器需要更多包 (EAGAIN), PTS={packetData.PTS}");
+                        }
                         break;
+                    }
                     if (ret < 0) break;
+
+                    // Seek恢复后收到第一帧，记录日志（仅一次）
+                    if (_isSeekingStabilizing && !_seekFirstFrameLogged)
+                    {
+                        double frame_pts_ms = frm->pts * _videoTimeBase;
+
+                        if (frame_pts_ms < _seekBaseTimeMs/1000-10) continue ;
+                        _seekFirstFrameLogged = true;
+                        bool isKeyframe = (pkt.flags & ffmpeg.AV_PKT_FLAG_KEY) != 0;
+                        DebugLogger.WriteLine($"[FFmpeg] Seek恢复: 收到第一帧 PTS={frm->pts * _videoTimeBase * 1000:F0}ms, 关键帧={isKeyframe}");
+                    }
 
                     // 更新时间戳（不强制修改）
                     if (frm->pts != ffmpeg.AV_NOPTS_VALUE)
@@ -4813,21 +4941,31 @@ namespace MovieAgent.FFmpegDecoder
                     if (fmtCtx == null)
                         return;
 
+                    var videoStream = fmtCtx->streams[_videoStreamIndex];
+
                     DebugLogger.WriteLine($"[FFmpeg] ExecuteSeekNow: position={position}s");
 
                     // 1. 清空显示队列，丢弃所有旧帧
                     while (_displayQueue.TryTake(out _)) ;
                     DebugLogger.WriteLine($"[FFmpeg] Display queue cleared after seek");
 
-                    // 2. 计算目标 PTS
-                    var videoStream = fmtCtx->streams[_videoStreamIndex];
-                    long targetPts = (long)(position / ffmpeg.av_q2d(videoStream->time_base));
+                    // 2. 使用 avformat_seek_file 进行更可靠的 seek（基于 AV_TIME_BASE 微秒）
+                    // avformat_seek_file 比 av_seek_frame 更精确地定位到关键帧
+                    long targetTs = (long)(position * ffmpeg.AV_TIME_BASE);
+                    long minTs = (long)(Math.Max(0, position-10) * ffmpeg.AV_TIME_BASE);
 
-                    int ret = ffmpeg.av_seek_frame(fmtCtx, _videoStreamIndex, targetPts, ffmpeg.AVSEEK_FLAG_BACKWARD);
+                    int ret = ffmpeg.avformat_seek_file(fmtCtx, -1, minTs, targetTs, targetTs, ffmpeg.AVSEEK_FLAG_BACKWARD);
                     if (ret < 0)
                     {
-                        DebugLogger.WriteLine($"[FFmpeg] av_seek_frame failed: {ret}");
-                        return;
+                        // 回退到 av_seek_frame
+                        long targetPts = (long)(position / ffmpeg.av_q2d(videoStream->time_base));
+                        ret = ffmpeg.av_seek_frame(fmtCtx, _videoStreamIndex, targetPts, ffmpeg.AVSEEK_FLAG_BACKWARD);
+                        if (ret < 0)
+                        {
+                            DebugLogger.WriteLine($"[FFmpeg] seek failed: avformat_seek_file and av_seek_frame both failed: {ret}");
+                            return;
+                        }
+                        DebugLogger.WriteLine($"[FFmpeg] avformat_seek_file failed, fallback to av_seek_frame succeeded");
                     }
 
                     // 3. 清空解码器缓冲区
@@ -4843,24 +4981,32 @@ namespace MovieAgent.FFmpegDecoder
                         ffmpeg.avcodec_flush_buffers(aCtx);
                     }
 
-                    // 4. 重置播放时钟（加锁）
+                    // 4. 清空音频播放缓冲区，避免旧音频数据继续播放导致音画不同步
+                    if (_audioBuffer != null)
+                    {
+                        _audioBuffer.ClearBuffer();
+                        DebugLogger.WriteLine("[FFmpeg] Audio buffer cleared after seek");
+                    }
+
+                    // 5. 重置播放时钟（加锁）
                     lock (_clockLock)
-                    { 
+                    {
                         _seekBaseTimeMs = (long)(position * 1000);
                         _clockBase = position;
                         _clockStartTicks = Stopwatch.GetTimestamp();
                         _isPaused = false;  // 强制退出暂停
-                        
+
                         // 记录Seek时的音频播放位置基准值
                         if (_audioOutput != null)
                         {
                             _seekAudioPositionBytes = _audioOutput.GetPosition();
                         }
-                    } 
+                    }
 
                     // 5. 设置Seek稳定期，暂时禁用同步丢弃逻辑
                     _isSeekingStabilizing = true;
                     _seekStabilizingFrameCount = 0;
+                    _seekFirstFrameLogged = false;
                     DebugLogger.WriteLine($"[FFmpeg] Seek stabilizing period started");
 
                     DebugLogger.WriteLine($"[FFmpeg] Seek completed to: {position}s, PTS offset set to: {_seekBaseTimeMs}ms");
@@ -5219,17 +5365,20 @@ namespace MovieAgent.FFmpegDecoder
                 {
                     var position = _audioOutput.GetPosition();          // 已提交的总字节数
                     var bytesPerSecond = _audioBuffer.WaveFormat?.AverageBytesPerSecond ?? 1;
-                    var submittedTime = (double)position / bytesPerSecond; // 总提交时长（包含缓冲）
+
+                    // 计算相对于Seek基准点的字节数，避免Seek后返回旧的累积位置
+                    double relativeBytes = position - _seekAudioPositionBytes;
+                    double relativeTime = relativeBytes / bytesPerSecond;
 
                     // 动态获取当前缓冲区中未播放的时长
                     double bufferDelay = _audioBuffer?.BufferedDuration.TotalSeconds ?? 0;
 
-                    // 实际硬件播放位置 = 提交时长 - 未播放缓冲时长
-                    return submittedTime - bufferDelay;
-                }
+                    // 实际播放位置 = Seek目标位置 + 相对提交时长 - 未播放缓冲时长
+                  return _clockBase + relativeTime - bufferDelay;
+                 }
             }
             catch { }
-            return 0;
+            return _clockBase;
         }
 
         /// <summary>

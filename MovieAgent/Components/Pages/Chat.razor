@@ -217,14 +217,14 @@
             else
             {
                 _messages.RemoveAt(_messages.Count - 1); // 移除"正在连接中"消息
-                _messages.Add(new ChatMessage { Text = "你好！我是你的电影管家小影，有什么可以帮你？", IsUser = false, Time = DateTime.Now });
+                _messages.Add(new ChatMessage { Text = "你好！我是你的电影管家小雪雪，有什么可以帮你？", IsUser = false, Time = DateTime.Now });
             }
         }
         else
         {
             if (_messages.Count == 0)
             {
-                _messages.Add(new ChatMessage { Text = "你好！我是你的电影管家小影，有什么可以帮你？", IsUser = false, Time = DateTime.Now });
+                _messages.Add(new ChatMessage { Text = "你好！我是你的电影管家小雪雪，有什么可以帮你？", IsUser = false, Time = DateTime.Now });
             }
         }
         StateHasChanged();
@@ -280,7 +280,7 @@
         if (success)
         {
            // _messages.Clear();
-            _messages.Add(new ChatMessage { Text = "AI 服务连接成功！你好！我是你的电影管家小影，有什么可以帮你？", IsUser = false, Time = DateTime.Now });
+            _messages.Add(new ChatMessage { Text = "AI 服务连接成功！你好！我是你的电影管家小雪雪，有什么可以帮你？", IsUser = false, Time = DateTime.Now });
         }
         else
         {

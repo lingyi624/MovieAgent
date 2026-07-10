@@ -41,7 +41,7 @@ public partial class ControlWindow : System.Windows.Window
     private string _currentDecoderName = string.Empty;
     private string _currentDecodeMode = "自动";
 
-     private Rect _normalVideoRect;
+    private Rect _normalVideoRect;
     private Rect _normalControlRect;
 
     // 去重调度（无锁）：用 Interlocked 操作 _pendingFrame 和 _renderScheduled
@@ -71,18 +71,17 @@ public partial class ControlWindow : System.Windows.Window
     private double _previousHeight;
     private double _previousLeft;
     private double _previousTop;
-
-  
+ 
 
     public ControlWindow()
-    { 
+    {
         var services = ((App)Application.Current).Services;
         _logger = services.GetRequiredService<ILoggerService>();
         _playerService = services.GetRequiredService<IPlayerService>();
         _subtitleService = services.GetService<ISubtitleService>();
 
         InitializeComponent();
- 
+
         // 订阅事件
         if (_playerService is LocalPlayerService localPlayer)
         {
@@ -94,8 +93,8 @@ public partial class ControlWindow : System.Windows.Window
         _playerService.FrameUpdated += OnFrameUpdated;
 
         // 初始化定时器
-        _hideControlsTimer = new DispatcherTimer { Interval = TimeSpan.FromSeconds(10) };
-         _hideControlsTimer.Tick += (s, e) => HideControls();
+        _hideControlsTimer = new DispatcherTimer { Interval = TimeSpan.FromSeconds(3) };
+        _hideControlsTimer.Tick += (s, e) => HideControls();
 
         // 设置窗口全屏透明覆盖
         // this.WindowState = WindowState.Maximized;
@@ -106,39 +105,33 @@ public partial class ControlWindow : System.Windows.Window
         //this.Topmost = true;
         //this.ShowActivated = false;
 
- 
-        var bWindow = Application.Current.Windows.OfType<SpriteWindow>().FirstOrDefault();
 
-        if (bWindow != null)
-        {
-            bWindow.Close();
-        }
+        
         // this.Background = new SolidColorBrush(Color.FromArgb(1, 0, 0, 0)); // ARGB: #01000000
-        ShowControls(); // 强制显示顶部和底部栏
- 
+
         this.Loaded += ControlWindow_Loaded;
     }
-    
+
     private void ControlWindow_Loaded(object sender, RoutedEventArgs e)
     {
         //MessageBox.Show("ControlWindow 已加载");
         this.LocationChanged += (s, e) => { if (!_isFullScreen) SyncControlPosition(); };
         this.SizeChanged += (s, e) => { if (!_isFullScreen) SyncControlPosition(); };
-     }
+    }
     private void SyncControlPosition()
     {
         this.Left = this.Left;
         this.Top = this.Top;
         this.Width = this.Width;
         this.Height = this.Height;
-       
+
     }
     public void PlayMovie(string filePath)
     {
         Dispatcher.Invoke(async () =>
         {
             try
-            { 
+            {
                 StopPlaybackInternal();
 
                 bool isFile = File.Exists(filePath);
@@ -192,7 +185,7 @@ public partial class ControlWindow : System.Windows.Window
                 _currentMovieTitle = Path.GetFileNameWithoutExtension(filePath);
                 if (string.IsNullOrEmpty(_currentMovieTitle))
                     _currentMovieTitle = Path.GetFileName(filePath);
-
+                this.Title = _currentMovieTitle;
                 if (_playerService != null)
                 {
                     _logger.Debug("[Player] 订阅 FrameUpdated 事件");
@@ -214,7 +207,7 @@ public partial class ControlWindow : System.Windows.Window
 
                     // 显示视频播放层，隐藏 Blazor WebView
                     _logger.Debug($"[Player] 切换到视频播放层");
-                 
+
                     // 切换到全屏
                     _logger.Debug($"[Player] 进入全屏模式");
                     EnterFullScreen();
@@ -234,7 +227,7 @@ public partial class ControlWindow : System.Windows.Window
 
                     _frameCount = 0;
                     _logger.Debug("[Player] ===== 播放流程初始化完成 ===== ");
-                    
+
                     UpdatePlayStatus();
 
                     ShowControls();
@@ -253,7 +246,7 @@ public partial class ControlWindow : System.Windows.Window
 
     private void EnterFullScreen()
     {
-        
+
         if (_isFullScreen) return;
 
         // 保存当前窗口状态
@@ -267,17 +260,17 @@ public partial class ControlWindow : System.Windows.Window
 
         // 正确的全屏模式：覆盖任务栏
         // 步骤：先恢复正常状态，再设置无边框，最后最大化
-        if (this.WindowState == WindowState.Normal) 
+        if (this.WindowState == WindowState.Normal)
             this.WindowState = WindowState.Maximized;
         this.WindowStyle = WindowStyle.None;
         this.ResizeMode = ResizeMode.NoResize;
-       // this.Topmost = true;
-       // this.ShowActivated = true;
+        // this.Topmost = true;
+        // this.ShowActivated = true;
         this.Left = 0;
         this.Top = 0;
-         this.Width = SystemParameters.PrimaryScreenWidth;
-         this.Height = SystemParameters.PrimaryScreenHeight;
-         _isFullScreen = true;
+        this.Width = SystemParameters.PrimaryScreenWidth;
+        this.Height = SystemParameters.PrimaryScreenHeight;
+        _isFullScreen = true;
         FullscreenButton.Content = "退出全屏";
         DebugLogger.WriteLine("进入全屏模式");
     }
@@ -285,8 +278,8 @@ public partial class ControlWindow : System.Windows.Window
     private void OnFrameUpdated(object? sender, FrameData frame)
     {
         _frameCount++;
-        if (_frameCount % 30 == 0)
-            _logger.Debug($"[Control] 第 {_frameCount} 帧");
+        // if (_frameCount % 30 == 0)
+        // _logger.Debug($"[Control] 第 {_frameCount} 帧");
 
         try
         {
@@ -457,7 +450,7 @@ public partial class ControlWindow : System.Windows.Window
                 var track = audioTracks[i];
                 // var codecName = !string.IsNullOrEmpty(track.Codec) ? track.Codec.ToUpper() : "Unknown";
                 //var channelInfo = track.Channels > 0 ? $"{track.Channels}频道" : "";
-                var displayText = (i + 1+"、") + track.Description;
+                var displayText = (i + 1 + "、") + track.Description;
                 //$"{(i + 1)}. {track.Language ?? "未知"} - {codecName}{(string.IsNullOrEmpty(channelInfo) ? "" : $"-{channelInfo}")}";
 
                 var button = new System.Windows.Controls.Button
@@ -581,7 +574,7 @@ public partial class ControlWindow : System.Windows.Window
                     _playerService?.SetSpuTrack(trackIndex);
 
                     // 如果切换到内部字幕，禁用外部字幕
-                    if (trackIndex >= 0 )
+                    if (trackIndex >= 0)
                     {
                         _subtitleUpdateTimer?.Stop();
                         _externalSubtitlePath = null;
@@ -816,7 +809,7 @@ public partial class ControlWindow : System.Windows.Window
         _progressTimer.Start();//用来更新播放器文字信息
     }
 
- 
+
     private void UpdateProgress()
     {
         if (_playerService == null || !_playerService.IsPlaying) return;
@@ -865,7 +858,7 @@ public partial class ControlWindow : System.Windows.Window
             return $"{time.Hours:D2}:{time.Minutes:D2}:{time.Seconds:D2}";
         return $"{time.Minutes:D2}:{time.Seconds:D2}";
     }
-    
+
     private void ToggleFullScreen()
     {
         if (_isFullScreen)
@@ -985,7 +978,7 @@ public partial class ControlWindow : System.Windows.Window
             _subtitleHideTimer.Start();
         });
     }
- 
+
     private void UseSystemPlayerForCurrentFile()
     {
         if (string.IsNullOrEmpty(_currentPlayingFilePath))
@@ -1008,7 +1001,7 @@ public partial class ControlWindow : System.Windows.Window
             System.Diagnostics.Process.Start(psi);
 
             // 隐藏视频播放层
-          
+
             // 退出全屏
             ExitFullScreen();
         }
@@ -1021,12 +1014,8 @@ public partial class ControlWindow : System.Windows.Window
 
     private void ExitFullScreen()
     {
-        if (!_isFullScreen) return;
+        if (!_isFullScreen) return;    
 
-        // 恢复窗口样式
-        if (this.WindowState == WindowState.Maximized)
-            this.WindowState = WindowState.Normal;
-   
         this.WindowStyle = _previousWindowStyle;
         this.ResizeMode = ResizeMode.CanResize;
         this.Topmost = _previousTopmost;
@@ -1038,49 +1027,73 @@ public partial class ControlWindow : System.Windows.Window
         this.Top = area.Top;
         this.Width = area.Width;
         this.Height = area.Height;
-       // this.WindowState = WindowState.Maximized;
-
+        // this.WindowState = WindowState.Maximized;
+        // 恢复窗口样式
+        if (this.WindowState == WindowState.Maximized)
+            this.WindowState = WindowState.Normal;
         _isFullScreen = false;
         FullscreenButton.Content = "全屏";
         DebugLogger.WriteLine("退出全屏模式");
 
-        
-    }
 
+    }
     private void ShowControls()
-    {
-        
+    { 
         ControlsPopup.IsOpen = true;
         TopBarPopup.IsOpen = true;
-        TopBarPopup.Visibility = Visibility.Visible;
-        TopBar.Visibility = Visibility.Visible;
-        BottomBar.Visibility = Visibility.Visible;
-        ControlsPopup.Visibility=Visibility.Visible;
-        _hideControlsTimer?.Stop();
-        _hideControlsTimer?.Start();
+        //TopBarPopup.Visibility = Visibility.Visible;
+        //TopBar.Visibility = Visibility.Visible;
+        //BottomBar.Visibility = Visibility.Visible;
+       // ControlsPopup.Visibility = Visibility.Visible;
+       // _hideControlsTimer?.Stop();
+        //_hideControlsTimer?.Start();
 
-        //壁纸时间复位
-        var bWindow = Application.Current.Windows.OfType<SpriteWindow>().FirstOrDefault();
 
-        if (bWindow != null)
-        {
-            bWindow.Close();
-        }
     }
 
     private void HideControls()
     {
+        //_logger.Debug($"[Player] TopBarPopup.IsOpen={TopBarPopup.IsOpen}");
+
         // 不能关闭 Popup（IsOpen=false），否则鼠标事件无法穿透到下面的 VideoRenderer
         // 保持 Popup 打开，只隐藏内部控件内容
-        AudioPopup.IsOpen = false;
-        SpeedPopup.IsOpen = false;
-        SubtitlePopup.IsOpen = false;
-        InfoPopup.IsOpen = false;
-        TopBar.Visibility = Visibility.Collapsed;
-        BottomBar.Visibility = Visibility.Collapsed;
-    }
 
-    private void Window_MouseMove(object sender, MouseEventArgs e) => ShowControls();
+        // AudioPopup.IsOpen = false;
+        // SpeedPopup.IsOpen = false;
+        // SubtitlePopup.IsOpen = false;
+        // InfoPopup.IsOpen = false;
+        //TopBar.Visibility = Visibility.Collapsed;
+        // BottomBar.Visibility = Visibility.Collapsed;
+        _isClosingPopup = true;  // 1. 先锁住
+
+        TopBarPopup.IsOpen = false;
+        ControlsPopup.IsOpen = false;
+        // ControlsPopup.Visibility = Visibility.Collapsed;
+
+        //TopBarPopup.Visibility = Visibility.Collapsed;
+
+        // 2. 延迟 200 毫秒解锁（等待界面渲染稳定，避免触发 MouseMove）
+        DispatcherTimer unlockTimer = new DispatcherTimer
+        {
+            Interval = TimeSpan.FromMilliseconds(200)
+        };
+        unlockTimer.Tick += (s, e) =>
+        {
+            _isClosingPopup = false;
+            unlockTimer.Stop();
+        };
+        unlockTimer.Start();
+    }
+    private bool _isClosingPopup = false;
+
+    private void Window_MouseMove(object sender, MouseEventArgs e)
+    {
+        if (_isClosingPopup) return; // 如果是正在关闭，直接忽略这次移动
+
+        _hideControlsTimer?.Stop();
+        _hideControlsTimer?.Start();
+        ShowControls();
+    }
 
 
     public ID3D11Device? GetDevice()
@@ -1214,8 +1227,7 @@ public partial class ControlWindow : System.Windows.Window
         {
             PausePlayback();
         }
-        ShowControls();
-    }
+     }
 
     private void StopButton_Click(object sender, RoutedEventArgs e)
     {
@@ -1225,7 +1237,7 @@ public partial class ControlWindow : System.Windows.Window
     private void FullscreenButton_Click(object sender, RoutedEventArgs e)
     {
         ToggleFullScreen();
-        ShowControls();
+        //ShowControls();
     }
 
     private void ProgressSlider_ValueChanged(object sender, RoutedPropertyChangedEventArgs<double> e)
@@ -1310,32 +1322,7 @@ public partial class ControlWindow : System.Windows.Window
     }
 
  
-    private void ShowControls2()
-    {
-        //if (VideoOverlay.Visibility == Visibility.Visible)
-        {
-            // 全屏模式下只显示底部控制栏，非全屏模式下显示顶部和底部控制栏
-            if (!_isFullScreen)
-            {
-                TopBar.Visibility = Visibility.Visible;
-            }
-            BottomBar.Visibility = Visibility.Visible;
-
-            // ControlsPopup.IsOpen = true;
-            // 强制隐藏所有可能覆盖在视频上的 WPF 控件
-            //ControlsPopup.IsOpen = false;
-            //AudioPopup.IsOpen = false;
-            //SpeedPopup.IsOpen = false;
-            //SubtitlePopup.IsOpen = false;
-            //InfoPopup.IsOpen = false;
-            //TopBar.Visibility = Visibility.Collapsed;
-            //BottomBar.Visibility = Visibility.Collapsed;
-            //SubtitleTextBlock.Visibility = Visibility.Collapsed;
-
-            _hideControlsTimer?.Stop();
-            _hideControlsTimer?.Start();
-        }
-    }
+     
 
     private void Window_KeyDown(object sender, System.Windows.Input.KeyEventArgs e)
     {
@@ -1910,6 +1897,31 @@ public partial class ControlWindow : System.Windows.Window
             _playerService.FrameUpdated -= OnFrameUpdated;
             _ = _playerService.StopAsync();
         }
-        base.OnClosed(e);
+         base.OnClosed(e);
     }
+
+    private void Min_Click(object sender, RoutedEventArgs e)
+    {
+        //最小化
+        this.WindowState=WindowState.Minimized;
+    }
+
+ 
+
+ 
+
+    private void CloseWindow_Click(object sender, RoutedEventArgs e)
+    {
+        //关闭
+        this.Close();
+    }
+
+    private void Restore_Click(object sender, RoutedEventArgs e)
+    {
+        //还原
+        this.WindowState = WindowState.Normal;
+
+    }
+
+   
 }

@@ -13,6 +13,7 @@ using NAudio.Gui;
 using System;
 using System.IO;
 using System.Management;
+using System.Runtime.InteropServices;
 using System.Text;
 using System.Windows;
 using System.Windows.Controls;
@@ -27,10 +28,25 @@ namespace MovieAgent;
 
 public partial class MainWindow : Window
 {
+    // Win32 API：获取系统最后一次输入时间，用于检测全局鼠标/键盘空闲
+    [DllImport("user32.dll")]
+    private static extern bool GetLastInputInfo(ref LASTINPUTINFO plii);
+
+    [StructLayout(LayoutKind.Sequential)]
+    private struct LASTINPUTINFO
+    {
+        public uint cbSize;
+        public uint dwTime;
+    }
     private IPlayerService? _playerService;
     private readonly ILoggerService _logger;
     private string _currentIsoMountPoint;
     private string _currentPlayingFilePath;
+    private DispatcherTimer? _checkTimer;
+    private DispatcherTimer? _switchTimer;
+    private const int IdleMinutes = 1;
+    private bool _isWallpaperVisible = false;
+    private MovieWallpaperWindow _movieWallpaperWindow;
 
     public MainWindow()
     {
@@ -74,7 +90,8 @@ public partial class MainWindow : Window
             // 订阅PlaybackRequestedByBlazor事件，当Blazor请求播放时显示视频overlay
             _playerService.PlaybackRequestedByBlazor += OnPlaybackRequestedByBlazor;
             Console.WriteLine("[MainWindow] 已订阅 PlaybackRequestedByBlazor 事件");
-        
+            _movieWallpaperWindow = new MovieWallpaperWindow();
+            InitializeTimers();//壁纸初始化定时器
         }
         catch (Exception ex)
         {
@@ -85,6 +102,93 @@ public partial class MainWindow : Window
 
         Console.WriteLine($"[MainWindow] 构造函数完成,线程id:{Thread.CurrentThread.ManagedThreadId}");
         //TestDirectImage();
+    }
+    private void InitializeTimers()
+    {
+        // 获取 IPlayerService 引用，用于检测视频播放状态
+ 
+        // 检测定时器：每秒检查视频播放状态和系统空闲时间
+        _checkTimer = new DispatcherTimer
+        {
+            Interval = TimeSpan.FromMinutes(IdleMinutes)
+        };
+        _checkTimer.Tick += CheckTimer_Tick;
+        _checkTimer.Start();
+
+     
+    }
+    private void CheckTimer_Tick(object? sender, EventArgs e)
+    {
+        _isWallpaperVisible = true;
+        // 1. 视频正在播放 → 隐藏壁纸
+        if (_playerService != null && _playerService.IsPlaying)
+        {
+            if (_isWallpaperVisible)
+            {
+                HideWallpaper();
+            }
+            return;
+        }
+
+        // 2. 鼠标或键盘在使用（系统空闲时间 < 5分钟）→ 隐藏壁纸
+        uint idleMs = GetSystemIdleTimeMs();
+        if (idleMs < (uint)(IdleMinutes * 60 * 1000))
+        {
+            if (_isWallpaperVisible)
+            {
+                HideWallpaper();
+            }
+            return;
+        }
+        else
+        {
+            _isWallpaperVisible = false;
+        }
+
+        // 3. 空闲超过5分钟且无视频播放 → 显示壁纸
+        if (!_isWallpaperVisible)
+        {
+            ShowWallpaper();
+        }
+    }
+
+ 
+
+    /// <summary>
+    /// 获取系统空闲时间（毫秒），从最后一次鼠标/键盘输入算起
+    /// </summary>
+    private uint GetSystemIdleTimeMs()
+    {
+        LASTINPUTINFO info = new LASTINPUTINFO();
+        info.cbSize = (uint)Marshal.SizeOf(info);
+        if (GetLastInputInfo(ref info))
+        {
+            uint now = (uint)Environment.TickCount;
+            return now - info.dwTime;
+        }
+        return 0;
+    }
+
+    private void ShowWallpaper()
+    {
+        _isWallpaperVisible = true;
+         if (_movieWallpaperWindow != null)
+        {
+            _movieWallpaperWindow.Show();
+            _movieWallpaperWindow.Activate();
+        }
+            _switchTimer?.Start();
+    }
+
+    private void HideWallpaper()
+    {
+        _isWallpaperVisible = false;
+         if (_movieWallpaperWindow != null)
+        {
+            _movieWallpaperWindow.Hide();
+            _movieWallpaperWindow.Activate();
+        }
+        _switchTimer?.Stop();
     }
 
     private void LoadWindowIcon()
@@ -411,6 +515,7 @@ public partial class MainWindow : Window
             }
 
             _logger.Debug("[MainWindow] 所有资源已释放");
+            
         }
         catch (Exception ex)
         {

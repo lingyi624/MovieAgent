@@ -16,11 +16,8 @@ public partial class MovieWallpaperWindow : System.Windows.Window
     private int _currentIndex = 0;
     private List<MovieWallpaperData> _movieWallpapers = new();
     private DispatcherTimer? _checkTimer;
-    private DispatcherTimer? _switchTimer;
-    private const int IdleMinutes = 5;
-    private bool _isWallpaperVisible = false;
-    private IPlayerService? _playerService;
-
+    private const int IdleSeconds = 30;
+ 
     // Win32 API：获取系统最后一次输入时间，用于检测全局鼠标/键盘空闲
     [DllImport("user32.dll")]
     private static extern bool GetLastInputInfo(ref LASTINPUTINFO plii);
@@ -46,76 +43,32 @@ public partial class MovieWallpaperWindow : System.Windows.Window
         InitializeComponent();
         InitializeMovieData();
         ShowCurrentMovie();
-        InitializeTimers();
-        // 启动时隐藏壁纸窗口
-        this.Hide();
+        InitializeTimers(); 
     }
+
 
     private void InitializeTimers()
     {
         // 获取 IPlayerService 引用，用于检测视频播放状态
-        try
-        {
-            var serviceProvider = ((App)Application.Current).Services;
-            _playerService = serviceProvider.GetService<IPlayerService>();
-        }
-        catch { }
 
         // 检测定时器：每秒检查视频播放状态和系统空闲时间
         _checkTimer = new DispatcherTimer
         {
-            Interval = TimeSpan.FromSeconds(1)
+            Interval = TimeSpan.FromSeconds(IdleSeconds)
         };
         _checkTimer.Tick += CheckTimer_Tick;
         _checkTimer.Start();
 
-        // 切换定时器：壁纸显示后每5分钟切换一次
-        _switchTimer = new DispatcherTimer
-        {
-            Interval = TimeSpan.FromMinutes(IdleMinutes)
-        };
-        _switchTimer.Tick += SwitchTimer_Tick;
+
     }
 
     private void CheckTimer_Tick(object? sender, EventArgs e)
     {
-        // 1. 视频正在播放 → 隐藏壁纸
-        if (_playerService != null && _playerService.IsPlaying)
-        {
-            if (_isWallpaperVisible)
-            {
-                HideWallpaper();
-            }
-            return;
-        }
-
-        // 2. 鼠标或键盘在使用（系统空闲时间 < 5分钟）→ 隐藏壁纸
-        uint idleMs = GetSystemIdleTimeMs();
-        if (idleMs < (uint)(IdleMinutes * 60 * 1000))
-        {
-            if (_isWallpaperVisible)
-            {
-                HideWallpaper();
-            }
-            return;
-        }
-
-        // 3. 空闲超过5分钟且无视频播放 → 显示壁纸
-        if (!_isWallpaperVisible)
-        {
-            ShowWallpaper();
-        }
+        _currentIndex = (_currentIndex + 1) % _movieWallpapers.Count;
+        FadeTransition(ShowCurrentMovie);
     }
 
-    private void SwitchTimer_Tick(object? sender, EventArgs e)
-    {
-        // 只有壁纸显示时才切换
-        if (_isWallpaperVisible)
-        {
-            _currentIndex = (_currentIndex + 1) % _movieWallpapers.Count;
-            FadeTransition(ShowCurrentMovie);
-        }
-    }
+
 
     /// <summary>
     /// 获取系统空闲时间（毫秒），从最后一次鼠标/键盘输入算起
@@ -132,19 +85,7 @@ public partial class MovieWallpaperWindow : System.Windows.Window
         return 0;
     }
 
-    private void ShowWallpaper()
-    {
-        _isWallpaperVisible = true;
-        this.Show();
-        _switchTimer?.Start();
-    }
-
-    private void HideWallpaper()
-    {
-        _isWallpaperVisible = false;
-        this.Hide();
-        _switchTimer?.Stop();
-    }
+    
 
     private void InitializeMovieData()
     {
@@ -282,7 +223,10 @@ public partial class MovieWallpaperWindow : System.Windows.Window
         _currentIndex = (_currentIndex + 1) % _movieWallpapers.Count;
         FadeTransition(ShowCurrentMovie);
     }
-
+    private void HideWallpaper()
+    { 
+        this.Hide();
+    }
     private void CloseButton_Click(object sender, RoutedEventArgs e)
     {
         HideWallpaper();
@@ -291,7 +235,7 @@ public partial class MovieWallpaperWindow : System.Windows.Window
     private void Window_MouseDown(object sender, System.Windows.Input.MouseButtonEventArgs e)
     {
         // 鼠标点击壁纸 → 隐藏（用户有操作）
-        HideWallpaper();
+      //  HideWallpaper();
     }
 
     private void Window_KeyDown(object sender, System.Windows.Input.KeyEventArgs e)

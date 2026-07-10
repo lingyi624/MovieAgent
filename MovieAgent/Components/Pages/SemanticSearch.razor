@@ -5,6 +5,7 @@
 @inject IPlayerService PlayerService
 @inject NavigationManager NavigationManager
 @implements IAsyncDisposable
+@inject ILlamaCppEmbeddingService _llamaCppEmbeddingService
 
 <PageTitle>语义搜索</PageTitle>
 
@@ -148,7 +149,7 @@
     }
 </MudContainer>
 
-@code {
+    @code {
     private enum SearchMode
     {
         Hybrid,
@@ -221,18 +222,18 @@
     private async Task<List<Movie>> SearchVectorWithKeywordSplit(string query, int topK)
     {
         var keywords = SplitKeywords(query);
-        
+
         if (keywords.Count > 1)
         {
             Console.WriteLine($"[SemanticSearch] Vector search split '{query}' into {keywords.Count} keywords");
             var allVectorResults = new List<VectorSearchResult>();
-            
+
             foreach (var keyword in keywords)
             {
                 var results = await VectorDb.SearchAsync(keyword, topK * 2);
                 allVectorResults.AddRange(results);
             }
-            
+
             // 按相似度排序并去重
             var sortedResults = allVectorResults
                 .GroupBy(r => r.MovieId)
@@ -240,20 +241,20 @@
                 .OrderByDescending(r => r.Similarity)
                 .Take(topK)
                 .ToList();
-            
+
             var movieIds1 = sortedResults.Select(r => r.MovieId).ToList();
             var allMovies1 = await MovieRepo.GetAllAsync();
-            
+
             return movieIds1
                 .Join(allMovies1, id => id, movie => movie.Id, (id, movie) => movie)
                 .Distinct()
                 .ToList();
         }
-        
+
         var vectorResults = await VectorDb.SearchAsync(query, topK);
         var movieIds = vectorResults.Select(r => r.MovieId).ToList();
         var allMovies = await MovieRepo.GetAllAsync();
-        
+
         return movieIds
             .Join(allMovies, id => id, movie => movie.Id, (id, movie) => movie)
             .Distinct()
@@ -266,25 +267,25 @@
     private async Task<List<Movie>> SearchKeywordWithSplit(string query)
     {
         var keywords = SplitKeywords(query);
-        
+
         if (keywords.Count > 1)
         {
             Console.WriteLine($"[SemanticSearch] Keyword search split '{query}' into {keywords.Count} keywords");
             var allResults = new List<Movie>();
-            
+
             foreach (var keyword in keywords)
             {
                 var results = await MovieRepo.SearchAsync(keyword);
                 allResults.AddRange(results);
             }
-            
+
             // 去重并保持首次出现顺序
             return allResults
                 .GroupBy(m => m.Id)
                 .Select(g => g.First())
                 .ToList();
         }
-        
+
         return await MovieRepo.SearchAsync(query);
     }
 
@@ -531,7 +532,9 @@
                 try
                 {
                     var text = BuildEmbeddingText(m);
-                    var vector = await VectorDb.GenerateEmbeddingAsync(text);
+                    if (!_llamaCppEmbeddingService.IsAvailable) return;
+                    var vector = await _llamaCppEmbeddingService.GenerateEmbeddingAsync(text);
+                   // await VectorDb.GenerateEmbeddingAsync(text);
                     if (vector != null && vector.Length > 0)
                     {
                         await VectorDb.AddMovieAsync(m.Id, vector, m.Title, m.Overview);

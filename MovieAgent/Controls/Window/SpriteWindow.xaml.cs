@@ -26,9 +26,6 @@ public partial class SpriteWindow : System.Windows.Window
     private Point _dragStartPoint;
     private Point _windowStartPoint;
     
-    private DispatcherTimer _idleTimer;
-    private const int IdleMinutes = 5;
-    private MovieWallpaperWindow? _wallpaperWindow;
 
     public SpriteState CurrentState
     {
@@ -67,45 +64,13 @@ public partial class SpriteWindow : System.Windows.Window
         
 
         
-        InitializeIdleTimer();
     }
     
-    private void InitializeIdleTimer()
-    {
-        _idleTimer = new DispatcherTimer
-        {
-            Interval = TimeSpan.FromMinutes(IdleMinutes)
-        };
-        _idleTimer.Tick += IdleTimer_Tick;
-        _idleTimer.Start();
-    }
     
-    public void ResetIdleTimer()
-    {
-        _idleTimer.Stop();
-        _idleTimer.Start();
-    }
     
-    private void IdleTimer_Tick(object? sender, EventArgs e)
-    {
-        ShowWallpaper();
-    }
+     
     
-    private void ShowWallpaper()
-    {
-        if (_wallpaperWindow == null || !_wallpaperWindow.IsVisible)
-        {
-            _wallpaperWindow = new MovieWallpaperWindow();
-            _wallpaperWindow.Closed += WallpaperWindow_Closed;
-            _wallpaperWindow.Show();
-        }
-    }
     
-    private void WallpaperWindow_Closed(object? sender, EventArgs e)
-    {
-        _wallpaperWindow = null;
-        ResetIdleTimer();
-    }
 
     private void LoadPosition()
     {
@@ -285,8 +250,7 @@ public partial class SpriteWindow : System.Windows.Window
 
     private void OnMouseDown(object sender, MouseButtonEventArgs e)
         {
-            ResetIdleTimer();
-            
+             
             if (e.LeftButton == MouseButtonState.Pressed)
             {
                 _isDragging = true;
@@ -307,8 +271,7 @@ public partial class SpriteWindow : System.Windows.Window
 
     private void OnMouseMove(object sender, MouseEventArgs e)
     {
-        ResetIdleTimer();
-        
+         
         if (_isDragging)
         {
             var currentPoint = e.GetPosition(null);
@@ -345,8 +308,7 @@ public partial class SpriteWindow : System.Windows.Window
     
     private void OnMouseEnter(object sender, MouseEventArgs e)
     {
-        ResetIdleTimer();
-        
+         
         if (_currentState == SpriteState.Sleeping)
         {
             CurrentState = SpriteState.Idle;
@@ -387,7 +349,7 @@ public partial class SpriteWindow : System.Windows.Window
     private void HideSprite_Click(object sender, RoutedEventArgs e)
     {
         ContextMenuPopup.IsOpen = false;
-        Hide();
+        Close();
     }
 
     
