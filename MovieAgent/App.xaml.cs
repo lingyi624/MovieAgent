@@ -150,7 +150,7 @@ public partial class App : Application
            services.AddSingleton<IMovieDownloadService, MovieDownloadService>();
 
             // 配置和备份服务
-            var configDir = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "MovieAgent", "Config");
+            var configDir = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "MovieAgent", "Config");
             services.AddSingleton<IConfigStorageService>(new ConfigStorageService(configDir));
             
             var backupDir = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "MovieAgent", "Backups");

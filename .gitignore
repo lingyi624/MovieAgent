@@ -34,3 +34,7 @@
 /MovieAgent.FFmpegDecoder/bin/Release/net10.0
 /MovieAgent.Tests/bin/Release/net10.0-windows/cs
 /MovieAgent.Tests/bin/Release/net10.0-windows
+/InspectStruct/bin/Debug/net10.0
+/InspectStruct/obj
+/reflect/bin/Debug/net8.0
+/reflect/obj
