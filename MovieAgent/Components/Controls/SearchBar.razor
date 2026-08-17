@@ -3,7 +3,7 @@
 @inject ILocalizationService LocalizationService
 @inject IJSRuntime JSRuntime
 
-<div style="display: flex; align-items: center; gap: 8px;">
+<div style="display: flex; align-items: center; gap: 12px; width: 100%; max-width: 480px; margin: 0 auto;">
     <MudTextField T="string" 
                   @bind-Value="_searchText"
                   Placeholder="@LocalizationService.Translate("SearchPlaceholder")"
@@ -25,9 +25,9 @@
 </div>
 
 <MudPopover @bind-open="_showSearchPanel" 
-            AnchorOrigin="Origin.BottomRight" 
-            TransformOrigin="Origin.TopRight"
-            Style="width: 500px; max-height: 60vh; overflow-y: auto; margin-top: 8px;z-index:999"
+            AnchorOrigin="Origin.BottomCenter" 
+            TransformOrigin="Origin.TopCenter"
+            Style="width: 480px; max-height: 60vh; overflow-y: auto; margin-top: 6px; z-index:999"
             CloseOnClickOutside="true"
             @onclick:stopPropagation>
     <MudCard Elevation="8" Style="@CardStyle">
@@ -107,15 +107,15 @@
     }
 
     private string TextFieldStyle => _isDark
-        ? "width: 350px; background: rgba(255,255,255,0.08); border-radius: 20px; border: 1px solid rgba(255,255,255,0.1);"
-        : "width: 350px; background: rgba(0,0,0,0.05); border-radius: 20px; border: 1px solid rgba(0,0,0,0.1);";
+        ? "width: 100%; background: rgba(255,255,255,0.06); border-radius: 22px; border: 1px solid rgba(233,69,96,0.15);"
+        : "width: 100%; background: rgba(0,0,0,0.04); border-radius: 22px; border: 1px solid rgba(0,0,0,0.1);";
 
     private string InputStyle => _isDark
         ? "color: white; font-size: 13px;"
         : "color: #333; font-size: 13px;";
 
     private string CardStyle => _isDark
-        ? "background: #1A1A2E; color: white;"
+        ? "background: #0E0E1E; color: white; border: 1px solid rgba(233,69,96,0.12);"
         : "background: #FFFFFF; color: #333;";
 
     private string ListItemStyle => _isDark

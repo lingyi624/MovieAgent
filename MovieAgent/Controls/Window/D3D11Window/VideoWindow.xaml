@@ -13,10 +13,6 @@
     <Grid>
         <!-- 视频渲染控件，自动填满 -->
         <controls:D3D11VideoRenderer x:Name="VideoView"/>
-
-        <!-- 叠加的 UI 控件（空域问题见后） -->
-        <Button Content="播放" Width="80" Height="30"
-                HorizontalAlignment="Right" VerticalAlignment="Top" Margin="10"
-                Click="Play_Click"/>
+ 
     </Grid>
 </Window>

@@ -1,5 +1,6 @@
  using MovieAgent.Core.Interfaces;
 using MovieAgent.FFmpegDecoder;
+using Microsoft.Extensions.Configuration;
 using System;
 using System.Collections.Generic;
 using System.Diagnostics;
@@ -22,6 +23,7 @@ namespace MovieAgent.Infrastructure.Services
         #region 字段
 
         private readonly ILoggerService _logger;
+        private readonly IConfiguration _configuration;
         private FFmpegDecoderEngine? _decoder;
         private ID3D11Device? _d3d11Device;
         private IDirect3DDevice9Ex? _d3d9Device;
@@ -29,6 +31,7 @@ namespace MovieAgent.Infrastructure.Services
         private string? _currentRequestedFilePath;
         private bool _playbackRequestedByBlazor;
         private ID3D12Device? _d3d12Device;
+        private IntPtr _d3d12CommandQueuePtr; // 渲染器命令队列指针，PlayAsync 创建新解码器后转发
 
         #endregion
 
@@ -54,6 +57,12 @@ namespace MovieAgent.Infrastructure.Services
         public int VideoWidth => _decoder?.VideoWidth ?? 0;
 
         public int VideoHeight => _decoder?.VideoHeight ?? 0;
+
+        public bool IsDolbyVision => _decoder?.IsDolbyVision ?? false;
+
+        public bool IsIctcpInput => _decoder?.IsIctcpInput ?? false;
+
+        public DoviRenderMetadata? DoviMetadata => _decoder?.DoviMetadata;
 
         public int AudioTrackCount => _decoder?.GetAudioTracks()?.Count ?? 0;
 
@@ -89,6 +98,12 @@ namespace MovieAgent.Infrastructure.Services
         {
             _d3d12Device = d3d12Device;
         }
+        public void SetD3d12CommandQueue(IntPtr commandQueuePtr)
+        {
+            // 存储指针，PlayAsync 创建新解码器后转发（PlayAsync 会销毁旧解码器）
+            _d3d12CommandQueuePtr = commandQueuePtr;
+            _decoder?.SetD3d12CommandQueue(commandQueuePtr);
+        }
         #endregion
 
         #region 事件
@@ -111,9 +126,10 @@ namespace MovieAgent.Infrastructure.Services
 
         #region 构造函数
 
-        public LocalPlayerService(ILoggerService logger)
+        public LocalPlayerService(ILoggerService logger, IConfiguration configuration)
         {
-            _logger = logger; 
+            _logger = logger;
+            _configuration = configuration;
         }
 
         #endregion
@@ -153,8 +169,10 @@ namespace MovieAgent.Infrastructure.Services
                 _logger.Debug("[LocalPlayer] 创建 FFmpegDecoderEngine 实例...");
                 try
                 {
-                    _decoder = new FFmpegDecoderEngine(DecodeMode.Auto,D3DMode.D3D11);
-                     _logger.Debug("[LocalPlayer] FFmpegDecoderEngine 实例创建成功");
+                    var decodeMode = ParseDecodeMode(_configuration["Decode:DecodeMode"]);
+                    var d3dMode = ParseD3DMode(_configuration["Decode:D3DMode"]);
+                    _decoder = new FFmpegDecoderEngine(decodeMode, d3dMode);
+                    _logger.Debug("[LocalPlayer] FFmpegDecoderEngine 实例创建成功, DecodeMode={Mode}, D3DMode={D3D}", decodeMode, d3dMode);
                     if (_decoder.CurrentD3dModel == D3DMode.D3D9)
                     {
                         _decoder.SetD3d9dDevice(_d3d9Device);
@@ -164,8 +182,12 @@ namespace MovieAgent.Infrastructure.Services
 
                         _decoder.SetD311dDevice(_d3d11Device);
                     } else if (_decoder.CurrentD3dModel == D3DMode.D3D12)
-                    { 
-                        _decoder.SetD3d12dDevice(_d3d12Device); 
+                    {
+                        _decoder.SetD3d12dDevice(_d3d12Device);
+                        if (_d3d12CommandQueuePtr != IntPtr.Zero)
+                        {
+                            _decoder.SetD3d12CommandQueue(_d3d12CommandQueuePtr);
+                        }
                     }
                 }
                 catch (Exception ex)
@@ -396,8 +418,28 @@ namespace MovieAgent.Infrastructure.Services
 
         private void OnSubtitleDecoded(object? sender, SubtitleData subtitle)
         {
-            _logger.Debug($"[LocalPlayer] Subtitle decoded: {subtitle.Text}");
+           // _logger.Debug($"[LocalPlayer] Subtitle decoded: {subtitle.Text}");
             SubtitleDecoded?.Invoke(this, subtitle);
+        }
+
+        private static DecodeMode ParseDecodeMode(string? value)
+        {
+            return value?.ToLower() switch
+            {
+                "hardware" => DecodeMode.Hardware,
+                "software" => DecodeMode.Software,
+                _ => DecodeMode.Auto
+            };
+        }
+
+        private static D3DMode ParseD3DMode(string? value)
+        {
+            return value?.ToUpper() switch
+            {
+                "D3D9" => D3DMode.D3D9,
+                "D3D12" => D3DMode.D3D12,
+                _ => D3DMode.D3D11
+            };
         }
 
         #endregion

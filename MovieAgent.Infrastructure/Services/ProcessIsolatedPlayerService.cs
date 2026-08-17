@@ -1,5 +1,6 @@
 using MovieAgent.Core.Interfaces;
 using MovieAgent.FFmpegDecoder;
+using Microsoft.Extensions.Configuration;
 using System;
 using System.Collections.Concurrent;
 using System.Collections.Generic;
@@ -32,6 +33,7 @@ namespace MovieAgent.Infrastructure.Services
         /// 日志服务
         /// </summary>
         private readonly ILoggerService _logger;
+        private readonly IConfiguration _configuration;
 
         /// <summary>
         /// 解码器进程实例
@@ -159,6 +161,18 @@ namespace MovieAgent.Infrastructure.Services
         /// 视频高度
         /// </summary>
         public int VideoHeight { get; private set; }
+
+        /// <summary>
+        /// 是否为杜比视界视频（进程隔离模式不支持DV检测，默认false）
+        /// </summary>
+        public bool IsDolbyVision => false;
+
+        /// <summary>
+        /// 是否为ICtCp色彩空间输入（进程隔离模式不支持检测，默认false）
+        /// </summary>
+        public bool IsIctcpInput => false;
+
+        public DoviRenderMetadata? DoviMetadata => null;
 
         /// <summary>
         /// 当前解码器名称
@@ -292,9 +306,10 @@ namespace MovieAgent.Infrastructure.Services
         /// 构造函数
         /// </summary>
         /// <param name="logger">日志服务</param>
-        public ProcessIsolatedPlayerService(ILoggerService logger)
+        public ProcessIsolatedPlayerService(ILoggerService logger, IConfiguration configuration)
         {
             _logger = logger;
+            _configuration = configuration;
         }
 
         #endregion
@@ -456,8 +471,9 @@ namespace MovieAgent.Infrastructure.Services
 
                 // 发送播放命令
                 _logger.Information($"[Player] Sending Play command for file: {filePath}");
-                await SendCommandAsync(new DecoderCommand { Command = "Play", FilePath = filePath, DecodeMode = "Auto" });
-                _logger.Information($"[Player] Playback initiated successfully with auto decode mode");
+                var decodeMode = _configuration["Decode:DecodeMode"] ?? "Auto";
+                await SendCommandAsync(new DecoderCommand { Command = "Play", FilePath = filePath, DecodeMode = decodeMode });
+                _logger.Information($"[Player] Playback initiated with decode mode: {decodeMode}");
             }
             catch (Exception ex)
             {
@@ -1258,6 +1274,11 @@ namespace MovieAgent.Infrastructure.Services
         }
 
         public void SetD3d12Device(ID3D12Device device)
+        {
+            throw new NotImplementedException();
+        }
+
+        public void SetD3d12CommandQueue(IntPtr commandQueuePtr)
         {
             throw new NotImplementedException();
         }

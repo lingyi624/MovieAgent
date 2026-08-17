@@ -23,7 +23,10 @@
             Movie Agent(小雪雪)
             </MudText>
             <MudSpacer />
-            <SearchBar />
+            <div style="flex: 1; display: flex; justify-content: center; max-width: 520px;">
+                <SearchBar />
+            </div>
+            <MudSpacer />
             <MudButton Style="@ChatButtonStyle" Href="/chat" StartIcon="@Icons.Material.Filled.Message">
                 @LocalizationService.Translate("Chat")
             </MudButton>
@@ -87,11 +90,11 @@
         {
             Primary = Colors.Red.Accent3,
             Secondary = Colors.Green.Accent3,
-            Background = "#0F0F1A",
-            Surface = "#1A1A2E",
-            DrawerBackground = "#1A1A2E",
+            Background = "#0A0A14",
+            Surface = "#0E0E1E",
+            DrawerBackground = "#0E0E1E",
             DrawerText = "#E0E0E0",
-            AppbarBackground = "#1A1A2E",
+            AppbarBackground = "#0E0E1E",
             AppbarText = "#E0E0E0",
             TextPrimary = "#E0E0E0",
             TextSecondary = "#888888",
@@ -104,11 +107,11 @@
         {
             Primary = Colors.Red.Accent3,
             Secondary = Colors.Green.Accent3,
-            Background = "#0F0F1A",
-            Surface = "#1A1A2E",
-            DrawerBackground = "#1A1A2E",
+            Background = "#0A0A14",
+            Surface = "#0E0E1E",
+            DrawerBackground = "#0E0E1E",
             DrawerText = "#E0E0E0",
-            AppbarBackground = "#1A1A2E",
+            AppbarBackground = "#0E0E1E",
             AppbarText = "#E0E0E0",
             TextPrimary = "#E0E0E0",
             TextSecondary = "#888888",
@@ -158,15 +161,15 @@
     };
 
     private string AppBarStyle => _isDark 
-        ? "background: linear-gradient(135deg, #1A1A2E 0%, #16213E 100%);" 
+        ? "background: linear-gradient(135deg, #0A0A14 0%, #141428 100%); border-bottom: 1px solid rgba(233,69,96,0.15);" 
         : "background: linear-gradient(135deg, #FFFFFF 0%, #F5F5F5 100%);";
 
     private string DrawerStyle => _isDark 
-        ? "background: #1A1A2E; color: white;" 
+        ? "background: #0E0E1E; color: white;" 
         : "background: #FFFFFF; color: #333;";
 
     private string MainContentStyle => _isDark 
-        ? "padding: 24px; min-height: calc(100vh - 64px); background: #0F0F1A;" 
+        ? "padding: 24px; min-height: calc(100vh - 64px); background: #0A0A14;" 
         : "padding: 24px; min-height: calc(100vh - 64px); background: #F5F5F5;";
 
     private string ChatButtonStyle => _isDark 

@@ -172,9 +172,9 @@
     @foreach (var movie in _movies)
     {
         <MudItem xs="6" sm="4" md="3" lg="2">
-            <MudCard Elevation="4" Class="movie-card" Style="cursor: pointer; transition: transform 0.2s;">
-                    <MudCardMedia Image="@GetPosterUrl(movie)" Height="330" Style="object-fit: cover;" />
-                    <MudCardContent Style="padding: 10px;">
+            <MudCard Elevation="4" Class="movie-card" Style="cursor: pointer; transition: transform 0.2s;" >
+                <MudCardMedia Image="@GetPosterUrl(movie)" Height="330" Style="object-fit: cover;border-radius:5px;" @onclick="() => PlayMovie(movie)" />
+                <MudCardContent Style="padding: 10px;" >
                     <MudText Typo="Typo.body2" Style="font-weight: bold; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: #E0E0E0;">
                         @movie.Title
                     </MudText>

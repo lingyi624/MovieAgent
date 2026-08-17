@@ -1,4 +1,4 @@
-﻿using Microsoft.AspNetCore.Components.RenderTree;
+using Microsoft.AspNetCore.Components.RenderTree;
 using Microsoft.AspNetCore.Components.WebView.Wpf;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Win32;
@@ -37,9 +37,8 @@ public partial class ControlWindow : Window
     private string _currentSubtitle = "无";
     private string _currentDecoderName = string.Empty;
     private string _currentDecodeMode = "自动";
-
-     private Rect _normalVideoRect;
-    private Rect _normalControlRect;
+    private bool _isDraggingProgress;
+    private bool _isClosingPopup = false;
 
     // 去重调度
     private volatile bool _renderScheduled;
@@ -51,6 +50,12 @@ public partial class ControlWindow : Window
     private List<SubtitleItem> _externalSubtitles = new();
     private DispatcherTimer? _subtitleUpdateTimer;
     private DispatcherTimer? _subtitleHideTimer;
+    // 内部字幕缓存：引擎 SubtitleDecoded 是"解码即推送"（跟随 Demux 速度，远快于播放），
+    // 不能直接显示，必须缓存后由定时器按播放位置调度，否则字幕提前闪过、切轨看不出变化
+    private List<SubtitleData> _internalSubtitles = new();
+    private readonly object _subtitleLock = new(); // _internalSubtitles 的同步锁（readonly，MT1003）
+    private int _lastInternalTrack;   // 卸载外部字幕后恢复的内嵌轨道
+    private string? _lastSubtitleShown; // 当前已显示文本（去重）
 
     // 进度更新
     private DispatcherTimer? _progressTimer;
@@ -71,12 +76,10 @@ public partial class ControlWindow : Window
     private double _previousTop;
 
     // 视频窗口引用
-    private readonly VideoWindow _videoWindow;
+        // private readonly VideoWindow VideoView;
 
-    public ControlWindow(VideoWindow videoWindow)
+    public ControlWindow()
     {
-        _videoWindow = videoWindow ?? throw new ArgumentNullException(nameof(videoWindow));
-
         var services = ((App)Application.Current).Services;
         _logger = services.GetRequiredService<ILoggerService>();
         _playerService = services.GetRequiredService<IPlayerService>();
@@ -84,7 +87,6 @@ public partial class ControlWindow : Window
 
         InitializeComponent();
  
-        // 订阅事件
         if (_playerService is LocalPlayerService localPlayer)
         {
             localPlayer.PerformanceWarning += OnPerformanceWarning;
@@ -94,43 +96,16 @@ public partial class ControlWindow : Window
         }
         _playerService.FrameUpdated += OnFrameUpdated;
 
-        // 初始化定时器
         _hideControlsTimer = new DispatcherTimer { Interval = TimeSpan.FromSeconds(3) };
         _hideControlsTimer.Tick += (s, e) => HideControls();
-
-        // 设置窗口全屏透明覆盖
-        // this.WindowState = WindowState.Maximized;
-        //this.Width = SystemParameters.PrimaryScreenWidth;
-        //this.Height = SystemParameters.PrimaryScreenHeight;
-        //this.Left = 0;
-        //this.Top = 0;
-        //this.Topmost = true;
-        //this.ShowActivated = false;
 
         this.Left = 0;
         this.Top = 0;
         this.Width = SystemParameters.PrimaryScreenWidth;
         this.Height = SystemParameters.PrimaryScreenHeight;
-        this.WindowState = WindowState.Normal;   // 显式保持 Normal
+        this.WindowState = WindowState.Normal;
 
-        // this.Background = new SolidColorBrush(Color.FromArgb(1, 0, 0, 0)); // ARGB: #01000000
-        ShowControls(); // 强制显示顶部和底部栏
-
-        this.Loaded += ControlWindow_Loaded;
-    }
-
-    private void ControlWindow_Loaded(object sender, RoutedEventArgs e)
-    {
-        //MessageBox.Show("ControlWindow 已加载");
-        _videoWindow.LocationChanged += (s, e) => { if (!_isFullScreen) SyncControlPosition(); };
-        _videoWindow.SizeChanged += (s, e) => { if (!_isFullScreen) SyncControlPosition(); };
-    }
-    private void SyncControlPosition()
-    {
-        this.Left = _videoWindow.Left;
-        this.Top = _videoWindow.Top;
-        this.Width = _videoWindow.Width;
-        this.Height = _videoWindow.Height;
+        ShowControls();
     }
     public void PlayMovie(string filePath)
     {
@@ -200,7 +175,7 @@ public partial class ControlWindow : Window
                     _logger.Debug($"[Player] ===== 开始播放流程 ===== ");
                     _logger.Debug($"[Player] 文件路径: {actualPlayPath}");
                     _logger.Debug($"[Player] 电影标题: {_currentMovieTitle}");
-                    //var renderer = _videoWindow.Renderer;
+                    //var renderer = VideoView.Renderer;
                     //var device = renderer?.GetDevice();
                     //if (device != null)
                     //{
@@ -232,6 +207,13 @@ public partial class ControlWindow : Window
                     UpdateAudioTrackList();
                     UpdateSubtitleTrackList();
 
+                    // 重置字幕状态：新文件的内嵌字幕缓存从零填充，调度定时器随播放启动
+                    lock (_subtitleLock) _internalSubtitles.Clear();
+                    _lastSubtitleShown = null;
+                    _lastInternalTrack = _playerService?.CurrentSpuTrack ?? 0;
+                    if (_lastInternalTrack >= 0)
+                        StartSubtitleUpdateTimer();
+
                     _frameCount = 0;
                     _logger.Debug("[Player] ===== 播放流程初始化完成 ===== ");
                     
@@ -261,7 +243,7 @@ public partial class ControlWindow : Window
        
         try
         {
-            var renderer = _videoWindow.GetDevice();
+            var renderer = VideoView.GetDevice();
             if (renderer == null) return;
             if (_playerService == null ) return;
             if (_playerService.VideoWidth <= 0 || _playerService.VideoHeight <= 0) return;
@@ -289,10 +271,10 @@ public partial class ControlWindow : Window
                         _renderScheduled = false;
                     }
 
-                    if (frameToRender != null && _videoWindow.GetDevice() != null)
+                    if (frameToRender != null && VideoView.GetDevice() != null)
                     {
                         if (frameToRender.IsHardwareFrame)
-                            _videoWindow.VideoView.RenderHardwareTexture(
+                            VideoView.RenderHardwareTexture(
                                 frameToRender.NV12TexturePtr,
                                 frameToRender.Width,
                                 frameToRender.Height,
@@ -301,7 +283,7 @@ public partial class ControlWindow : Window
                                   );
                         else
                         {
-                            _videoWindow.VideoView.UpdateFrame(
+                            VideoView.UpdateFrame(
                                 frameToRender.YPlane, frameToRender.UPlane, frameToRender.VPlane,
                                 frameToRender.Width, frameToRender.Height,
                                 frameToRender.YStride, frameToRender.UStride, frameToRender.VStride); 
@@ -510,6 +492,12 @@ public partial class ControlWindow : Window
             noSubtitleButton.Click += (s, e) =>
             {
                 _playerService?.SetSpuTrack(-1);
+                // 清空内部字幕缓存并隐藏字幕
+                lock (_subtitleLock) _internalSubtitles.Clear();
+                _lastSubtitleShown = null;
+                _subtitleUpdateTimer?.Stop();
+                SubtitleTextBlock.Text = "";
+                SubtitleTextBlock.Visibility = Visibility.Collapsed;
                 UpdateSubtitleTrackList();
             };
 
@@ -556,15 +544,28 @@ public partial class ControlWindow : Window
                 {
                     _playerService?.SetSpuTrack(trackIndex);
 
-                    // 如果切换到内部字幕，禁用外部字幕
-                    if (trackIndex >= 0 && _externalSubtitlePath != null)
+                    // 清空内部字幕缓存（切换轨道后旧轨道条目必须作废，避免两轨字幕混合）
+                    lock (_subtitleLock) _internalSubtitles.Clear();
+                    _lastSubtitleShown = null;
+
+                    if (trackIndex >= 0)
                     {
-                        _subtitleUpdateTimer?.Stop();
+                        // 切换到内部字幕：禁用并卸载外部字幕
                         _externalSubtitlePath = null;
                         _externalSubtitles.Clear();
                         UnloadSubtitleButton.Visibility = Visibility.Collapsed;
                         CurrentSubtitleText.Text = "";
-                        _logger.Debug("[Player] 已切换到内部字幕，外部字幕已卸载");
+                        _lastInternalTrack = trackIndex;
+                        // 确保调度定时器运行（内嵌字幕同样按播放位置显示）
+                        StartSubtitleUpdateTimer();
+                        _logger.Debug($"[Player] 已切换到内部字幕轨道 {trackIndex}，外部字幕已卸载");
+                    }
+                    else
+                    {
+                        // 关闭字幕
+                        _subtitleUpdateTimer?.Stop();
+                        SubtitleTextBlock.Text = "";
+                        SubtitleTextBlock.Visibility = Visibility.Collapsed;
                     }
 
                     UpdateSubtitleTrackList();
@@ -658,31 +659,8 @@ public partial class ControlWindow : Window
 
     private void EnterFullScreen()
     {
-        _normalVideoRect = new Rect(_videoWindow.Left, _videoWindow.Top, _videoWindow.Width, _videoWindow.Height);
-        _normalControlRect = new Rect(this.Left, this.Top, this.Width, this.Height);
-
-        _videoWindow.WindowStyle = WindowStyle.None;
-        _videoWindow.ResizeMode = ResizeMode.NoResize;
-        _videoWindow.Topmost = false;
-        _videoWindow.Left = 0;
-        _videoWindow.Top = 0;
-        _videoWindow.Width = SystemParameters.PrimaryScreenWidth;
-        _videoWindow.Height = SystemParameters.PrimaryScreenHeight;
-
-        this.Left = 0;
-        this.Top = 0;
-        this.Width = SystemParameters.PrimaryScreenWidth;
-        this.Height = SystemParameters.PrimaryScreenHeight;
-
-        _isFullScreen = true;
-        FullscreenButton.Content = "退出全屏";
-
-        return; 
         if (_isFullScreen) return;
 
-        _isFullScreen = true;
-
-        // 保存当前状态
         _previousWindowState = this.WindowState;
         _previousWindowStyle = this.WindowStyle;
         _previousTopmost = this.Topmost;
@@ -691,25 +669,16 @@ public partial class ControlWindow : Window
         _previousLeft = this.Left;
         _previousTop = this.Top;
 
-        // 切换到真正的全屏（隐藏任务栏）
+        if (this.WindowState == WindowState.Normal)
+            this.WindowState = WindowState.Maximized;
         this.WindowStyle = WindowStyle.None;
-        this.Topmost = true;
-        this.WindowState = WindowState.Normal; // 先恢复正常状态
-        this.Width = System.Windows.SystemParameters.PrimaryScreenWidth;
-        this.Height = System.Windows.SystemParameters.PrimaryScreenHeight;
+        this.ResizeMode = ResizeMode.NoResize;
         this.Left = 0;
         this.Top = 0;
-        this.WindowState = WindowState.Maximized;
-
-        // 全屏模式下：显示底部控制栏，隐藏顶部面板
-        TopBar.Visibility = Visibility.Collapsed;
-        BottomBar.Visibility = Visibility.Visible;
-        //ShowInTaskbar = false;
-        //_videoWindow.ShowInTaskbar = ShowInTaskbar;
-
-        _hideControlsTimer?.Start();
-
-        _logger.Debug("[Player] 进入全屏模式 - 顶部面板已隐藏");
+        this.Width = SystemParameters.PrimaryScreenWidth;
+        this.Height = SystemParameters.PrimaryScreenHeight;
+        _isFullScreen = true;
+        FullscreenButton.Content = "退出全屏";
     }
     private void ToggleFullScreen()
     {
@@ -719,27 +688,10 @@ public partial class ControlWindow : Window
 
     private void ExitFullScreen()
     {
-        _videoWindow.Left = _normalVideoRect.Left;
-        _videoWindow.Top = _normalVideoRect.Top;
-        _videoWindow.Width = _normalVideoRect.Width;
-        _videoWindow.Height = _normalVideoRect.Height;
-        _videoWindow.WindowStyle = WindowStyle.None;
-        _videoWindow.ResizeMode = ResizeMode.CanResize;
-        _videoWindow.Topmost = false;
-
-        this.Left = _normalControlRect.Left;
-        this.Top = _normalControlRect.Top;
-        this.Width = _normalControlRect.Width;
-        this.Height = _normalControlRect.Height;
-
-        _isFullScreen = false;
-        FullscreenButton.Content = "全屏";
-        return;
         if (!_isFullScreen) return;
 
         _isFullScreen = false;
 
-        // 恢复之前的窗口状态
         this.Topmost = _previousTopmost;
         this.WindowStyle = _previousWindowStyle;
         this.WindowState = _previousWindowState;
@@ -748,9 +700,7 @@ public partial class ControlWindow : Window
         this.Width = _previousWidth;
         this.Height = _previousHeight;
 
-        //ShowInTaskbar= true;
-        //_videoWindow.ShowInTaskbar = ShowInTaskbar;
-        _logger.Debug("[Player] 退出全屏模式");
+        FullscreenButton.Content = "全屏";
     }
 
     private void OnPlaybackRequestedByBlazor(object? sender, EventArgs e)
@@ -841,25 +791,16 @@ public partial class ControlWindow : Window
 
     private void OnSubtitleDecoded(object? sender, SubtitleData subtitle)
     {
-        _logger.Debug($"[Player] 字幕解码: {subtitle.Text} ({subtitle.StartTime:F2}s - {subtitle.EndTime:F2}s)");
+        // 如果已加载外部字幕，忽略内部字幕解码事件，避免冲突
+        if (_externalSubtitlePath != null)
+            return;
 
-        Dispatcher.Invoke(() =>
+        // 引擎在 Demux 阶段即推送字幕（带绝对时间戳），此处只缓存，
+        // 由 _subtitleUpdateTimer 按播放位置调度显示
+        lock (_subtitleLock)
         {
-            // 更新字幕显示
-            SubtitleTextBlock.Text = subtitle.Text;
-            SubtitleTextBlock.Visibility = Visibility.Visible;
-
-            // 设置字幕隐藏定时器
-            _subtitleHideTimer?.Stop();
-            _subtitleHideTimer = new System.Windows.Threading.DispatcherTimer();
-            _subtitleHideTimer.Interval = TimeSpan.FromSeconds(subtitle.EndTime - subtitle.StartTime);
-            _subtitleHideTimer.Tick += (s, e) =>
-            {
-                SubtitleTextBlock.Visibility = Visibility.Collapsed;
-                _subtitleHideTimer?.Stop();
-            };
-            _subtitleHideTimer.Start();
-        });
+            _internalSubtitles.Add(subtitle);
+        }
     }
 
  
@@ -959,7 +900,7 @@ public partial class ControlWindow : Window
                 _playerService.FrameUpdated -= OnFrameUpdated;
                 await _playerService.StopAsync();
             }
-            //var renderer = _videoWindow.Renderer;
+            //var renderer = VideoView.Renderer;
             // renderer?.ClearScreen();
 
             // 退出全屏并恢复 Blazor WebView
@@ -973,6 +914,8 @@ public partial class ControlWindow : Window
             // 重置播放状态
             _externalSubtitlePath = null;
             _externalSubtitles.Clear();
+            lock (_subtitleLock) _internalSubtitles.Clear();
+            _lastSubtitleShown = null;
             _lastPlayPauseContent = null;
             PlayPauseButton.Content = "▶";
 
@@ -1051,10 +994,28 @@ public partial class ControlWindow : Window
 
     private void StopButton_Click(object sender, RoutedEventArgs e)
     {
-     
         StopPlayback();
-        PlayPauseButton.Content = "▶"; // 重置为播放图标
-        _videoWindow.Close();
+        PlayPauseButton.Content = "▶";
+        this.Close();
+    }
+
+    private void Min_Click(object sender, RoutedEventArgs e)
+    {
+        WindowState = WindowState.Minimized;
+    }
+
+    private void Restore_Click(object sender, RoutedEventArgs e)
+    {
+        if (WindowState == WindowState.Maximized)
+            WindowState = WindowState.Normal;
+        else
+            WindowState = WindowState.Maximized;
+    }
+
+    private void CloseWindow_Click(object sender, RoutedEventArgs e)
+    {
+        StopPlayback();
+        PlayPauseButton.Content = "▶";
         this.Close();
     }
 
@@ -1092,8 +1053,15 @@ public partial class ControlWindow : Window
        
     }
 
+    private void ProgressSlider_MouseDown(object sender, System.Windows.Input.MouseButtonEventArgs e)
+    {
+        _isDraggingProgress = true;
+    }
+
     private void ProgressSlider_MouseUp(object sender, System.Windows.Input.MouseButtonEventArgs e)
     {
+        _isDraggingProgress = false;
+
         if (_playerService == null || !_playerService.IsPlaying)
         {
             _logger.Debug("[Player] Seek ignored - player is null or not playing");
@@ -1152,10 +1120,7 @@ public partial class ControlWindow : Window
         }
     }
 
-    private void VideoOverlay_MouseMove(object sender, System.Windows.Input.MouseEventArgs e)
-    {
-        ShowControls();
-    }
+   
 
     private void ShowControls2()
     {
@@ -1268,9 +1233,25 @@ public partial class ControlWindow : Window
 
     private void AudioButton_Click(object sender, RoutedEventArgs e)
     {
+        if (_isClosingPopup)
+            return;
+
         UpdateAudioTrackList();
         AudioPopup.IsOpen = !AudioPopup.IsOpen;
-        if (AudioPopup.IsOpen)
+
+        if (!AudioPopup.IsOpen)
+        {
+            _isClosingPopup = true;
+            DispatcherTimer timer = new DispatcherTimer();
+            timer.Interval = TimeSpan.FromMilliseconds(200);
+            timer.Tick += (s, args) =>
+            {
+                timer.Stop();
+                _isClosingPopup = false;
+            };
+            timer.Start();
+        }
+        else
         {
             SubtitlePopup.IsOpen = false;
         }
@@ -1287,9 +1268,25 @@ public partial class ControlWindow : Window
 
     private void SubtitleButton_Click(object sender, RoutedEventArgs e)
     {
+        if (_isClosingPopup)
+            return;
+
         UpdateSubtitleTrackList();
         SubtitlePopup.IsOpen = !SubtitlePopup.IsOpen;
-        if (SubtitlePopup.IsOpen)
+
+        if (!SubtitlePopup.IsOpen)
+        {
+            _isClosingPopup = true;
+            DispatcherTimer timer = new DispatcherTimer();
+            timer.Interval = TimeSpan.FromMilliseconds(200);
+            timer.Tick += (s, args) =>
+            {
+                timer.Stop();
+                _isClosingPopup = false;
+            };
+            timer.Start();
+        }
+        else
         {
             AudioPopup.IsOpen = false;
         }
@@ -1348,24 +1345,28 @@ public partial class ControlWindow : Window
             _playerService?.SetSpuTrack(trackIndex);
             SubtitlePopup.IsOpen = false;
 
-            // 如果切换到内部字幕，禁用外部字幕
-            if (trackIndex >= 0 && _externalSubtitlePath != null)
-            {
-                _subtitleUpdateTimer?.Stop();
-                _externalSubtitlePath = null;
-                _externalSubtitles.Clear();
-                UnloadSubtitleButton.Visibility = Visibility.Collapsed;
-                CurrentSubtitleText.Text = "";
-                _logger.Debug("[Player] 已切换到内部字幕，外部字幕已卸载");
-            }
+            // 清空内部字幕缓存（切换轨道后旧轨道条目必须作废）
+            lock (_subtitleLock) _internalSubtitles.Clear();
+            _lastSubtitleShown = null;
 
-            // 更新字幕显示状态
             if (trackIndex >= 0)
             {
+                if (_externalSubtitlePath != null)
+                {
+                    _externalSubtitlePath = null;
+                    _externalSubtitles.Clear();
+                    UnloadSubtitleButton.Visibility = Visibility.Collapsed;
+                    CurrentSubtitleText.Text = "";
+                }
+                _lastInternalTrack = trackIndex;
+                StartSubtitleUpdateTimer();
+                _logger.Debug("[Player] 已切换到内部字幕，外部字幕已卸载");
                 SubtitleTextBlock.Visibility = Visibility.Visible;
             }
             else
             {
+                _subtitleUpdateTimer?.Stop();
+                SubtitleTextBlock.Text = "";
                 SubtitleTextBlock.Visibility = Visibility.Collapsed;
             }
         }
@@ -1382,53 +1383,79 @@ public partial class ControlWindow : Window
 
     private void LoadSubtitleButton_Click(object sender, RoutedEventArgs e)
     {
-        // 创建打开文件对话框
-        var dialog = new OpenFileDialog
-        {
-            Title = "选择字幕文件",
-            Filter = "字幕文件 (*.srt;*.ass;*.ssa)|*.srt;*.ass;*.ssa|SRT文件 (*.srt)|*.srt|ASS文件 (*.ass)|*.ass|所有文件 (*.*)|*.*",
-            FilterIndex = 1
-        };
+        _logger.Debug("[Player] LoadSubtitleButton_Click 被触发");
 
-        if (dialog.ShowDialog() == true)
+        // 先关闭Popup，避免它干扰后续的 OpenFileDialog（StaysOpen=False 的Popup
+        // 在点击内部按钮时也会关闭，但时序上可能阻塞对话框消息循环）
+        SubtitlePopup.IsOpen = false;
+
+        // 延迟一帧再弹出对话框，确保Popup完全关闭、消息循环恢复
+        Dispatcher.BeginInvoke(DispatcherPriority.Background, new Action(() =>
         {
-            try
+            // 创建打开文件对话框
+            var dialog = new OpenFileDialog
             {
-                _externalSubtitlePath = dialog.FileName;
-                _externalSubtitles = SubtitleParser.Parse(_externalSubtitlePath);
+                Title = "选择字幕文件",
+                Filter = "字幕文件 (*.srt;*.ass;*.ssa)|*.srt;*.ass;*.ssa|SRT文件 (*.srt)|*.srt|ASS文件 (*.ass)|*.ass|所有文件 (*.*)|*.*",
+                FilterIndex = 1
+            };
 
-                if (_externalSubtitles.Count > 0)
+            _logger.Debug("[Player] 弹出字幕文件选择对话框");
+
+            if (dialog.ShowDialog() == true)
+            {
+                try
                 {
-                    _logger.Debug($"[Player] 加载外部字幕成功: {dialog.FileName}, 共 {_externalSubtitles.Count} 条");
+                    _externalSubtitlePath = dialog.FileName;
+                    _externalSubtitles = SubtitleParser.Parse(_externalSubtitlePath);
 
-                    // 更新UI
-                    SubtitlePopup.IsOpen = false;
-                    UnloadSubtitleButton.Visibility = Visibility.Visible;
-                    CurrentSubtitleText.Text = $"当前字幕: {Path.GetFileName(_externalSubtitlePath)}";
-
-                    // 启用字幕显示
-                    SubtitleTextBlock.Visibility = Visibility.Visible;
-
-                    // 启动字幕更新定时器
-                    StartSubtitleUpdateTimer();
-
-                    // 如果正在播放，同步到当前播放位置
-                    if (_playerService != null && _playerService.IsPlaying)
+                    if (_externalSubtitles.Count > 0)
                     {
-                        UpdateExternalSubtitle();
+                        _logger.Debug($"[Player] 加载外部字幕成功: {dialog.FileName}, 共 {_externalSubtitles.Count} 条");
+
+                        // 禁用内部字幕轨道，避免与外部字幕冲突
+                        _playerService?.SetSpuTrack(-1);
+                        _logger.Debug("[Player] 已禁用内部字幕轨道，使用外部字幕");
+
+                        // 清空内部字幕缓存并重置显示状态（调度器切换到外部字幕源）
+                        lock (_subtitleLock) _internalSubtitles.Clear();
+                        _lastSubtitleShown = null;
+                        SubtitleTextBlock.Text = ""; // 立即清除旧内部字幕文本，防止残留
+                        _logger.Debug("[Player] 内部字幕缓存已清除，SubtitleTextBlock已重置");
+
+                        // 更新UI
+                        UnloadSubtitleButton.Visibility = Visibility.Visible;
+                        CurrentSubtitleText.Text = $"当前字幕: {Path.GetFileName(_externalSubtitlePath)}";
+
+                        // 启用字幕显示
+                        SubtitleTextBlock.Visibility = Visibility.Visible;
+
+                        // 启动字幕更新定时器
+                        StartSubtitleUpdateTimer();
+
+                        // 如果正在播放，同步到当前播放位置
+                        if (_playerService != null && _playerService.IsPlaying)
+                        {
+                            UpdateActiveSubtitle();
+                        }
+                    }
+                    else
+                    {
+                        _logger.Debug("[Player] 字幕文件解析结果为空");
+                        MessageBox.Show("无法解析字幕文件或字幕文件为空", "错误", MessageBoxButton.OK, MessageBoxImage.Warning);
                     }
                 }
-                else
+                catch (Exception ex)
                 {
-                    MessageBox.Show("无法解析字幕文件或字幕文件为空", "错误", MessageBoxButton.OK, MessageBoxImage.Warning);
+                    _logger.Error(ex, "[Player] 加载字幕文件失败");
+                    MessageBox.Show($"加载字幕文件失败: {ex.Message}", "错误", MessageBoxButton.OK, MessageBoxImage.Error);
                 }
             }
-            catch (Exception ex)
+            else
             {
-                _logger.Error(ex, "[Player] 加载字幕文件失败");
-                MessageBox.Show($"加载字幕文件失败: {ex.Message}", "错误", MessageBoxButton.OK, MessageBoxImage.Error);
+                _logger.Debug("[Player] 用户取消了字幕文件选择");
             }
-        }
+        }));
     }
 
     private void UnloadSubtitleButton_Click(object sender, RoutedEventArgs e)
@@ -1439,13 +1466,21 @@ public partial class ControlWindow : Window
         // 清除外部字幕
         _externalSubtitlePath = null;
         _externalSubtitles.Clear();
+        _lastSubtitleShown = null;
 
         // 更新UI
+        SubtitleTextBlock.Text = "";
         SubtitleTextBlock.Visibility = Visibility.Collapsed;
         UnloadSubtitleButton.Visibility = Visibility.Collapsed;
         CurrentSubtitleText.Text = "";
 
-        _logger.Debug("[Player] Unloaded external subtitle");
+        // 恢复之前选中的内部字幕轨道（默认0），并重启调度定时器
+        // 恢复后引擎会重新推送该轨道字幕，缓存从零开始填充
+        _playerService?.SetSpuTrack(_lastInternalTrack);
+        StartSubtitleUpdateTimer();
+
+        UpdateSubtitleTrackList();
+        _logger.Debug($"[Player] Unloaded external subtitle, restored internal track {_lastInternalTrack}");
     }
 
     private void StartSubtitleUpdateTimer()
@@ -1455,35 +1490,58 @@ public partial class ControlWindow : Window
         {
             Interval = TimeSpan.FromMilliseconds(100)
         };
-        _subtitleUpdateTimer.Tick += (s, e) => UpdateExternalSubtitle();
+        _subtitleUpdateTimer.Tick += (s, e) => UpdateActiveSubtitle();
         _subtitleUpdateTimer.Start();
         _logger.Debug("[Player] 字幕更新定时器已启动");
     }
 
-    private void UpdateExternalSubtitle()
+    /// <summary>
+    /// 统一字幕调度：外部字幕优先，否则按播放位置查找内部字幕缓存。
+    /// 内部字幕事件在 Demux 阶段就已全部推入 _internalSubtitles（时间戳为绝对时间），
+    /// 因此 Seek 后无需清空缓存，按当前播放时刻查找即可命中正确条目。
+    /// </summary>
+    private void UpdateActiveSubtitle()
     {
-        if (_externalSubtitles.Count == 0 || _playerService == null)
-            return;
+        if (_playerService == null) return;
 
         try
         {
-            var currentTime = _playerService.Position;
-            var currentSubtitle = _externalSubtitles.FirstOrDefault(s => s.IsActive(currentTime));
+            double currentSec = _playerService.Position.TotalSeconds;
+            string? text = null;
 
-            if (currentSubtitle != null)
+            if (_externalSubtitlePath != null)
             {
-                Dispatcher.Invoke(() =>
-                {
-                    SubtitleTextBlock.Text = currentSubtitle.Text;
-                    SubtitleTextBlock.Visibility = Visibility.Visible;
-                });
+                var item = _externalSubtitles.FirstOrDefault(s => s.IsActive(_playerService.Position));
+                text = item?.Text;
             }
             else
             {
-                Dispatcher.Invoke(() =>
+                lock (_subtitleLock)
                 {
-                    SubtitleTextBlock.Text = "";
-                });
+                    foreach (var s in _internalSubtitles)
+                    {
+                        if (currentSec >= s.StartTime && currentSec <= s.EndTime)
+                        {
+                            text = s.Text;
+                            break;
+                        }
+                    }
+                }
+            }
+
+            if (text == _lastSubtitleShown) return; // 无变化不刷新UI
+            _lastSubtitleShown = text;
+
+            if (!string.IsNullOrEmpty(text))
+            {
+                SubtitleTextBlock.Text = text;
+                SubtitleTextBlock.Visibility = Visibility.Visible;
+                _logger.Debug($"[Player] 字幕已显示: '{text.Substring(0, Math.Min(text.Length, 30))}'");
+            }
+            else
+            {
+                SubtitleTextBlock.Text = "";
+                SubtitleTextBlock.Visibility = Visibility.Collapsed;
             }
         }
         catch (Exception ex)
@@ -1491,6 +1549,9 @@ public partial class ControlWindow : Window
             _logger.Debug($"[Player] 更新字幕失败: {ex.Message}");
         }
     }
+
+    // 兼容旧调用：外部字幕同步显示
+    private void UpdateExternalSubtitle() => UpdateActiveSubtitle();
 
     /// <summary>
     /// 加载窗口图标
@@ -2207,13 +2268,11 @@ public partial class ControlWindow : Window
         _currentMovieTitle = movieTitle;
         if (_playerService == null) return;
 
-        //_videoWindow.Width = 1200;
-        //_videoWindow.Height = 800;
-        //_videoWindow.Left = 100;
-        //_videoWindow.Top = 100;
-       // _videoWindow.WindowState = WindowState.Normal;
-        _videoWindow.Topmost = false;
-        SyncControlPosition();
+        //VideoView.Width = 1200;
+        //VideoView.Height = 800;
+        //VideoView.Left = 100;
+        //VideoView.Top = 100;
+       // VideoView.WindowState = WindowState.Normal;
 
         // 等待 VideoRenderer 设备就绪 
         // 强制同步等待最多 5 秒
@@ -2221,13 +2280,18 @@ public partial class ControlWindow : Window
         {
             
 
-            if (_videoWindow.GetDevice() != null)
-            { 
-                var device = _videoWindow.GetDevice();
+            if (VideoView.GetDevice() != null)
+            {
+                var device = VideoView.GetDevice();
                 if (device != null)
                 {
                     _playerService.SetD3d12Device(device);
-                    // 用 device 初始化硬件解码器
+                    var queuePtr = VideoView.GetCommandQueuePtr();
+                    if (queuePtr != IntPtr.Zero)
+                    {
+                        _playerService.SetD3d12CommandQueue(queuePtr);
+                        _logger.Debug($"[VideoRendererControl] 命令队列已共享给解码器");
+                    }
                     _logger.Debug($"[VideoRendererControl] GetDevice已调用,初始化硬件解码器");
                 }
                 DebugLogger.WriteLine("设备就绪！"); 
@@ -2236,7 +2300,7 @@ public partial class ControlWindow : Window
             System.Threading.Thread.Sleep(100);
             DebugLogger.WriteLine($"等待设备中... 尝试 {i + 1}");
         }
-        if (_videoWindow.GetDevice() == null)
+        if (VideoView.GetDevice() == null)
             DebugLogger.WriteLine("设备最终仍然为 null，初始化失败");
 
         // 订阅帧事件（由 ControlWindow 接管渲染）
@@ -2246,10 +2310,18 @@ public partial class ControlWindow : Window
         await _playerService.PlayAsync(filePath);
 
         // 更新UI
-        UpdatePlaybackInfo();
+       UpdatePlaybackInfo();
         StartProgressUpdate();
         UpdateAudioTrackList();
         UpdateSubtitleTrackList();
+
+        // 重置字幕状态：新文件的内嵌字幕缓存从零填充，调度定时器随播放启动
+        lock (_subtitleLock) _internalSubtitles.Clear();
+        _lastSubtitleShown = null;
+        _lastInternalTrack = _playerService?.CurrentSpuTrack ?? 0;
+        if (_lastInternalTrack >= 0)
+            StartSubtitleUpdateTimer();
+
         _frameCount = 0;
         UpdatePlayStatus();
         ShowControls();

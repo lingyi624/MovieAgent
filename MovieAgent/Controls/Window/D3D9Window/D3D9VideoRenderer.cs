@@ -5,6 +5,7 @@ using System.Collections.Concurrent;
 using System.Runtime.InteropServices;
 using System.Threading;
 using System.Windows;
+using System.Windows.Input;
 using System.Windows.Interop;
 using System.Windows.Threading;
 using Vortice;
@@ -18,6 +19,9 @@ namespace MovieAgent.Controls.Window.D3D9Window
     {
         private const uint WS_CHILD = 0x40000000, WS_VISIBLE = 0x10000000,
             WS_CLIPSIBLINGS = 0x04000000, WS_CLIPCHILDREN = 0x02000000;
+
+        private const uint WM_SIZE = 0x0005;
+        private const int WM_MOUSEMOVE = 0x0200;
 
         private delegate IntPtr WndProcDelegate(IntPtr hWnd, uint msg, IntPtr wParam, IntPtr lParam);
         private static readonly WndProcDelegate _wndProc = WndProc;
@@ -48,6 +52,7 @@ namespace MovieAgent.Controls.Window.D3D9Window
         private IDirect3DSurface9? _systemMemorySurface;
         private IDirect3DTexture9? _renderTargetTexture;
         private IDirect3DSurface9? _renderTargetSurface;
+        private IDirect3DQuery9? _frameQuery; // GPU 事件查询，用于帧同步防止画面抖动
 
         private IntPtr _hwnd, _parentHwnd;
         private bool _d3dInitialized, _disposed;
@@ -66,15 +71,18 @@ namespace MovieAgent.Controls.Window.D3D9Window
         private VideoScaleMode _scaleMode = VideoScaleMode.Fit;
 
         public readonly Dispatcher _uiDispatcher;
+        private static D3D9VideoRenderer? _currentRenderer;
+
         [DllImport("user32.dll")]
         private static extern bool SetWindowPos(IntPtr hWnd, IntPtr hWndInsertAfter,
     int X, int Y, int cx, int cy, uint uFlags);
 
         private const uint SWP_NOZORDER = 0x0004;
-       
+
         public D3D9VideoRenderer()
         {
             _uiDispatcher = Dispatcher.CurrentDispatcher;
+            _currentRenderer = this;
             Loaded += (_, _) => { };
             Unloaded += (_, _) => CleanupD3D();
         }
@@ -180,6 +188,7 @@ namespace MovieAgent.Controls.Window.D3D9Window
 
                     _swapChain = _d3dDevice.GetSwapChain(0);
                     _backBuffer = _swapChain.GetBackBuffer(0);
+                    _frameQuery = _d3dDevice.CreateQuery(QueryType.Event);
                     DebugLogger.WriteLine("D3D9Ex 设备创建成功");
                     return;
                 }
@@ -215,6 +224,7 @@ namespace MovieAgent.Controls.Window.D3D9Window
                 d3d9.Dispose();
                 _swapChain = _d3dDevice.GetSwapChain(0);
                 _backBuffer = _swapChain.GetBackBuffer(0);
+                _frameQuery = _d3dDevice.CreateQuery(QueryType.Event);
             }
             catch (Exception ex)
             {
@@ -273,12 +283,84 @@ namespace MovieAgent.Controls.Window.D3D9Window
 
         private static IntPtr WndProc(IntPtr hWnd, uint msg, IntPtr wParam, IntPtr lParam)
         {
+            if (msg == WM_SIZE && _currentRenderer != null)
+            {
+                int newWidth = (int)(lParam & 0xFFFF);
+                int newHeight = (int)((lParam >> 16) & 0xFFFF);
+                if (newWidth > 0 && newHeight > 0)
+                {
+                    _currentRenderer.OnWindowSizeChanged(newWidth, newHeight);
+                }
+            }
             return DefWindowProc(hWnd, msg, wParam, lParam);
         }
 
         public void SetScaleMode(VideoScaleMode mode)
         {
             if (_scaleMode != mode) { _scaleMode = mode; }
+        }
+
+        protected override IntPtr WndProc(IntPtr hwnd, int msg, IntPtr wParam, IntPtr lParam, ref bool handled)
+        {
+            switch (msg)
+            {
+                case WM_MOUSEMOVE:
+                    HandleMouseMove(lParam);
+                    handled = true;
+                    break;
+            }
+            return base.WndProc(hwnd, msg, wParam, lParam, ref handled);
+        }
+
+        private void HandleMouseMove(IntPtr lParam)
+        {
+            int x = lParam.ToInt32() & 0xFFFF;
+            int y = (lParam.ToInt32() >> 16) & 0xFFFF;
+
+            var args = new MouseEventArgs(Mouse.PrimaryDevice, Environment.TickCount)
+            {
+                RoutedEvent = UIElement.MouseMoveEvent,
+                Source = this
+            };
+            InputManager.Current.ProcessInput(args);
+        }
+
+        private void OnWindowSizeChanged(int newWidth, int newHeight)
+        {
+            if (_d3dDevice == null || _swapChain == null || !_d3dInitialized) return;
+            if (newWidth == _swapChainWidth && newHeight == _swapChainHeight) return;
+            if (newWidth <= 0 || newHeight <= 0) return;
+
+            if (!_uiDispatcher.CheckAccess())
+            {
+                _uiDispatcher.BeginInvoke(DispatcherPriority.Normal, () => OnWindowSizeChanged(newWidth, newHeight));
+                return;
+            }
+
+            try
+            {
+                var presentParams = new PresentParameters
+                {
+                    Windowed = true,
+                    SwapEffect = SwapEffect.Discard,
+                    BackBufferFormat = Format.X8R8G8B8,
+                    BackBufferCount = 2,
+                    DeviceWindowHandle = _hwnd,
+                    PresentationInterval = PresentInterval.One
+                };
+                _d3dDevice.Reset(ref presentParams);
+
+                _swapChain = _d3dDevice.GetSwapChain(0);
+                _backBuffer = _swapChain.GetBackBuffer(0);
+                _swapChainWidth = newWidth;
+                _swapChainHeight = newHeight;
+
+                DebugLogger.WriteLine($"D3D9 交换链尺寸调整: {newWidth}x{newHeight}");
+            }
+            catch (Exception ex)
+            {
+                DebugLogger.WriteLine($"D3D9 交换链尺寸调整失败: {ex.Message}");
+            }
         }
 
         private void CalculateDestRect(int videoW, int videoH, out Vortice.Direct3D9.Rect sourceRect, out Vortice.Direct3D9.Rect destRect)
@@ -379,33 +461,47 @@ namespace MovieAgent.Controls.Window.D3D9Window
                 return;
             }
 
+            // 只渲染最新帧，丢弃中间帧，防止 GPU 积压多个帧导致画面抖动
+            (IntPtr surfacePtr, int width, int height) latestFrame = default;
+            bool hasFrame = false;
             while (_hwFrameQueue.TryDequeue(out var frame))
             {
-                IDirect3DSurface9? decoderSurface = null;
-                try
-                {
-                    decoderSurface = new IDirect3DSurface9(frame.surfacePtr);
-                    decoderSurface.AddRef();
+                latestFrame = frame;
+                hasFrame = true;
+            }
 
-                    _videoWidth = frame.width;
-                    _videoHeight = frame.height;
+            if (!hasFrame) { Interlocked.Exchange(ref _hwRenderQueued, 0); return; }
 
-                    CalculateDestRect(frame.width, frame.height, out var srcRect, out var dstRect);
+            IDirect3DSurface9? decoderSurface = null;
+            try
+            {
+                decoderSurface = new IDirect3DSurface9(latestFrame.surfacePtr);
+                decoderSurface.AddRef();
 
-                    _d3dDevice.Clear(ClearFlags.Target, new Color(0, 0, 0), 1.0f, 0);
+                _videoWidth = latestFrame.width;
+                _videoHeight = latestFrame.height;
 
-                    _d3dDevice.StretchRect(decoderSurface, srcRect, _backBuffer, dstRect, TextureFilter.Linear);
+                CalculateDestRect(latestFrame.width, latestFrame.height, out var srcRect, out var dstRect);
 
-                    _swapChain.Present(Present.None);
-                }
-                catch (Exception ex)
-                {
-                    DebugLogger.WriteLine($"D3D9 硬解渲染异常: {ex.Message}");
-                }
-                finally
-                {
-                    decoderSurface?.Release();
-                }
+                // 等待上一帧 GPU 渲染完成，防止多帧同时渲染
+                WaitForGpuFrame();
+
+                _d3dDevice.Clear(ClearFlags.Target, new Color(0, 0, 0), 1.0f, 0);
+
+                _d3dDevice.StretchRect(decoderSurface, srcRect, _backBuffer, dstRect, TextureFilter.Linear);
+
+                _swapChain.Present(Present.None);
+
+                // 标记当前 Present 在 GPU 命令流中的位置，供下一帧等待
+                IssueFrameQuery();
+            }
+            catch (Exception ex)
+            {
+                DebugLogger.WriteLine($"D3D9 硬解渲染异常: {ex.Message}");
+            }
+            finally
+            {
+                decoderSurface?.Release();
             }
 
             if (!_hwFrameQueue.IsEmpty)
@@ -473,6 +569,9 @@ namespace MovieAgent.Controls.Window.D3D9Window
 
                 CalculateDestRect(w, h, out var srcRect, out var dstRect);
 
+                // 等待上一帧 GPU 渲染完成，防止多帧同时渲染
+                WaitForGpuFrame();
+
                 _d3dDevice.Clear(ClearFlags.Target, new Color(0, 0, 0), 1.0f, 0);
 
                 _d3dDevice.UpdateSurface(_systemMemorySurface, srcRect, _renderTargetSurface, new Int2(0, 0));
@@ -480,6 +579,9 @@ namespace MovieAgent.Controls.Window.D3D9Window
                 _d3dDevice.StretchRect(_renderTargetSurface, srcRect, _backBuffer, dstRect, TextureFilter.Linear);
 
                 _swapChain?.Present(Present.None);
+
+                // 标记当前 Present 在 GPU 命令流中的位置，供下一帧等待
+                IssueFrameQuery();
             }
             catch (Exception ex)
             {
@@ -590,6 +692,27 @@ namespace MovieAgent.Controls.Window.D3D9Window
             _systemMemorySurface = null;
         }
 
+        private void WaitForGpuFrame()
+        {
+            if (_frameQuery == null) return;
+            try
+            {
+                // 等待 GPU 完成上一帧的渲染（flush=true 会阻塞直到 GPU 完成）
+                _frameQuery.GetData(out bool _, true);
+            }
+            catch { /* 查询可能因设备丢失而失败，忽略 */ }
+        }
+
+        private void IssueFrameQuery()
+        {
+            if (_frameQuery == null) return;
+            try
+            {
+                _frameQuery.Issue(Issue.End);
+            }
+            catch { /* 忽略 */ }
+        }
+
         private void CleanupD3D()
         {
             _stopRequested = true;
@@ -597,6 +720,8 @@ namespace MovieAgent.Controls.Window.D3D9Window
 
             CleanupBGRResources();
 
+            _frameQuery?.Dispose();
+            _frameQuery = null;
             _backBuffer?.Dispose();
             _swapChain?.Dispose();
             _d3dDevice?.Dispose();

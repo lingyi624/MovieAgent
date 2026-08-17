@@ -1,5 +1,6 @@
 using Microsoft.AspNetCore.Components.RenderTree;
 using Microsoft.AspNetCore.Components.WebView.Wpf;
+using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Win32;
 using MovieAgent.Controls;
@@ -10,6 +11,7 @@ using MovieAgent.Core.Interfaces;
 using MovieAgent.Infrastructure.Services;
 using MovieAgent.Services;
 using NAudio.Gui;
+using Newtonsoft.Json.Linq;
 using System;
 using System.IO;
 using System.Management;
@@ -47,6 +49,7 @@ public partial class MainWindow : Window
     private const int IdleMinutes = 1;
     private bool _isWallpaperVisible = false;
     private MovieWallpaperWindow _movieWallpaperWindow;
+    private readonly IConfiguration _configuration;
 
     public MainWindow()
     {
@@ -68,6 +71,8 @@ public partial class MainWindow : Window
         }
         
         _logger = services.GetRequiredService<ILoggerService>();
+        _configuration = services.GetRequiredService<IConfiguration>();
+
         Console.WriteLine("[MainWindow] 获取 ILoggerService 完成");
         _playerService = services.GetRequiredService<IPlayerService>();
 
@@ -297,8 +302,13 @@ public partial class MainWindow : Window
             string _currentMovieTitle = Path.GetFileNameWithoutExtension(filePath);
             if (string.IsNullOrEmpty(_currentMovieTitle))
                 _currentMovieTitle = Path.GetFileName(filePath);
-
-            var CurrentD3dModel = D3DMode.D3D11;
+         var d3dMode=   _configuration["Decode:D3DMode"].ToUpper() switch
+        {
+            "D3D9" => D3DMode.D3D9,
+            "D3D12" => D3DMode.D3D12,
+            _ => D3DMode.D3D11
+        };
+        var CurrentD3dModel = d3dMode;
             if (CurrentD3dModel == D3DMode.D3D9)
             {
                 var videoWindow = new VideoWindow(_playerService!, actualPlayPath, _currentMovieTitle);
@@ -316,9 +326,8 @@ public partial class MainWindow : Window
             }
             else if (CurrentD3dModel == D3DMode.D3D12)
             {
-                var videoWindow = new MovieAgent.D3D12Window.VideoWindow(); 
-                videoWindow.Show();
-               var controlWindow = new MovieAgent.D3D12Window.ControlWindow(videoWindow);
+                var controlWindow = new MovieAgent.D3D12Window.ControlWindow();
+                controlWindow.Show();
                 _ = controlWindow.StartPlaybackAsync(actualPlayPath, _currentMovieTitle);
             } 
         }
@@ -492,6 +501,58 @@ public partial class MainWindow : Window
         return result == true ? selectedPath : null;
     }
 
+    #region 自定义标题栏事件
+
+    private void TitleBar_MouseLeftButtonDown(object sender, MouseButtonEventArgs e)
+    {
+        if (e.ClickCount == 2)
+            MaxRestoreButton_Click(sender, e);
+        else if (e.LeftButton == MouseButtonState.Pressed)
+            DragMove();
+    }
+
+    private void Window_StateChanged(object sender, EventArgs e)
+    {
+        if (WindowState == WindowState.Maximized)
+        {
+            OuterBorder.CornerRadius = new CornerRadius(0);
+            OuterBorder.Margin = new Thickness(0);
+            if (MaxRestoreButton != null)
+                MaxRestoreButton.Content = "\uE923"; // Restore icon
+        }
+        else
+        {
+            OuterBorder.CornerRadius = new CornerRadius(8);
+            OuterBorder.Margin = new Thickness(0);
+            if (MaxRestoreButton != null)
+                MaxRestoreButton.Content = "\uE922"; // Maximize icon
+        }
+    }
+
+    private void Window_MouseLeftButtonDown(object sender, MouseButtonEventArgs e)
+    {
+        // Reserved for potential window-level interactions
+    }
+
+    private void MinimizeButton_Click(object sender, RoutedEventArgs e)
+    {
+        WindowState = WindowState.Minimized;
+    }
+
+    private void MaxRestoreButton_Click(object sender, RoutedEventArgs e)
+    {
+        WindowState = WindowState == WindowState.Maximized
+            ? WindowState.Normal
+            : WindowState.Maximized;
+    }
+
+    private void CloseButton_Click(object sender, RoutedEventArgs e)
+    {
+        Close();
+    }
+
+    #endregion
+
     protected override void OnClosing(System.ComponentModel.CancelEventArgs e)
     {
         base.OnClosing(e);
@@ -515,7 +576,8 @@ public partial class MainWindow : Window
             }
 
             _logger.Debug("[MainWindow] 所有资源已释放");
-            
+            System.Windows.Application.Current.Shutdown();
+
         }
         catch (Exception ex)
         {

@@ -78,6 +78,37 @@
         </MudPaper>
     </MudTabPanel>
 
+    <MudTabPanel Text="解码设置" Style="background: #1A1A2E; color: #E0E0E0;">
+        <MudText Typo="Typo.h6" Style="margin: 16px 0;">视频解码配置</MudText>
+        <MudPaper Elevation="1" Style="padding: 16px; background: #2D2D44;">
+            <MudGrid>
+                <MudItem xs="12" md="6">
+                    <MudSelect @bind-Value="_decodeMode" Label="解码模式" Variant="Variant.Outlined"
+                               Style="background: #2D2D44; margin-bottom: 16px;"
+                               HelperText="Auto: 优先硬件解码，失败回退软件 / Hardware: 强制硬件解码 / Software: 强制软件解码">
+                        <MudSelectItem T="string" Value="@("Auto")">Auto - 自动选择</MudSelectItem>
+                        <MudSelectItem T="string" Value="@("Hardware")">Hardware - 强制硬件解码</MudSelectItem>
+                        <MudSelectItem T="string" Value="@("Software")">Software - 强制软件解码</MudSelectItem>
+                    </MudSelect>
+                </MudItem>
+                <MudItem xs="12" md="6">
+                    <MudSelect @bind-Value="_d3dMode" Label="D3D 硬解模式" Variant="Variant.Outlined"
+                               Style="background: #2D2D44; margin-bottom: 16px;"
+                               HelperText="选择硬件解码使用的 Direct3D 版本">
+                        <MudSelectItem T="string" Value="@("D3D9")">D3D9</MudSelectItem>
+                        <MudSelectItem T="string" Value="@("D3D11")">D3D11</MudSelectItem>
+                        <MudSelectItem T="string" Value="@("D3D12")">D3D12</MudSelectItem>
+                    </MudSelect>
+                </MudItem>
+            </MudGrid>
+            <MudText Typo="Typo.caption" Style="color: #888; margin-bottom: 16px;">
+                修改解码设置后，下次播放视频时生效。
+            </MudText>
+            <MudButton Variant="Variant.Filled" Color="Color.Primary" OnClick="SaveDecodeSettings" 
+                       Style="background: #E94560;">保存</MudButton>
+        </MudPaper>
+    </MudTabPanel>
+
     <MudTabPanel Text="TMDB API" Style="background: #1A1A2E; color: #E0E0E0;">
         <MudText Typo="Typo.h6" Style="margin: 16px 0;">TMDB API 配置</MudText>
         <MudPaper Elevation="1" Style="padding: 16px; background: #2D2D44;">
@@ -331,6 +362,10 @@
     private int _maxConcurrentDownloads = 3;
     private int _maxRetries = 3;
 
+    // 解码设置
+    private string _decodeMode = "Auto";
+    private string _d3dMode = "D3D11";
+
     // AI 模型配置
     private List<ModelConfig> _availableModels = new();
     private ModelConfig? _selectedModel;
@@ -360,6 +395,7 @@
         LoadBackups();
         LoadAiModels();
             LoadDownloadSettings();
+        LoadDecodeSettings();
 
             await InitializeSpeechService();
     }
@@ -750,31 +786,29 @@
         try
         {
             var path = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "appsettings.json");
-            var json = File.Exists(path) ? File.ReadAllText(path) : "{}"; 
-           
-            using var doc = JsonDocument.Parse(json, new JsonDocumentOptions { AllowTrailingCommas = true });
-            var root = doc.RootElement.Clone();
-            
-            using var stream = new MemoryStream();
-            using var writer = new Utf8JsonWriter(stream, new JsonWriterOptions { Indented = true });
-            
-            writer.WriteStartObject();
-            
-            foreach (var property in root.EnumerateObject())
-            {
-                property.WriteTo(writer);
-            }
-            
+            var json = File.Exists(path) ? File.ReadAllText(path) : "{}";
+
+            var root = System.Text.Json.Nodes.JsonNode.Parse(json) as System.Text.Json.Nodes.JsonObject
+                       ?? new System.Text.Json.Nodes.JsonObject();
+
             foreach (var kv in updates)
             {
                 var parts = kv.Key.Split(':');
-                writer.WriteString(kv.Key, kv.Value?.ToString() ?? "");
+                var current = root;
+                for (int i = 0; i < parts.Length - 1; i++)
+                {
+                    if (current[parts[i]] is not System.Text.Json.Nodes.JsonObject child)
+                    {
+                        child = new System.Text.Json.Nodes.JsonObject();
+                        current[parts[i]] = child;
+                    }
+                    current = child;
+                }
+                current[parts[^1]] = System.Text.Json.Nodes.JsonValue.Create(kv.Value);
             }
-            
-            writer.WriteEndObject();
-            writer.Flush();
-            
-            File.WriteAllText(path, Encoding.UTF8.GetString(stream.ToArray()));
+
+            var options = new JsonSerializerOptions { WriteIndented = true };
+            File.WriteAllText(path, root.ToJsonString(options));
         }
         catch (Exception ex)
         {
@@ -1027,6 +1061,31 @@
         _useNasForDownload = bool.TryParse(Config["Download:UseNasForDownload"], out var un) && un;
         _maxConcurrentDownloads = int.TryParse(Config["Download:MaxConcurrentDownloads"], out var mc) ? mc : 3;
         _maxRetries = int.TryParse(Config["Download:MaxRetries"], out var mr) ? mr : 3;
+    }
+
+    private void LoadDecodeSettings()
+    {
+        _decodeMode = Config["Decode:DecodeMode"] ?? "Auto";
+        _d3dMode = Config["Decode:D3DMode"] ?? "D3D11";
+    }
+
+    private void SaveDecodeSettings()
+    {
+        try
+        {
+            var config = new Dictionary<string, object>
+            {
+                ["Decode:DecodeMode"] = _decodeMode,
+                ["Decode:D3DMode"] = _d3dMode
+            };
+
+            SaveAppSettings(config);
+            Snackbar.Add("解码设置已保存，下次播放时生效", Severity.Success);
+        }
+        catch (Exception ex)
+        {
+            Snackbar.Add($"保存失败: {ex.Message}", Severity.Error);
+        }
     }
 
     private void BrowseDownloadDir()

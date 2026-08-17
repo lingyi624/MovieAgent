@@ -6,7 +6,7 @@
         xmlns:controls="clr-namespace:MovieAgent.Controls.Window.D3D9Window"
         mc:Ignorable="d"   Width="1200" Height="720"
         Title="视频播放"   WindowStyle="None" AllowsTransparency="False" Background="#01000000"
-        Loaded="Window_Loaded" Closed="Window_Closed" MouseMove="Window_MouseMove"     KeyDown="Window_KeyDown">
+        Loaded="Window_Loaded" Closed="Window_Closed" KeyDown="Window_KeyDown">
     <Window.Resources>
         <Style x:Key="RoundedButtonStyle" TargetType="Button">
             <Setter Property="Template">
@@ -121,67 +121,59 @@
 
     <Grid x:Name="MainGrid" >
         
-        <controls:D3D9VideoRenderer Grid.Row="1" x:Name="VideoRenderer"/>
-        <!--<controls:D3D9ZeroCopyVideoRenderer x:Name="VideoRenderer"/>-->
-        <!--<controls:D3DImageVideoRenderer  x:Name="VideoRenderer"/>-->
-
-
-        <!--<Border Background="Transparent" IsHitTestVisible="False" />-->
-
-        <TextBlock x:Name="SubtitleTextBlock" 
-                   HorizontalAlignment="Center"
-                   VerticalAlignment="Bottom"
-                   Margin="40,80"
-                   Foreground="White"
-                   FontSize="24"
-                   FontFamily="Microsoft YaHei"
-                   TextWrapping="Wrap"
-                   TextAlignment="Center"
-                   Padding="15,10"
-                   Background="Transparent"
-                   Visibility="Collapsed"
-                   MaxWidth="800" />
-
-        <Popup x:Name="ControlsPopup" StaysOpen="True" Placement="Center"  
+        <controls:D3D9VideoRenderer Grid.Row="1" x:Name="VideoRenderer" MouseMove="Window_MouseMove"/> 
+        <Popup x:Name="TopBarPopup" StaysOpen="True" Placement="Absolute"
+               HorizontalOffset="0" VerticalOffset="0" Width="{Binding ActualWidth, ElementName=MainGrid}"
                AllowsTransparency="True" PopupAnimation="Fade">
-            <Grid x:Name="ControlsPopupGrid"  >
-                <Border x:Name="TopBar" Panel.ZIndex="1" Background="#E6000000" VerticalAlignment="Top" Padding="10" Margin="20" CornerRadius="10">
-                    <Grid>
-                        <Grid.ColumnDefinitions>
-                            <ColumnDefinition Width="Auto"/>
-                            <ColumnDefinition Width="*"/>
-                            <ColumnDefinition Width="Auto"/>
-                        </Grid.ColumnDefinitions>
-                        <StackPanel Grid.Column="0" Orientation="Vertical" Margin="10,5">
-                            <TextBlock x:Name="MovieTitle" Foreground="White" FontSize="16" 
-                                       FontWeight="Bold" TextTrimming="CharacterEllipsis"
-                                       VerticalAlignment="Center" ToolTip="电影标题"/>
+            <Border x:Name="TopBar" Background="#E6000000" CornerRadius="10" 
+                    Margin="20,20,20,0" HorizontalAlignment="Stretch" Padding="10">
+                <Grid>
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="Auto"/>
+                        <ColumnDefinition Width="*"/>
+                        <ColumnDefinition Width="Auto"/>
+                        <ColumnDefinition Width="Auto"/>
+                    </Grid.ColumnDefinitions>
+                    <StackPanel Grid.Column="0" Orientation="Vertical" Margin="10,5">
+                        <TextBlock x:Name="MovieTitle" Foreground="White" FontSize="16" 
+                                   FontWeight="Bold" TextTrimming="CharacterEllipsis"
+                                   VerticalAlignment="Center" ToolTip="电影标题"/>
+                    </StackPanel>
+                    <StackPanel Grid.Column="1" Orientation="Horizontal" HorizontalAlignment="Center" Margin="10,5">
+                        <TextBlock x:Name="PlayStatusText" Foreground="#FFE94560" FontSize="14" 
+                                   VerticalAlignment="Center" />
+                        <TextBlock Text=" | " Foreground="#555" Margin="8,0"/>
+                        <TextBlock x:Name="AudioInfo" Foreground="#FFD0D0D0" FontSize="13" 
+                                   VerticalAlignment="Center" />
+                        <TextBlock Text=" | " Foreground="#555" Margin="8,0"/>
+                        <TextBlock x:Name="VideoInfo" Foreground="#FFD0D0D0" FontSize="13" 
+                                   VerticalAlignment="Center" />
+                    </StackPanel>
+                    <StackPanel Grid.Column="2" Orientation="Horizontal" HorizontalAlignment="Right" Margin="10,5">
+                        <StackPanel Orientation="Horizontal">
+                            <TextBlock Text="⚡" FontSize="14" VerticalAlignment="Center" Margin="0,0,5,0"/>
+                            <TextBlock x:Name="DecodeModeInfo" Foreground="#FFE94560" FontSize="13" 
+                                       FontWeight="Bold" VerticalAlignment="Center" ToolTip="当前解码方式"/>
                         </StackPanel>
-                        <StackPanel Grid.Column="1" Orientation="Horizontal" HorizontalAlignment="Center" Margin="10,5">
-                            <TextBlock x:Name="PlayStatusText" Foreground="#FFE94560" FontSize="14" 
-                                       VerticalAlignment="Center" />
-                            <TextBlock Text=" | " Foreground="#555" Margin="8,0"/>
-                            <TextBlock x:Name="AudioInfo" Foreground="#FFD0D0D0" FontSize="13" 
-                                       VerticalAlignment="Center" />
-                            <TextBlock Text=" | " Foreground="#555" Margin="8,0"/>
-                            <TextBlock x:Name="VideoInfo" Foreground="#FFD0D0D0" FontSize="13" 
-                                       VerticalAlignment="Center" />
-                        </StackPanel>
-                        <StackPanel Grid.Column="2" Orientation="Horizontal" HorizontalAlignment="Right" Margin="10,5">
-                            <StackPanel Orientation="Horizontal">
-                                <TextBlock Text="⚡" FontSize="14" VerticalAlignment="Center" Margin="0,0,5,0"/>
-                                <TextBlock x:Name="DecodeModeInfo" Foreground="#FFE94560" FontSize="13" 
-                                           FontWeight="Bold" VerticalAlignment="Center" ToolTip="当前解码方式"/>
-                            </StackPanel>
-                            <Button x:Name="CloseButton" Content="✕" Foreground="White" Background="Transparent" 
-                                    Width="30" Height="30" FontSize="16" Click="CloseButton_Click" Margin="10,0,0,0"
-                                      />
-                        </StackPanel>
-                    </Grid>
-                </Border>
+                    </StackPanel>
+                    <StackPanel Orientation="Horizontal" Grid.Column="3">
+                        <Button Click="Min_Click" x:Name="Min" VerticalAlignment="Center"  Style="{StaticResource ControlButtonStyle}" >最小化</Button>
+                        <Button Click="Restore_Click" x:Name="Restore" VerticalAlignment="Center"  Style="{StaticResource ControlButtonStyle}" >还原</Button>
+                        <Button Click="CloseWindow_Click" x:Name="CloseWindow" VerticalAlignment="Center"  Style="{StaticResource ControlButtonStyle}" >关闭</Button>
+                    </StackPanel>
+                </Grid>
+            </Border>
+        </Popup>
 
-                <Border x:Name="BottomBar"  Panel.ZIndex="1" HorizontalAlignment="Stretch" VerticalAlignment="Bottom" 
-                        Background="#E6000000">
+        <Popup x:Name="ControlsPopup" StaysOpen="True" Placement="Absolute"
+               HorizontalOffset="300" VerticalOffset="1000" Width="{Binding ActualWidth, ElementName=MainGrid}"
+               AllowsTransparency="True" PopupAnimation="Fade">
+            <Grid>
+                <Grid.RowDefinitions>
+                    <RowDefinition Height="Auto"/>
+                </Grid.RowDefinitions>
+
+                <Border x:Name="BottomBar" Grid.Row="0" HorizontalAlignment="Stretch" Background="#E6000000" CornerRadius="10,10,0,0">
                     <Grid>
                         <Grid.RowDefinitions>
                             <RowDefinition Height="Auto"/>
@@ -203,6 +195,7 @@
                                     Background="Transparent" 
                                     BorderBrush="Transparent"
                                     ValueChanged="ProgressSlider_ValueChanged"
+                                    PreviewMouseLeftButtonDown="ProgressSlider_MouseDown"
                                     PreviewMouseLeftButtonUp="ProgressSlider_MouseUp"
                                     IsMoveToPointEnabled="True"
                                     LargeChange="5000" SmallChange="1000"
@@ -213,7 +206,7 @@
                         </Grid>
 
                         <StackPanel Grid.Row="1" Orientation="Horizontal" HorizontalAlignment="Center" 
-                                    VerticalAlignment="Center" Margin="0,8,0,30">
+                                    VerticalAlignment="Center" Margin="0,8,0,15">
                             <Button x:Name="StopButton" Content="停止" Click="StopButton_Click" 
                                     Style="{StaticResource ControlButtonStyle}" ToolTip="停止播放"/>
                             <Border Width="1" Background="#555" Margin="10,5"/>
@@ -251,15 +244,14 @@
                         </StackPanel>
                     </Grid>
                 </Border>
-
-                <Border x:Name="CenterOverlay"   Background="Transparent" VerticalAlignment="Center" HorizontalAlignment="Center"
-                         >
-                    <Button x:Name="CenterPlayButton" Content="▶" Foreground="White" Background="Transparent" 
-                            Width="80" Height="80" FontSize="40" Click="CenterPlayButton_Click"
-                            Style="{x:Null}"/>
-                </Border>
             </Grid>
         </Popup>
+
+        <Border x:Name="CenterOverlay" Background="Transparent" VerticalAlignment="Center" HorizontalAlignment="Center">
+            <Button x:Name="CenterPlayButton" Content="▶" Foreground="White" Background="Transparent" 
+                    Width="80" Height="80" FontSize="40" Click="CenterPlayButton_Click"
+                    Style="{x:Null}"/>
+        </Border>
 
         <Popup x:Name="AudioPopup" StaysOpen="False" Placement="Top" 
                PlacementTarget="{Binding ElementName=AudioButton}"
@@ -460,6 +452,31 @@
                                FontSize="12" Margin="10,5,10,5" TextAlignment="Center"/>
                 </StackPanel>
             </Border>
+        </Popup>
+        <!-- 独立字幕Popup（顶层窗口，覆盖D3D渲染面） -->
+        <Popup x:Name="SubtitleDisplayPopup" StaysOpen="True" Placement="Absolute"
+               HorizontalOffset="0" VerticalOffset="0"
+               Width="{Binding ActualWidth, ElementName=MainGrid}"
+               Height="{Binding ActualHeight, ElementName=MainGrid}"
+               AllowsTransparency="True" PopupAnimation="Fade"
+               IsOpen="True">
+            <Grid Width="{Binding ActualWidth, ElementName=MainGrid}"
+                  Height="{Binding ActualHeight, ElementName=MainGrid}"
+                  Background="Transparent">
+                <TextBlock x:Name="SubtitleTextBlock"
+                           HorizontalAlignment="Center"
+                           VerticalAlignment="Bottom"
+                           Margin="40,80"
+                           Foreground="White" Text=""
+                           FontSize="24"
+                           FontFamily="Microsoft YaHei"
+                           TextWrapping="Wrap"
+                           TextAlignment="Center"
+                           Padding="15,10"
+                           Background="Transparent"
+                           Visibility="Collapsed"
+                           MaxWidth="800" />
+            </Grid>
         </Popup>
     </Grid>
 </Window>

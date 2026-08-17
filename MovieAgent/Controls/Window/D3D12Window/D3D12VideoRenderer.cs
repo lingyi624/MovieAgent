@@ -1,4 +1,4 @@
-﻿﻿﻿﻿using MovieAgent.FFmpegDecoder;
+﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿using MovieAgent.FFmpegDecoder;
 using NAudio.CoreAudioApi;
 using NAudio.Utils;
 using SharpGen.Runtime;
@@ -9,6 +9,7 @@ using System.IO;
 using System.Runtime.InteropServices;
 using System.Threading;
 using System.Windows;
+using System.Windows.Input;
 using System.Windows.Interop;
 using System.Windows.Threading;
 using Vortice;
@@ -29,6 +30,9 @@ namespace MovieAgent.D3D12Window
                            WS_VISIBLE = 0x10000000,
                            WS_CLIPSIBLINGS = 0x04000000,
                            WS_CLIPCHILDREN = 0x02000000;
+
+        private const uint WM_SIZE = 0x0005;
+        private const int WM_MOUSEMOVE = 0x0200;
 
         private delegate IntPtr WndProcDelegate(IntPtr hWnd, uint msg, IntPtr wParam, IntPtr lParam);
         private static readonly WndProcDelegate _wndProc = WndProc;
@@ -89,6 +93,9 @@ namespace MovieAgent.D3D12Window
         private bool _pipelineReady;
         private VertexBufferView _vertexBufferView;
 
+        // 硬解纹理引用（防止 GC 回收包装器导致 Release 误释放私有纹理）
+        private ID3D12Resource? _currentHwTexture;
+
         // 窗口与尺寸
         private IntPtr _hwnd, _parentHwnd;
         private bool _initialized, _disposed;
@@ -114,10 +121,12 @@ namespace MovieAgent.D3D12Window
         private bool _nv12TextureInCopyDest;         // 跟踪 NV12 纹理当前状态
 
         public readonly Dispatcher _uiDispatcher;
+        private static D3D12VideoRenderer? _currentRenderer;
 
         public D3D12VideoRenderer()
         {
             _uiDispatcher = Dispatcher.CurrentDispatcher;
+            _currentRenderer = this;
             Loaded += (_, _) => { };
             Unloaded += (_, _) => Cleanup();
         }
@@ -180,16 +189,22 @@ namespace MovieAgent.D3D12Window
 
         private void CreateDevice()
         {
-#if DEBUG
-            try
+            // 调试层改为环境变量开关（MOVIEAGENT_D3D12_DEBUG=1）。
+            // 注意：EnableDebugLayer 是进程级开关，Intel Iris Xe 部分驱动在启用调试层后
+            // D3D12CreateDevice 会静默失败（实测2ms内返回Failure），导致设备落到无显示输出
+            // 的独显上，交换链/管线随之异常。默认关闭，保持与发布版行为一致。
+            if (Environment.GetEnvironmentVariable("MOVIEAGENT_D3D12_DEBUG") == "1")
             {
-                var debug = D3D12.D3D12GetDebugInterface<ID3D12Debug>();
-                debug?.EnableDebugLayer();
-                var debug5 = debug?.QueryInterface<ID3D12Debug5>();
-                debug5?.SetEnableAutoName(true);
-              }
-            catch { }
-#endif
+                try
+                {
+                    var debug = D3D12.D3D12GetDebugInterface<ID3D12Debug>();
+                    debug?.EnableDebugLayer();
+                    var debug5 = debug?.QueryInterface<ID3D12Debug5>();
+                    debug5?.SetEnableAutoName(true);
+                    DebugLogger.WriteLine("D3D12 调试层已启用（MOVIEAGENT_D3D12_DEBUG=1）");
+                }
+                catch { }
+            }
             SafeDispose(ref _commandQueue);
             SafeDispose(ref _swapChain);
             SafeDispose(ref _device);
@@ -198,40 +213,89 @@ namespace MovieAgent.D3D12Window
             factoryResult.CheckError();
             _dxgiFactory = factory;
 
-            IDXGIAdapter1? adapter = null;
+            List<IDXGIAdapter1> adapters = new List<IDXGIAdapter1>();
             using var factory1 = factory.QueryInterface<IDXGIFactory1>();
             for (int i = 0; ; i++)
             {
                 Result result = factory1.EnumAdapters1((uint)i, out IDXGIAdapter1 a);
                 if (result.Failure || a == null) break;
                 AdapterDescription1 desc = a.Description1;
-                if ((desc.Flags & AdapterFlags.Software) == 0&& (desc.VendorId == 0x10DE && desc.Description.Contains("RTX 3050")))
+                if ((desc.Flags & AdapterFlags.Software) == 0)
                 {
-                    adapter = a;
-                    break;
+                    adapters.Add(a);
                 }
-                a.Dispose();
+                else
+                {
+                    a.Dispose();
+                }
             }
-            //foreach (var adapter in adapters)
-            //{
-            //    var desc = adapter.Description;
-            //    // 根据 VendorId (0x10DE = NVIDIA) 或 描述包含 "NVIDIA" 来锁定
-            //    if (desc.VendorId == 0x10DE && desc.Description.Contains("RTX 3050"))
-            //    {
-            //        // 用这个 adapter 去创建设备
-            //        var device = D3D12.D3D12CreateDevice(adapter, FeatureLevel.Level_12_0);
-            //        break;
-            //    }
-            //}
 
-
-            if (adapter == null)
+            if (adapters.Count == 0)
                 throw new InvalidOperationException("未找到可用的硬件适配器");
 
-            Result resultDevice = D3D12.D3D12CreateDevice(adapter, FeatureLevel.Level_12_0, out ID3D12Device device);
-            resultDevice.CheckError();
+            // 优先选择有显示输出的适配器（驱动显示器的GPU），这对Optimus笔记本至关重要
+            // 在Y7000P等Optimus笔记本上，Intel核显驱动显示器，NVIDIA独显做渲染
+            // 交换链必须创建在驱动显示器的GPU上，否则Present会崩溃
+            adapters.Sort((a, b) =>
+            {
+                AdapterDescription1 descA = a.Description1;
+                AdapterDescription1 descB = b.Description1;
+                bool hasOutputA = AdapterHasOutputs(a);
+                bool hasOutputB = AdapterHasOutputs(b);
+                // 有输出的适配器优先
+                if (hasOutputA && !hasOutputB) return -1;
+                if (!hasOutputA && hasOutputB) return 1;
+                // 都有输出或都没输出时，按显存大小排序（独显优先）
+                return descB.DedicatedVideoMemory.CompareTo(descA.DedicatedVideoMemory);
+            });
+
+            ID3D12Device? device = null;
+            FeatureLevel selectedFeatureLevel = FeatureLevel.Level_12_0;
+            IDXGIAdapter1? selectedAdapter = null;
+            FeatureLevel[] featureLevels = { FeatureLevel.Level_12_0, FeatureLevel.Level_11_1, FeatureLevel.Level_11_0 };
+
+            foreach (var adapter in adapters)
+            {
+                AdapterDescription1 desc = adapter.Description1;
+                bool hasOutputs = AdapterHasOutputs(adapter);
+                DebugLogger.WriteLine($"D3D12 尝试适配器: {desc.Description}, 显存: {desc.DedicatedVideoMemory / 1024 / 1024}MB, 有输出: {hasOutputs}");
+                foreach (var featureLevel in featureLevels)
+                {
+                    try
+                    {
+                        Result resultDevice = D3D12.D3D12CreateDevice(adapter, featureLevel, out ID3D12Device dev);
+                        if (resultDevice.Success && dev != null)
+                        {
+                            device = dev;
+                            selectedFeatureLevel = featureLevel;
+                            selectedAdapter = adapter;
+                            DebugLogger.WriteLine($"D3D12 设备创建成功: {desc.Description}, FeatureLevel: {featureLevel}");
+                            break;
+                        }
+                        // 静默失败也记录，否则Intel失败→落到无输出的独显，问题无从排查
+                        DebugLogger.WriteLine($"D3D12 创建设备失败(静默): {desc.Description}, FeatureLevel: {featureLevel}, HR: 0x{resultDevice.Code:X}");
+                    }
+                    catch (Exception ex)
+                    {
+                        DebugLogger.WriteLine($"D3D12 创建设备失败: {desc.Description}, FeatureLevel: {featureLevel}, 异常: {ex.Message}");
+                    }
+                }
+                if (device != null)
+                    break;
+            }
+
+            foreach (var adapter in adapters)
+            {
+                if (adapter != selectedAdapter)
+                {
+                    adapter.Dispose();
+                }
+            }
+
+            if (device == null)
+                throw new InvalidOperationException("无法创建D3D12设备");
+
             _device = device;
-            adapter.Dispose();
 
             _commandQueue = _device.CreateCommandQueue(new CommandQueueDescription(CommandListType.Direct)
             {
@@ -252,10 +316,11 @@ namespace MovieAgent.D3D12Window
                 SwapEffect = SwapEffect.FlipSequential,
                 Scaling = Scaling.Stretch,
                 AlphaMode = AlphaMode.Ignore,
-                Flags = SwapChainFlags.AllowTearing // 可启用撕裂以降低延迟
+                Flags = SwapChainFlags.None // 视频播放不需要 AllowTearing，VSYNC 同步更稳定
             };
             _swapChain = _dxgiFactory!.CreateSwapChainForHwnd(_commandQueue!, _hwnd, desc)
                 .QueryInterface<IDXGISwapChain3>();
+            //_swapChain.MaximumFrameLatency = 1; // 限制帧队列深度为1，防止画面抖动
             _dxgiFactory.MakeWindowAssociation(_parentHwnd, WindowAssociationFlags.IgnoreAll);
             _currentBackBufferIndex = _swapChain.CurrentBackBufferIndex;
         }
@@ -331,6 +396,66 @@ namespace MovieAgent.D3D12Window
             }
         }
 
+        protected override IntPtr WndProc(IntPtr hwnd, int msg, IntPtr wParam, IntPtr lParam, ref bool handled)
+        {
+            switch (msg)
+            {
+                case WM_MOUSEMOVE:
+                    HandleMouseMove(lParam);
+                    handled = true;
+                    break;
+            }
+            return base.WndProc(hwnd, msg, wParam, lParam, ref handled);
+        }
+
+        private void HandleMouseMove(IntPtr lParam)
+        {
+            int x = lParam.ToInt32() & 0xFFFF;
+            int y = (lParam.ToInt32() >> 16) & 0xFFFF;
+
+            var args = new MouseEventArgs(Mouse.PrimaryDevice, Environment.TickCount)
+            {
+                RoutedEvent = UIElement.MouseMoveEvent,
+                Source = this
+            };
+            InputManager.Current.ProcessInput(args);
+        }
+
+        private void OnWindowSizeChanged(int newWidth, int newHeight)
+        {
+            if (_swapChain == null || !_initialized || !_swapChainReady) return;
+            if (newWidth <= 0) newWidth = 1;
+            if (newHeight <= 0) newHeight = 1;
+            if (newWidth == _swapChainWidth && newHeight == _swapChainHeight) return;
+
+            if (!_uiDispatcher.CheckAccess())
+            {
+                _uiDispatcher.BeginInvoke(DispatcherPriority.Normal, () => OnWindowSizeChanged(newWidth, newHeight));
+                return;
+            }
+
+            lock (_resizeLock)
+            {
+                WaitForGpu();
+
+                for (int i = 0; i < _backBuffers.Length; i++)
+                {
+                    _backBuffers[i]?.Dispose();
+                    _backBuffers[i] = null;
+                }
+                _rtvHeap?.Dispose();
+
+                _swapChain.ResizeBuffers(2, (uint)newWidth, (uint)newHeight, Format.B8G8R8A8_UNorm,
+                    SwapChainFlags.None);
+                _swapChainWidth = newWidth;
+                _swapChainHeight = newHeight;
+                _currentBackBufferIndex = _swapChain.CurrentBackBufferIndex;
+
+                CreateRtvHeap();
+                DebugLogger.WriteLine($"D3D12 交换链尺寸调整: {newWidth}x{newHeight}");
+            }
+        }
+
         private RawRect CalculateDestRect(int videoW, int videoH)
         {
             int dstW = _swapChainWidth, dstH = _swapChainHeight;
@@ -358,7 +483,9 @@ namespace MovieAgent.D3D12Window
         }
 
         // ----------------------------------------------------------
-        // 新着色器：接收 NV12 双平面（Y 为 R8, UV 为 R8G8）
+        // 新着色器：接收 NV12/P010 双平面（NV12: Y为R8/UV为R8G8; P010: Y为R16/UV为R16G16）
+        // g_bitDepth 为根常量（b0）：8=NV12, 10=P010
+        // NOTE: keep this shader source ASCII-only (compiler marshals to ANSI; non-ASCII truncates the tail).
         // ----------------------------------------------------------
         private const string ShaderSource = @"
 struct VSInput {
@@ -368,6 +495,11 @@ struct VSInput {
 struct PSInput {
     float4 pos : SV_POSITION;
     float2 uv  : TEXCOORD;
+};
+
+cbuffer VideoParams : register(b0)
+{
+    uint g_bitDepth; // 8 (NV12) or 10 (P010)
 };
 
 PSInput VSMain(VSInput input) {
@@ -382,14 +514,26 @@ Texture2D<float2> texUV : register(t1);
 SamplerState samp : register(s0);
 
 float4 PSMain(PSInput input) : SV_TARGET {
+    // Bit-depth dependent normalization: R16_UNorm sampling of P010 yields code/1023,
+    // R8_UNorm sampling of NV12 yields code/255.
+    float yLow    = (g_bitDepth == 10) ? (64.0 / 1023.0)  : (16.0 / 255.0);
+    float yScale  = (g_bitDepth == 10) ? (1023.0 / 876.0) : (255.0 / 219.0);
+    float uvCenter= (g_bitDepth == 10) ? (512.0 / 1023.0) : (128.0 / 255.0);
+    float uvScale = (g_bitDepth == 10) ? (1023.0 / 896.0) : (255.0 / 224.0);
+
     float y  = texY.Sample(samp, input.uv);
     float2 uv = texUV.Sample(samp, input.uv);
-    float u = uv.x - 0.5;
-    float v = uv.y - 0.5;
-    // BT.601 limited range
-    float r = y + 1.402 * v;
-    float g = y - 0.344136 * u - 0.714136 * v;
-    float b = y + 1.772 * u;
+
+    // Limited -> full range: Y [64,940]/[16,235] -> [0,1]; UV center 512/128 -> [-0.5,+0.5]
+    y = (y - yLow) * yScale;
+    float u = (uv.x - uvCenter) * uvScale;
+    float v = (uv.y - uvCenter) * uvScale;
+
+    // BT.709 coefficients (HD/UHD content); UV must be range-scaled,
+    // otherwise chroma amplitude is ~12 pct low (washed out, dull green).
+    float r = saturate(y + 1.5748 * v);
+    float g = saturate(y - 0.1873 * u - 0.4681 * v);
+    float b = saturate(y + 1.8556 * u);
     return float4(r, g, b, 1.0);
 }";
 
@@ -412,13 +556,14 @@ float4 PSMain(PSInput input) : SV_TARGET {
                     new InputElementDescription("TEXCOORD", 0, Format.R32G32_Float, 8, 0)
                 };
 
-                // 根签名：两个描述符表（SRV: Y+UV, Sampler）
+                // 根签名：两个描述符表（SRV: Y+UV, Sampler）+ 一个根常量（位深：8=NV12, 10=P010）
                 var srvRange = new DescriptorRange(DescriptorRangeType.ShaderResourceView, 2, 0);
                 var samplerRange = new DescriptorRange(DescriptorRangeType.Sampler, 1, 0);
                 var rootParams = new[]
                 {
                     new RootParameter(new RootDescriptorTable(new[] { srvRange }), ShaderVisibility.Pixel),
-                    new RootParameter(new RootDescriptorTable(new[] { samplerRange }), ShaderVisibility.Pixel)
+                    new RootParameter(new RootDescriptorTable(new[] { samplerRange }), ShaderVisibility.Pixel),
+                    new RootParameter(new RootConstants(1, 0, 0), ShaderVisibility.Pixel)
                 };
 
                 var rootSigDesc = new RootSignatureDescription(
@@ -635,16 +780,69 @@ float4 PSMain(PSInput input) : SV_TARGET {
                 _uiDispatcher.BeginInvoke(DispatcherPriority.Normal, RenderSoft);
         }
 
-        // 硬解接口（外部纹理句柄）- 注意：D3D11 纹理不能直接在 D3D12 中使用
-        // 由于 FFmpeg 的 D3D11VA 解码器输出的是 D3D11 纹理，D3D12 硬解路径需要使用 DXGI 共享句柄
-        // 当前实现使用 CPU 回退路径：读取像素数据然后重新上传
+        // 硬解接口：接收来自 FFmpegDecoderEngine 的 D3D12 私有纹理（已复制，状态为 PixelShaderResource）
+        // 同一命令队列：复制和渲染串行执行，无跨队列问题
         public void RenderHardwareTexture(IntPtr texturePtr, int width, int height,
             uint subresourceIndex = 0, bool isTextureArray = false)
         {
-            DebugLogger.WriteLine("D3D12 硬解路径暂不支持 D3D11 纹理，回退到 CPU 路径");
-            // 对于 D3D11 纹理，需要通过 DXGI 共享句柄才能在 D3D12 中使用
-            // 当前方案：记录错误并返回，由调用方处理
-            // 实际生产环境需要实现 DXGI 共享资源或保持使用 D3D11 渲染器
+            if (texturePtr == IntPtr.Zero || width <= 0 || height <= 0) return;
+
+            if (!_swapChainReady || !_pipelineReady || _commandQueue == null)
+            {
+                return;
+            }
+
+            try
+            {
+                EnsureCommandList();
+                // 先等待上一帧 GPU 命令完成，确保旧纹理不再被 GPU 使用
+                WaitForPreviousFrame();
+
+                // 释放上一帧的纹理包装器（AddRef 的引用），确保不会累积
+                _currentHwTexture?.Dispose();
+                _currentHwTexture = null;
+
+                // AddRef 后包装：texturePtr 指向解码器池中的私有纹理，池的包装器仍持有主引用。
+                // GC 回收此包装器时 Release 只减引用计数，不会销毁纹理。
+                Marshal.AddRef(texturePtr);
+                _currentHwTexture = new ID3D12Resource(texturePtr);
+
+                _commandAllocator!.Reset();
+                _commandList!.Reset(_commandAllocator, _pipelineState);
+                _currentBackBufferIndex = _swapChain!.CurrentBackBufferIndex;
+                ID3D12Resource backBuffer = _backBuffers[_currentBackBufferIndex]!;
+
+                _commandList.ResourceBarrierTransition(backBuffer, ResourceStates.Present, ResourceStates.RenderTarget);
+
+                // 纹理已在复制阶段转为 PixelShaderResource，同一队列无需额外转换
+                // 为硬件纹理创建 SRV（Y 和 UV 平面）
+                CreateNv12ShaderResourceViews(_currentHwTexture, width, height);
+
+                // 视口与绘制
+                RawRect dest = CalculateDestRect(width, height);
+                _commandList.RSSetViewport(new Viewport(dest.Left, dest.Top, dest.Right - dest.Left, dest.Bottom - dest.Top));
+                _commandList.RSSetScissorRect(dest);
+                _commandList.OMSetRenderTargets(GetCurrentRtvHandle(), null);
+                _commandList.ClearRenderTargetView(GetCurrentRtvHandle(), new Color4(0, 0, 0, 1));
+
+                _commandList.SetDescriptorHeaps(new ID3D12DescriptorHeap[] { _srvHeap!, _samplerHeap! });
+                _commandList.SetGraphicsRootSignature(_rootSignature);
+                _commandList.SetGraphicsRootDescriptorTable(0, _srvHeap!.GetGPUDescriptorHandleForHeapStart());
+                _commandList.SetGraphicsRootDescriptorTable(1, _samplerHeap!.GetGPUDescriptorHandleForHeapStart());
+                _commandList.SetGraphicsRoot32BitConstant(2, (uint)_currentBitDepth, 0);
+                _commandList.IASetVertexBuffers(0, _vertexBufferView);
+                _commandList.IASetPrimitiveTopology(PrimitiveTopology.TriangleStrip);
+                _commandList.DrawInstanced(4, 1, 0, 0);
+
+                _commandList.ResourceBarrierTransition(backBuffer, ResourceStates.RenderTarget, ResourceStates.Present);
+
+                ExecuteAndSignal();
+                _swapChain.Present(1, PresentFlags.None);
+            }
+            catch (Exception ex)
+            {
+                DebugLogger.WriteLine($"D3D12 硬解渲染异常: {ex.Message}");
+            }
         }
         private static uint Align256(uint value) => (value + 255) & ~255u;
         // 软解渲染（从队列取 NV12 数据，直接上传到 GPU）
@@ -783,6 +981,7 @@ float4 PSMain(PSInput input) : SV_TARGET {
                 _commandList.SetGraphicsRootSignature(_rootSignature);
                 _commandList.SetGraphicsRootDescriptorTable(0, _srvHeap!.GetGPUDescriptorHandleForHeapStart());
                 _commandList.SetGraphicsRootDescriptorTable(1, _samplerHeap!.GetGPUDescriptorHandleForHeapStart());
+                _commandList.SetGraphicsRoot32BitConstant(2, (uint)_currentBitDepth, 0);
                 _commandList.IASetVertexBuffers(0, _vertexBufferView);
                 _commandList.IASetPrimitiveTopology(PrimitiveTopology.TriangleStrip);
                 _commandList.DrawInstanced(4, 1, 0, 0);
@@ -805,36 +1004,53 @@ float4 PSMain(PSInput input) : SV_TARGET {
             }
         }
 
-        // 为 NV12 纹理创建 Y（R8）和 UV（R8G8）的 SRV，填充到 SRV 堆
+        // 当前帧位深（CreateNv12ShaderResourceViews 按纹理格式探测；SRV格式/归一化必须匹配：
+        // P010 用 R16/R16G16 且采样值为 code/1023，NV12 用 R8/R8G8 且为 code/255，
+        // 不匹配会导致设备移除崩溃或颜色全错）
+        private int _currentBitDepth = 8;
+
+        // 为 NV12/P010 纹理创建 Y 和 UV 平面的 SRV，填充到 SRV 堆
         private void CreateNv12ShaderResourceViews(ID3D12Resource nv12Texture, int width, int height)
         {
             int srvSize = (int)_device!.GetDescriptorHandleIncrementSize(
                 DescriptorHeapType.ConstantBufferViewShaderResourceViewUnorderedAccessView);
             CpuDescriptorHandle handle = _srvHeap!.GetCPUDescriptorHandleForHeapStart();
 
+            // 按纹理实际格式选择平面SRV格式与位深
+            var texFormat = nv12Texture.Description.Format;
+            Format yFormat, uvFormat;
+            if (texFormat == Format.P010 || texFormat == Format.P016)
+            {
+                yFormat = Format.R16_UNorm;
+                uvFormat = Format.R16G16_UNorm;
+                _currentBitDepth = 10;
+            }
+            else
+            {
+                yFormat = Format.R8_UNorm;
+                uvFormat = Format.R8G8_UNorm;
+                _currentBitDepth = 8;
+            }
+
             // Y 平面 SRV
             var ySrv = new ShaderResourceViewDescription
             {
-                Format = Format.R8_UNorm,
+                Format = yFormat,
                 ViewDimension = Vortice.Direct3D12.ShaderResourceViewDimension.Texture2D,
                 Texture2D = new Texture2DShaderResourceView { MostDetailedMip = 0, MipLevels = 1, PlaneSlice = 0 }
             };
             _device.CreateShaderResourceView(nv12Texture, ySrv, handle);
-            DebugLogger.WriteLine($"设备移除原因3.1: 0x{_device.DeviceRemovedReason.Code:X8},设备状态Failure:{_device.DeviceRemovedReason.Failure}");
 
             handle += srvSize;
 
             // UV 平面 SRV
             var uvSrv = new ShaderResourceViewDescription
             {
-                Format = Format.R8G8_UNorm,
+                Format = uvFormat,
                 ViewDimension = Vortice.Direct3D12.ShaderResourceViewDimension.Texture2D,
                 Texture2D = new Texture2DShaderResourceView { MostDetailedMip = 0, MipLevels = 1, PlaneSlice = 1 }
             };
             _device.CreateShaderResourceView(nv12Texture, uvSrv, handle);
-            DebugLogger.WriteLine($"设备移除原因3.2: 0x{_device.DeviceRemovedReason.Code:X8},设备状态Failure:{_device.DeviceRemovedReason.Failure}");
-
-
         }
 
         private CpuDescriptorHandle GetCurrentRtvHandle()
@@ -848,6 +1064,7 @@ float4 PSMain(PSInput input) : SV_TARGET {
         {
             if (_device?.DeviceRemovedReason.Failure ?? true) { _initialized = false; return; }
             if (!_initialized || _swapChain == null || _commandQueue == null) return;
+            if (!_pipelineReady) return; // 管线未就绪，跳过清除
 
             try
             {
@@ -908,6 +1125,8 @@ float4 PSMain(PSInput input) : SV_TARGET {
 
         public ID3D12Device? GetDevice() => _device;
 
+        public IntPtr GetCommandQueuePtr() => _commandQueue?.NativePointer ?? IntPtr.Zero;
+
         private void CleanupPipeline()
         {
             _pipelineReady = false;
@@ -923,6 +1142,23 @@ float4 PSMain(PSInput input) : SV_TARGET {
             SafeDispose(ref _nv12Texture);
             SafeDispose(ref _nv12UploadBuffer);
             SafeDispose(ref _hardwareNv12Internal);
+        }
+
+        // 检查适配器是否有显示输出（驱动显示器的GPU）
+        private static bool AdapterHasOutputs(IDXGIAdapter1 adapter)
+        {
+            try
+            {
+                for (uint i = 0; ; i++)
+                {
+                    Result r = adapter.EnumOutputs(i, out IDXGIOutput output);
+                    if (r.Failure || output == null) break;
+                    output.Dispose();
+                    return true; // 只要有一个输出就算有显示
+                }
+            }
+            catch { }
+            return false;
         }
 
         private void Cleanup()
@@ -974,6 +1210,15 @@ float4 PSMain(PSInput input) : SV_TARGET {
 
         private static IntPtr WndProc(IntPtr hWnd, uint msg, IntPtr wParam, IntPtr lParam)
         {
+            if (msg == WM_SIZE && _currentRenderer != null)
+            {
+                int newWidth = (int)(lParam & 0xFFFF);
+                int newHeight = (int)((lParam >> 16) & 0xFFFF);
+                if (newWidth > 0 && newHeight > 0)
+                {
+                    _currentRenderer.OnWindowSizeChanged(newWidth, newHeight);
+                }
+            }
             return DefWindowProc(hWnd, msg, wParam, lParam);
         }
 

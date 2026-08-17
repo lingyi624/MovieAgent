@@ -153,7 +153,7 @@ public partial class App : Application
             var configDir = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "MovieAgent", "Config");
             services.AddSingleton<IConfigStorageService>(new ConfigStorageService(configDir));
             
-            var backupDir = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "MovieAgent", "Backups");
+            var backupDir = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "MovieAgent", "Backups");
             var dataDir = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "data");
             Directory.CreateDirectory(dataDir);
             services.AddSingleton<IBackupService>(new BackupService(dbPath, Path.Combine(dataDir, "lancedb"), backupDir));

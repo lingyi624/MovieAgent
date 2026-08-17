@@ -41,6 +41,15 @@ public interface IPlayerService
     /// <summary>视频高度</summary>
     int VideoHeight { get; }
 
+    /// <summary>是否为杜比视界视频</summary>
+    bool IsDolbyVision { get; }
+
+    /// <summary>是否为ICtCp色彩空间输入（杜比视界Profile 5，需专用着色器渲染）</summary>
+    bool IsIctcpInput { get; }
+
+    /// <summary>最近一帧的杜比视界 RPU 渲染元数据（ycc_to_rgb_matrix 等），供着色器使用</summary>
+    DoviRenderMetadata? DoviMetadata { get; }
+
     /// <summary>帧更新事件</summary>
     event EventHandler<FrameData>? FrameUpdated;
 
@@ -152,4 +161,5 @@ public interface IPlayerService
     void SetD3d11Device(ID3D11Device device);
     void SetD3d9Device(Vortice.Direct3D9.IDirect3DDevice9Ex device);
     void SetD3d12Device(ID3D12Device device);
+    void SetD3d12CommandQueue(IntPtr commandQueuePtr);
 }

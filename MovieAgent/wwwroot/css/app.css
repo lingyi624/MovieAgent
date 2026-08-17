@@ -6,7 +6,7 @@
 
 body {
     font-family: 'Microsoft YaHei', 'Segoe UI', sans-serif;
-    background: #0F0F23;
+    background: #0A0A14;
     color: #E0E0E0;
     overflow-x: hidden;
 }
@@ -25,7 +25,7 @@ body {
 }
 
 .chat-container::-webkit-scrollbar-track {
-    background: #1A1A2E;
+    background: #0E0E1E;
 }
 
 .chat-container::-webkit-scrollbar-thumb {
@@ -43,16 +43,16 @@ body {
 }
 
 .mud-card {
-    background: #2D2D44 !important;
+    background: #0E0E1E !important;
     color: white !important;
 }
 
 .mud-input {
-    background: #1A1A2E !important;
+    background: #0E0E1E !important;
 }
 
 .mud-drawer {
-    background: #1A1A2E !important;
+    background: #0E0E1E !important;
 }
 
 .mud-tabs .mud-tab {

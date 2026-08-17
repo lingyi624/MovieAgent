@@ -123,7 +123,7 @@
     </Window.Resources>
 
     <Grid x:Name="MainGrid" >
-        <controls:D3D11VideoRenderer  MouseMove="Window_MouseMove"   x:Name="VideoView"/>
+        <controls:D3D11VideoRenderer  MouseMove="Window_MouseMove"  x:Name="VideoView"/>
          <Popup x:Name="TopBarPopup" StaysOpen="True" Placement="Absolute"     
 HorizontalOffset="0" VerticalOffset="0" Width="{Binding ActualWidth, ElementName=MainWindow}"
 AllowsTransparency="True" PopupAnimation="Fade">
@@ -179,25 +179,10 @@ AllowsTransparency="True" PopupAnimation="Fade">
             <Grid>
                 <Grid.RowDefinitions>
                     <RowDefinition Height="Auto"/>
-                    <RowDefinition Height="Auto"/>
                 </Grid.RowDefinitions>
               
-                <!-- 字幕显示（位于底部上方） -->
-                <TextBlock x:Name="SubtitleTextBlock" Grid.Row="0" 
-HorizontalAlignment="Center"  
-VerticalAlignment="Bottom"
-Margin="40,40"
-Foreground="White" Text=""
-FontSize="24"
-FontFamily="Microsoft YaHei"
-TextWrapping="Wrap"
-TextAlignment="Center"
-Padding="15,10"
-Background="Transparent"
-Visibility="Collapsed"
-MaxWidth="800" />
             <!-- 底部控制栏（位于底部） --> 
-                <Border x:Name="BottomBar" Grid.Row="1" HorizontalAlignment="Stretch" Background="#E6000000" CornerRadius="10,10,0,0"    >
+                <Border x:Name="BottomBar" Grid.Row="0" HorizontalAlignment="Stretch" Background="#E6000000" CornerRadius="10,10,0,0"    >
                     <Grid   >
                         <Grid.RowDefinitions>
                             <RowDefinition Height="Auto"/>
@@ -474,5 +459,31 @@ MaxWidth="800" />
             </StackPanel>
         </Border>
     </Popup>
+        <!-- SubtitleDisplayPopup已弃用：Popup位于D3D HwndHost下层，字幕被遮挡 -->
+        <!-- 改用独立透明TOPMOST窗口 _subtitleOverlay 显示字幕，见 CreateSubtitleOverlay() -->
+        <Popup x:Name="SubtitleDisplayPopup" StaysOpen="True" Placement="Absolute"
+               HorizontalOffset="0" VerticalOffset="0"
+               Width="{Binding ActualWidth, ElementName=MainWindow}"
+               Height="{Binding ActualHeight, ElementName=MainWindow}"
+               AllowsTransparency="True" PopupAnimation="Fade"
+               IsOpen="False">
+            <Grid Width="{Binding ActualWidth, ElementName=MainWindow}"
+                  Height="{Binding ActualHeight, ElementName=MainWindow}"
+                  Background="Transparent">
+                <TextBlock x:Name="SubtitleTextBlock"
+                           HorizontalAlignment="Center"
+                           VerticalAlignment="Bottom"
+                           Margin="40,80"
+                           Foreground="White" Text=""
+                           FontSize="24"
+                           FontFamily="Microsoft YaHei"
+                           TextWrapping="Wrap"
+                           TextAlignment="Center"
+                           Padding="15,10"
+                           Background="Transparent"
+                           Visibility="Collapsed"
+                           MaxWidth="800" />
+            </Grid>
+        </Popup>
     </Grid>
 </Window>

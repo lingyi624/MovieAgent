@@ -281,6 +281,12 @@ public class MediaInfoService : IMediaInfoService
         var colorPrimaries = codecParams->color_primaries;
         var colorTransfer = codecParams->color_trc;
 
+        // 杜比视界：codec_tag四字符码 'dvh1'/'dvhe'(HEVC) 或 'dav1'(AV1)。
+        // 优先于HDR10判断（DV P7/P8兼容层是HDR10，但应标注为DV；P5为ICtCp非YCbCr）
+        uint codecTag = codecParams->codec_tag;
+        if (codecTag == 0x31687664 || codecTag == 0x65687664 || codecTag == 0x31766164)
+            return "DolbyVision";
+
         bool isBT2020 = colorPrimaries == AVColorPrimaries.AVCOL_PRI_BT2020;
         bool isPQ = colorTransfer == AVColorTransferCharacteristic.AVCOL_TRC_SMPTE2084;
         bool isHLG = colorTransfer == AVColorTransferCharacteristic.AVCOL_TRC_ARIB_STD_B67;

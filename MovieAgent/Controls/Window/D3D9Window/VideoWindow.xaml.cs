@@ -1,7 +1,10 @@
 using MovieAgent.Core.Interfaces;
 using MovieAgent.FFmpegDecoder;
+using MovieAgent.Infrastructure.Services;
+using MovieAgent.Services;
 using System;
 using System.Collections.Generic;
+using System.Management;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Forms;
@@ -27,38 +30,46 @@ namespace MovieAgent.Controls.Window.D3D9Window
         private bool _originalAllowTransparency;
         private System.Windows.Threading.DispatcherTimer _hideControlsTimer;
         private double _subtitleDelay;
+        private string _currentMovieTitle = string.Empty;
+        private string _currentAudioTrack = "立体声";
+        private string _currentSubtitle = "无";
+        private string _currentDecoderName = string.Empty;
+        private string _currentDecodeMode = "自动";
+        private string? _lastPlayPauseContent;
+        private ISubtitleService? _subtitleService;
+        private ILoggerService? _logger;
+        private string? _externalSubtitlePath;
+        private List<SubtitleItem>? _externalSubtitles;
 
         private ResizeMode _originalResizeMode;
         private bool _originalTopmost;
+        private bool _isClosingPopup = false;
 
         public VideoWindow(IPlayerService playerService, string filePath, string movieTitle)
         {
             InitializeComponent();
             _playerService = playerService;
             _filePath = filePath;
+            _currentMovieTitle = movieTitle;
             MovieTitle.Text = movieTitle;
+
+            var services = ((MovieAgent.App)System.Windows.Application.Current).Services;
+            _logger = (ILoggerService)services.GetService(typeof(ILoggerService));
+            _subtitleService = (ISubtitleService?)services.GetService(typeof(ISubtitleService));
+
             InitializePlayer();
             InitializeControlsTimer();
-            MainGrid.SizeChanged += MainGrid_SizeChanged;
-            this.Loaded += VideoWindow_Loaded;
+             this.Loaded += VideoWindow_Loaded;
         }
 
         private void VideoWindow_Loaded(object sender, RoutedEventArgs e)
         {
             VideoRenderer.Initialize();
-            UpdateControlsPopupSize();
-        }
+         }
 
-        private void MainGrid_SizeChanged(object sender, SizeChangedEventArgs e)
-        {
-            UpdateControlsPopupSize();
-        }
+       
 
-        private void UpdateControlsPopupSize()
-        {
-            ControlsPopupGrid.Width = MainGrid.ActualWidth;
-            ControlsPopupGrid.Height = MainGrid.ActualHeight;
-        }
+        
  
         public IDirect3DDevice9Ex? GetDevice()
         {
@@ -84,6 +95,7 @@ namespace MovieAgent.Controls.Window.D3D9Window
         private void Window_Loaded(object sender, RoutedEventArgs e)
         {
             ControlsPopup.IsOpen = true;
+            TopBarPopup.IsOpen = true;
             _hideControlsTimer.Start();
             GetDevice();
             EnterFullscreen();
@@ -119,6 +131,7 @@ namespace MovieAgent.Controls.Window.D3D9Window
 
         private void Window_MouseMove(object sender, System.Windows.Input.MouseEventArgs e)
         {
+            if (_isClosingPopup) return;
             ShowControls();
             _hideControlsTimer.Stop();
             _hideControlsTimer.Start();
@@ -144,7 +157,14 @@ namespace MovieAgent.Controls.Window.D3D9Window
             {
                 case Key.Space:
                     e.Handled = true;
-                    TogglePlayPause();
+                    if (_playerService.IsPaused)
+                    {
+                        ResumePlayback();
+                    }
+                    else if (_playerService.IsPlaying)
+                    {
+                        PausePlayback();
+                    }
                     break;
                 case Key.F:
                 case Key.Escape:
@@ -190,12 +210,26 @@ namespace MovieAgent.Controls.Window.D3D9Window
         private void ShowControls()
         {
             ControlsPopup.IsOpen = true;
+            TopBarPopup.IsOpen = true;
             CenterOverlay.Visibility = Visibility.Collapsed;
         }
 
         private void HideControls()
         {
+            _isClosingPopup = true;
             ControlsPopup.IsOpen = false;
+            TopBarPopup.IsOpen = false;
+
+            System.Windows.Threading.DispatcherTimer unlockTimer = new System.Windows.Threading.DispatcherTimer
+            {
+                Interval = TimeSpan.FromMilliseconds(200)
+            };
+            unlockTimer.Tick += (s, e) =>
+            {
+                _isClosingPopup = false;
+                unlockTimer.Stop();
+            };
+            unlockTimer.Start();
         }
 
         private void ToggleControls()
@@ -211,29 +245,118 @@ namespace MovieAgent.Controls.Window.D3D9Window
 
         private void PlayPauseButton_Click(object sender, RoutedEventArgs e)
         {
-            TogglePlayPause();
+            if (_playerService == null) return;
+
+            if (_playerService.IsPaused)
+            {
+                ResumePlayback();
+            }
+            else if (_playerService.IsPlaying)
+            {
+                PausePlayback();
+            }
         }
 
         private void CenterPlayButton_Click(object sender, RoutedEventArgs e)
         {
-            TogglePlayPause();
-        }
+            if (_playerService == null) return;
 
-        private void TogglePlayPause()
-        {
-            if (_playerService.IsPlaying)
+            if (_playerService.IsPaused)
             {
-                _playerService.Pause();
+                ResumePlayback();
+            }
+            else if (_playerService.IsPlaying)
+            {
+                PausePlayback();
             }
             else
             {
-                _playerService.Resume();
+                ResumePlayback();
+            }
+        }
+
+        private async void StopPlaybackInternal()
+        {
+            try
+            {
+                _hideControlsTimer?.Stop();
+
+                if (_playerService != null)
+                {
+                    _playerService.FrameUpdated -= PlayerService_FrameUpdated;
+                    await _playerService.StopAsync();
+                }
+
+                _lastPlayPauseContent = null;
+                PlayPauseButton.Content = "▶";
+
+                _logger?.Debug("[Player] 播放已停止");
+
+                this.Close();
+            }
+            catch (Exception ex)
+            {
+                _logger?.Debug($"[Player] 停止播放出错: {ex.Message}");
+                try { this.Close(); } catch { }
+            }
+        }
+
+        public void StopPlayback()
+        {
+            Dispatcher.Invoke(StopPlaybackInternal);
+        }
+
+        public void PausePlayback()
+        {
+            Dispatcher.Invoke(() =>
+            {
+                try
+                {
+                    _playerService?.Pause();
+                    UpdatePlayStatus();
+                    _logger?.Debug("[Player] 已暂停");
+                }
+                catch (Exception ex)
+                {
+                    _logger?.Debug($"[Player] 暂停出错: {ex.Message}");
+                }
+            });
+        }
+
+        public void ResumePlayback()
+        {
+            Dispatcher.Invoke(() =>
+            {
+                try
+                {
+                    _playerService?.Resume();
+                    UpdatePlayStatus();
+                    _logger?.Debug("[Player] 已恢复播放");
+                }
+                catch (Exception ex)
+                {
+                    _logger?.Debug($"[Player] 恢复出错: {ex.Message}");
+                }
+            });
+        }
+
+        private void UpdatePlayStatus()
+        {
+            if (_playerService == null) return;
+
+            PlayStatusText.Text = _playerService.IsPaused ? "⏸ 已暂停" : "▶ 正在播放";
+
+            string newContent = _playerService.IsPaused ? "▶" : "⏸";
+            if (_lastPlayPauseContent != newContent)
+            {
+                PlayPauseButton.Content = newContent;
+                _lastPlayPauseContent = newContent;
             }
         }
 
         private void StopButton_Click(object sender, RoutedEventArgs e)
         {
-            _playerService.StopAsync().Wait();
+            StopPlayback();
         }
 
         private void FullscreenButton_Click(object sender, RoutedEventArgs e)
@@ -296,42 +419,90 @@ namespace MovieAgent.Controls.Window.D3D9Window
 
         private void CloseButton_Click(object sender, RoutedEventArgs e)
         {
-            _playerService.StopAsync().Wait();
-            Close();
+            StopPlayback();
         }
 
-        private void CloseButton_MouseEnter(object sender, System.Windows.Input.MouseEventArgs e)
+        private void Min_Click(object sender, RoutedEventArgs e)
         {
-            CloseButton.Background = new SolidColorBrush(Colors.Red);
+            WindowState = WindowState.Minimized;
         }
 
-        private void CloseButton_MouseLeave(object sender, System.Windows.Input.MouseEventArgs e)
+        private void Restore_Click(object sender, RoutedEventArgs e)
         {
-            CloseButton.Background = Brushes.Transparent;
+            if (WindowState == WindowState.Maximized)
+                WindowState = WindowState.Normal;
+            else
+                WindowState = WindowState.Maximized;
+        }
+
+        private void CloseWindow_Click(object sender, RoutedEventArgs e)
+        {
+            StopPlayback();
         }
 
         private void ProgressSlider_ValueChanged(object sender, RoutedPropertyChangedEventArgs<double> e)
         {
             if (!_isDraggingProgress)
             {
-                var percentage = e.NewValue;
-                if (_playerService.Duration.TotalSeconds > 0)
-                {
-                    var time = TimeSpan.FromSeconds(_playerService.Duration.TotalSeconds * (percentage / 100));
-                    CurrentTimeText.Text = FormatTime(time);
-                }
+                var newPosition = TimeSpan.FromMilliseconds(e.NewValue);
+                CurrentTimeText.Text = FormatTime(newPosition);
             }
+        }
+
+        private void ProgressSlider_MouseDown(object sender, MouseButtonEventArgs e)
+        {
+            _isDraggingProgress = true;
         }
 
         private void ProgressSlider_MouseUp(object sender, MouseButtonEventArgs e)
         {
-            if (_playerService.Duration.TotalSeconds > 0)
+            _isDraggingProgress = false;
+
+            if (_playerService == null || !_playerService.IsPlaying)
             {
-                //  _playerService.Seek((int)(_playerService.Duration.TotalSeconds * (ProgressSlider.Value / 100)));
-                var seekPosition = (int)(_playerService.Duration.TotalSeconds / 1000);
+                _logger?.Debug("[Player] Seek ignored - player is null or not playing");
+                return;
+            }
 
+            try
+            {
+                var currentValue = ProgressSlider.Value;
+                var duration = _playerService.Duration.TotalSeconds;
 
-                _playerService.Seek(seekPosition);
+                if (duration <= 0)
+                {
+                    _logger?.Debug("[Player] Seek ignored - invalid duration");
+                    return;
+                }
+
+                var seekPosition = (int)(currentValue / 1000);
+
+                if (seekPosition < 0 || seekPosition > duration)
+                {
+                    _logger?.Debug($"[Player] Seek ignored - invalid position: {seekPosition}");
+                    return;
+                }
+
+                _logger?.Debug($"[Player] Seek to {seekPosition} seconds");
+
+                Task.Run(() =>
+                {
+                    try
+                    {
+                        if (_playerService != null && _playerService.IsPlaying)
+                        {
+                            _playerService.Seek(seekPosition);
+                        }
+                    }
+                    catch (Exception ex)
+                    {
+                        _logger?.Error(ex, "[Player] Seek failed");
+                    }
+                });
+            }
+            catch (Exception ex)
+            {
+                _logger?.Error(ex, "[Player] Seek mouse up handler failed");
             }
         }
 
@@ -357,14 +528,46 @@ namespace MovieAgent.Controls.Window.D3D9Window
 
         private void AudioButton_Click(object sender, RoutedEventArgs e)
         {
+            if (_isClosingPopup)
+                return;
+
             LoadAudioTracks();
             AudioPopup.IsOpen = !AudioPopup.IsOpen;
+
+            if (!AudioPopup.IsOpen)
+            {
+                _isClosingPopup = true;
+                System.Windows.Threading.DispatcherTimer timer = new System.Windows.Threading.DispatcherTimer();
+                timer.Interval = TimeSpan.FromMilliseconds(200);
+                timer.Tick += (s, args) =>
+                {
+                    timer.Stop();
+                    _isClosingPopup = false;
+                };
+                timer.Start();
+            }
         }
 
         private void SubtitleButton_Click(object sender, RoutedEventArgs e)
         {
+            if (_isClosingPopup)
+                return;
+
             LoadSubtitleTracks();
             SubtitlePopup.IsOpen = !SubtitlePopup.IsOpen;
+
+            if (!SubtitlePopup.IsOpen)
+            {
+                _isClosingPopup = true;
+                System.Windows.Threading.DispatcherTimer timer = new System.Windows.Threading.DispatcherTimer();
+                timer.Interval = TimeSpan.FromMilliseconds(200);
+                timer.Tick += (s, args) =>
+                {
+                    timer.Stop();
+                    _isClosingPopup = false;
+                };
+                timer.Start();
+            }
         }
 
         private void ScreenshotButton_Click(object sender, RoutedEventArgs e)
@@ -401,15 +604,37 @@ namespace MovieAgent.Controls.Window.D3D9Window
 
         private void LoadSubtitleButton_Click(object sender, RoutedEventArgs e)
         {
-            var openFileDialog = new OpenFileDialog
+            var dialog = new OpenFileDialog
             {
-                Filter = "字幕文件|*.srt;*.ass;*.ssa|所有文件|*.*",
-                Title = "选择字幕文件"
+                Title = "选择字幕文件",
+                Filter = "字幕文件 (*.srt;*.ass;*.ssa)|*.srt;*.ass;*.ssa|SRT文件 (*.srt)|*.srt|ASS文件 (*.ass)|*.ass|所有文件 (*.*)|*.*",
+                FilterIndex = 1
             };
-            if (openFileDialog.ShowDialog() == System.Windows.Forms.DialogResult.OK)
+
+            if (dialog.ShowDialog() == System.Windows.Forms.DialogResult.OK)
             {
-                _playerService.SetSubtitleDelay(_subtitleDelay);
-                SubtitlePopup.IsOpen = false;
+                try
+                {
+                    _externalSubtitlePath = dialog.FileName;
+                    _externalSubtitles = SubtitleParser.Parse(_externalSubtitlePath);
+
+                    if (_externalSubtitles.Count > 0)
+                    {
+                        _logger?.Debug($"[Player] 加载外部字幕成功: {dialog.FileName}, 共 {_externalSubtitles.Count} 条");
+
+                        SubtitlePopup.IsOpen = false;
+                        _subtitleDelay = 0;
+                        SubtitleDelayText.Text = $"延迟: 0ms";
+                    }
+                    else
+                    {
+                        _logger?.Debug("[Player] 加载外部字幕失败: 未找到字幕");
+                    }
+                }
+                catch (Exception ex)
+                {
+                    _logger?.Error(ex, "[Player] 加载外部字幕失败");
+                }
             }
         }
 
@@ -440,8 +665,140 @@ namespace MovieAgent.Controls.Window.D3D9Window
             SubtitleDownloadPopup.IsOpen = false;
         }
 
-        private void SearchSubtitleButton_Click(object sender, RoutedEventArgs e)
+        private async void SearchSubtitleButton_Click(object sender, RoutedEventArgs e)
         {
+            if (_subtitleService == null || string.IsNullOrEmpty(_filePath))
+                return;
+
+            var query = SubtitleSearchBox.Text.Trim();
+            if (string.IsNullOrEmpty(query))
+            {
+                query = System.IO.Path.GetFileNameWithoutExtension(_filePath);
+            }
+
+            string language = "zh";
+            if (SubtitleLanguageCombo.SelectedItem is ComboBoxItem selectedItem)
+            {
+                language = selectedItem.Tag?.ToString() ?? "zh";
+            }
+
+            SubtitleSearchStatus.Text = "正在搜索...";
+            SubtitleResultsPanel.Children.Clear();
+
+            try
+            {
+                _logger?.Debug($"[Player] Searching subtitles for: {query}, language: {language}");
+                var results = await _subtitleService.SearchSubtitlesAsync(query, language);
+
+                if (results.Count == 0)
+                {
+                    SubtitleSearchStatus.Text = "未找到匹配的字幕";
+                    return;
+                }
+
+                SubtitleSearchStatus.Text = $"找到 {results.Count} 个字幕";
+
+                foreach (var subtitle in results)
+                {
+                    var itemPanel = new StackPanel { Orientation = System.Windows.Controls.Orientation.Horizontal };
+                    itemPanel.Margin = new Thickness(5);
+
+                    var infoPanel = new StackPanel { Width = 350 };
+
+                    var titleText = new TextBlock
+                    {
+                        Text = subtitle.Title,
+                        Foreground = Brushes.White,
+                        FontSize = 13,
+                        TextTrimming = TextTrimming.CharacterEllipsis
+                    };
+
+                    var detailText = new TextBlock
+                    {
+                        Text = $"语言: {subtitle.Language} | 评分: {subtitle.Rating}",
+                        Foreground = Brushes.Gray,
+                        FontSize = 11,
+                        Margin = new Thickness(0, 2, 0, 0)
+                    };
+
+                    infoPanel.Children.Add(titleText);
+                    infoPanel.Children.Add(detailText);
+
+                    var downloadButton = new System.Windows.Controls.Button
+                    {
+                        Content = "下载",
+                        Style = (Style)FindResource("ControlButtonStyle"),
+                        Width = 70,
+                        Tag = subtitle,
+                        Background = new SolidColorBrush(Color.FromRgb(233, 69, 96))
+                    };
+                    downloadButton.Click += DownloadSubtitleItem_Click;
+
+                    itemPanel.Children.Add(infoPanel);
+                    itemPanel.Children.Add(downloadButton);
+
+                    SubtitleResultsPanel.Children.Add(itemPanel);
+                }
+            }
+            catch (Exception ex)
+            {
+                _logger?.Error(ex, "[Player] 搜索字幕失败");
+                SubtitleSearchStatus.Text = "搜索失败，请稍后重试";
+            }
+        }
+
+        private async void DownloadSubtitleItem_Click(object sender, RoutedEventArgs e)
+        {
+            if (_subtitleService == null || sender is not System.Windows.Controls.Button button || button.Tag is not SubtitleResult subtitle)
+                return;
+
+            button.IsEnabled = false;
+            SubtitleSearchStatus.Text = "正在下载...";
+
+            try
+            {
+                _logger?.Debug($"[Player] Downloading subtitle: {subtitle.Title}");
+                var subtitleData = await _subtitleService.DownloadSubtitleAsync(subtitle.DownloadUrl);
+
+                if (subtitleData == null || subtitleData.Length == 0)
+                {
+                    SubtitleSearchStatus.Text = "下载失败";
+                    button.IsEnabled = true;
+                    return;
+                }
+
+                string savedPath = string.Empty;
+
+                if (_playerService != null && _playerService.IsPlaying)
+                {
+                    string? videoPath = _playerService.GetCurrentRequestedFilePath();
+                    if (!string.IsNullOrEmpty(videoPath) && System.IO.File.Exists(videoPath))
+                    {
+                        string directory = System.IO.Path.GetDirectoryName(videoPath)!;
+                        string videoName = System.IO.Path.GetFileNameWithoutExtension(videoPath);
+                        string subtitleFileName = $"{videoName}{subtitle.Extension}";
+                        savedPath = System.IO.Path.Combine(directory, subtitleFileName);
+
+                        await System.IO.File.WriteAllBytesAsync(savedPath, subtitleData);
+                        _logger?.Debug($"[Player] Subtitle saved to: {savedPath}");
+                    }
+                }
+
+                if (string.IsNullOrEmpty(savedPath))
+                {
+                    savedPath = await _subtitleService.SaveSubtitleAsync(0, subtitleData, subtitle.Extension);
+                }
+
+                SubtitleSearchStatus.Text = $"字幕已保存: {System.IO.Path.GetFileName(savedPath)}";
+                button.Content = "已下载";
+                _logger?.Debug($"[Player] Subtitle download completed: {savedPath}");
+            }
+            catch (Exception ex)
+            {
+                _logger?.Error(ex, "[Player] Subtitle download failed");
+                SubtitleSearchStatus.Text = "下载失败";
+                button.IsEnabled = true;
+            }
         }
 
         private void LoadAudioTracks()
@@ -484,6 +841,18 @@ namespace MovieAgent.Controls.Window.D3D9Window
         private void LoadSubtitleTracks()
         {
             SubtitleTrackListPanel.Children.Clear();
+
+            var closeSubBtn = new System.Windows.Controls.Button
+            {
+                Content = "关闭字幕",
+                Tag = -1,
+                Style = _playerService.CurrentSpuTrack == -1
+                    ? (Style)Resources["SelectedListButtonStyle"]
+                    : (Style)Resources["ListButtonStyle"]
+            };
+            closeSubBtn.Click += SubtitleTrackButton_Click;
+            SubtitleTrackListPanel.Children.Add(closeSubBtn);
+
             var tracks = _playerService.GetSubtitleTracks();
             if (tracks != null && tracks.Count > 0)
             {
@@ -492,7 +861,7 @@ namespace MovieAgent.Controls.Window.D3D9Window
                 {
                     var btn = new System.Windows.Controls.Button
                     {
-                        Content = $"{track.Index + 1}. {GetLanguageName(track.Language)}",
+                        Content = $"内置字幕 {track.Index + 1}. {GetLanguageName(track.Language)}",
                         Tag = track.Index,
                         Style = track.Index == _playerService.CurrentSpuTrack
                             ? (Style)Resources["SelectedListButtonStyle"]
@@ -550,11 +919,11 @@ namespace MovieAgent.Controls.Window.D3D9Window
         private void LoadMediaInfo()
         {
             FileNameText.Text = System.IO.Path.GetFileName(_filePath);
-            VideoResolutionText.Text = $"{_playerService.VideoWidth}x{_playerService.VideoHeight}";
+            VideoResolutionText.Text = $"{_playerService?.VideoWidth}x{_playerService?.VideoHeight}";
             FpsText.Text = "未知";
-            DurationText.Text = FormatTime(_playerService.Duration);
-            DecodeModeText.Text = _playerService.CurrentD3dModel?.ToString() ?? "未知";
-            DecoderNameText.Text = "D3D9";
+            DurationText.Text = FormatTime(_playerService?.Duration ?? TimeSpan.Zero);
+            DecodeModeText.Text = _playerService?.CurrentD3dModel?.ToString() ?? "未知";
+            DecoderNameText.Text = _currentDecoderName;
         }
 
         private void PlayerService_FrameUpdated(object? sender, MovieAgent.FFmpegDecoder.FrameData e)
@@ -564,14 +933,22 @@ namespace MovieAgent.Controls.Window.D3D9Window
             _isPlaying = _playerService.IsPlaying;
             Dispatcher.Invoke(() =>
             {
-                PlayPauseButton.Content = _isPlaying ? "⏸" : "▶";
+                UpdatePlayStatus();
             });
             if (!_isDraggingProgress && _playerService.Duration.TotalSeconds > 0)
             {
-                var percentage = (_playerService.Position.TotalSeconds / _playerService.Duration.TotalSeconds) * 100;
+                var position = _playerService.Position.TotalMilliseconds;
+                var duration = _playerService.Duration.TotalMilliseconds;
                 Dispatcher.Invoke(() =>
                 {
-                    ProgressSlider.Value = percentage;
+                    if (!ProgressSlider.IsMouseCaptureWithin)
+                    {
+                        if (Math.Abs(ProgressSlider.Value - position) > 100)
+                        {
+                            ProgressSlider.Maximum = duration;
+                            ProgressSlider.Value = position;
+                        }
+                    }
                     CurrentTimeText.Text = FormatTime(_playerService.Position);
                     TotalTimeText.Text = FormatTime(_playerService.Duration);
                 });
@@ -583,12 +960,10 @@ namespace MovieAgent.Controls.Window.D3D9Window
                 {
                     if (e.IsHardwareFrame && e.NV12TexturePtr != IntPtr.Zero)
                     {
-                        // 零拷贝路径：直接传递解码器表面
                         VideoRenderer.RenderHardwareFrame(e.NV12TexturePtr, e.Width, e.Height);
                     }
                     else if (e.YPlane.Length > 0 && e.UPlane.Length > 0 && e.VPlane.Length > 0)
                     {
-                        // 软解路径：内部 GPU 转换，无 CPU→GPU 拷贝
                         VideoRenderer.RenderSoftwareFrame(e.YPlane, e.UPlane, e.VPlane, e.Width, e.Height);
                     }
                 }
@@ -602,6 +977,7 @@ namespace MovieAgent.Controls.Window.D3D9Window
                 _isPlaying = false;
                 PlayPauseButton.Content = "▶";
                 ControlsPopup.IsOpen = true;
+                TopBarPopup.IsOpen = true;
                 CenterOverlay.Visibility = Visibility.Visible;
                 ProgressSlider.Value = 0;
             });

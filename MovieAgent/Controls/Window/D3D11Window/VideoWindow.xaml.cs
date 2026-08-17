@@ -81,9 +81,6 @@ namespace MovieAgent.D3D11Window
             base.OnClosed(e);
         }
 
-        private void Play_Click(object sender, RoutedEventArgs e)
-        {
-
-        }
+        
     }
 }
