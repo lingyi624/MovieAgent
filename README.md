@@ -1,7 +1,8 @@
 AI智能电影管家MovieAgent
 
-https://github.com/lingyi624/MovieAgent/blob/master/%E5%BE%AE%E4%BF%A1%E5%9B%BE%E7%89%87_2026-06-08_154528_820.png
 <img width="2560" height="1440" alt="b1dea0f808c8e2d5599de0eea8381d55" src="https://github.com/user-attachments/assets/1b325ac8-5f74-406f-b53d-a8f0f6d3687c" />
+<img width="2560" height="1440" alt="feedff9d392cb416e0e74a2195572e60" src="https://github.com/user-attachments/assets/b244eaa8-875a-4078-ae94-106f495bab24" />
+![Uploading a90b958235f639e3b2e227448203c7a6.png…]()
 
 # 🎬 Movie Agent
 
