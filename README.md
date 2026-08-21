@@ -8,6 +8,7 @@ AI智能电影管家MovieAgent
 <img width="2560" height="1440" alt="64b6c0b10f87aebe65355c002cc232eb" src="https://github.com/user-attachments/assets/a2780c7a-7592-49a7-89db-73550893ba65" />
 <img width="2560" height="1440" alt="24d945a57f2369b379f6f20712215ad3" src="https://github.com/user-attachments/assets/297ea46b-afa2-46a6-ae02-5948e2334e14" />
 <img width="2560" height="1440" alt="80617635cd82b5523c4d2ff1acca0278" src="https://github.com/user-attachments/assets/8a5edfcf-0b5d-4699-a0f2-6b4e7c14f4a9" />
+<img width="2560" height="1440" alt="7f8502dfa06a0e7444fbce0a5dc5acc3" src="https://github.com/user-attachments/assets/040e576f-2459-479d-ab25-80e9f8f92e86" />
 
 # 🎬 Movie Agent
 
