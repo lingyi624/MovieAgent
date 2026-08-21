@@ -38,3 +38,6 @@
 /InspectStruct/obj
 /reflect/bin/Debug/net8.0
 /reflect/obj
+/temp_renderer_diff.txt
+/temp_lp_colorspace.c
+/temp_decoder_diff.txt
