@@ -126,6 +126,24 @@ public interface IMovieRepository
     Task<List<string>> GetAllHdrTypesAsync();
 
     /// <summary>
+    /// 获取所有音频编码格式列表
+    /// </summary>
+    /// <returns>音频编码格式列表</returns>
+    Task<List<string>> GetAllAudioCodecsAsync();
+
+    /// <summary>
+    /// 获取所有中国导演列表
+    /// </summary>
+    /// <returns>中国导演列表</returns>
+    Task<List<string>> GetAllChineseDirectorsAsync();
+
+    /// <summary>
+    /// 获取所有中国演员列表
+    /// </summary>
+    /// <returns>中国演员列表</returns>
+    Task<List<string>> GetAllChineseCastsAsync();
+
+    /// <summary>
     /// 获取去重后的电影列表（同一电影只返回一条）
     /// </summary>
     /// <param name="filter">过滤条件（可选）</param>

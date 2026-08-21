@@ -168,6 +168,11 @@ namespace MovieAgent.Infrastructure.Services
         public bool IsDolbyVision => false;
 
         /// <summary>
+        /// 是否为HDR传输特性（进程隔离模式不支持检测，默认false）
+        /// </summary>
+        public bool IsPqTransfer => false;
+
+        /// <summary>
         /// 是否为ICtCp色彩空间输入（进程隔离模式不支持检测，默认false）
         /// </summary>
         public bool IsIctcpInput => false;

@@ -20,6 +20,7 @@ public class MovieFilter
     public List<string>? Languages { get; set; }
     public string? VideoCodec { get; set; }
     public string? HdrType { get; set; }
+    public string? AudioCodec { get; set; }
     
     public List<string>? Tags { get; set; }
     

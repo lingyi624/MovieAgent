@@ -670,7 +670,7 @@ else
 
                 var videoPaths = await MovieRepo.GetMovieVideoPathsAsync(movieId);
                 _videoFiles = videoPaths.ToList();
-                _isTvShow = _videoFiles.Count > 1;
+               _isTvShow = _videoFiles.Count > 1;
             }
         }
         finally

@@ -53,6 +53,8 @@ public class MovieRepository : IMovieRepository
                 query = query.Where(m => m.VideoCodec == filter.VideoCodec);
             if (!string.IsNullOrWhiteSpace(filter.HdrType))
                 query = query.Where(m => m.HdrType == filter.HdrType);
+            if (!string.IsNullOrWhiteSpace(filter.AudioCodec))
+                query = query.Where(m => m.AudioCodec == filter.AudioCodec);
             if (filter.Countries is { Count: > 0 })
                 query = query.Where(m => m.Country != null && filter.Countries.Any(c => m.Country.Contains(c)));
             if (filter.Languages is { Count: > 0 })
@@ -156,6 +158,8 @@ public class MovieRepository : IMovieRepository
                 query = query.Where(m => m.VideoCodec == filter.VideoCodec);
             if (!string.IsNullOrWhiteSpace(filter.HdrType))
                 query = query.Where(m => m.HdrType == filter.HdrType);
+            if (!string.IsNullOrWhiteSpace(filter.AudioCodec))
+                query = query.Where(m => m.AudioCodec == filter.AudioCodec);
             if (filter.Countries is { Count: > 0 })
                 query = query.Where(m => m.Country != null && filter.Countries.Any(c => m.Country.Contains(c)));
             if (filter.Languages is { Count: > 0 })
@@ -337,6 +341,8 @@ public class MovieRepository : IMovieRepository
                 query = query.Where(m => m.VideoCodec == filter.VideoCodec);
             if (!string.IsNullOrWhiteSpace(filter.HdrType))
                 query = query.Where(m => m.HdrType == filter.HdrType);
+            if (!string.IsNullOrWhiteSpace(filter.AudioCodec))
+                query = query.Where(m => m.AudioCodec == filter.AudioCodec);
             if (filter.Countries is { Count: > 0 })
                 query = query.Where(m => m.Country != null && filter.Countries.Any(c => m.Country.Contains(c)));
             if (filter.Languages is { Count: > 0 })
@@ -421,6 +427,8 @@ public class MovieRepository : IMovieRepository
                 query = query.Where(m => m.VideoCodec == filter.VideoCodec);
             if (!string.IsNullOrWhiteSpace(filter.HdrType))
                 query = query.Where(m => m.HdrType == filter.HdrType);
+            if (!string.IsNullOrWhiteSpace(filter.AudioCodec))
+                query = query.Where(m => m.AudioCodec == filter.AudioCodec);
             if (filter.Countries is { Count: > 0 })
                 query = query.Where(m => m.Country != null && filter.Countries.Any(c => m.Country.Contains(c)));
             if (filter.Languages is { Count: > 0 })
@@ -466,8 +474,8 @@ public class MovieRepository : IMovieRepository
             var movie = await _db.Movies.FindAsync(movieId);
             if (movie == null || string.IsNullOrEmpty(movie.FilePath))
                 return new List<string>();
-
-            var directory = Path.GetDirectoryName(movie.FilePath);
+        return   _db.Movies.Where(d => d.Title.Equals(movie.Title)).Select(d => d.FilePath).Distinct().OrderBy(f =>f).ToList();
+        var directory = Path.GetDirectoryName(movie.FilePath);
             if (string.IsNullOrEmpty(movie.FilePath))
                 return new List<string>();
 
@@ -664,6 +672,75 @@ public class MovieRepository : IMovieRepository
             return true;
         }
 
+        return false;
+    }
+
+    public async Task<List<string>> GetAllAudioCodecsAsync()
+    {
+        var codecs = await _db.Movies
+            .Where(m => !string.IsNullOrEmpty(m.AudioCodec))
+            .Select(m => m.AudioCodec!)
+            .Distinct()
+            .OrderBy(c => c)
+            .ToListAsync();
+        return codecs;
+    }
+
+    public async Task<List<string>> GetAllChineseDirectorsAsync()
+    {
+        //var all = await GetAllDirectorsAsync();
+        //return all.Where(d => ContainsChinese(d)).OrderBy(d => d).ToList();
+        //(!string.IsNullOrEmpty(m.Country) && (m.Country.Contains("China") || m.Country.Contains("Taiwan") || m.Country.Contains("Hong Kong")
+        var directors = await _db.Movies
+            .Where(m => !string.IsNullOrEmpty(m.Director) && (!string.IsNullOrEmpty(m.Country) && (m.Country.Contains("China") || m.Country.Contains("Taiwan") || m.Country.Contains("Hong Kong"))))
+           .Select(m => m.Director!)
+           .ToListAsync();
+
+        var all = new HashSet<string>();
+        foreach (var dir in directors)
+        {
+            foreach (var d in dir.Split(',', StringSplitOptions.RemoveEmptyEntries))
+            {
+                var trimmed = d.Trim();
+                if (!string.IsNullOrEmpty(trimmed))
+                    all.Add(trimmed);
+            }
+        }
+
+        return all.Distinct().OrderBy(d => d).ToList();
+    }
+
+    public async Task<List<string>> GetAllChineseCastsAsync()
+    {
+        //var all = await GetAllCastsAsync();
+        //return all.Where(c => ContainsChinese(c)).OrderBy(c => c).ToList();
+        var casts = await _db.Movies
+            .Where(m => !string.IsNullOrEmpty(m.Cast)&& (!string.IsNullOrEmpty(m.Country) &&(m.Country.Contains("China")|| m.Country.Contains("Taiwan") || m.Country.Contains("Hong Kong"))))
+            .Select(m => m.Cast!)
+            .ToListAsync(); 
+    
+
+        var all = new HashSet<string>();
+        foreach (var castList in casts)
+        {
+            foreach (var c in castList.Split(',', StringSplitOptions.RemoveEmptyEntries))
+            {
+                var trimmed = c.Trim();
+                if (!string.IsNullOrEmpty(trimmed))
+                    all.Add(trimmed);
+            }
+        }
+
+        return all.Distinct().OrderBy(c => c).ToList();
+    }
+
+    private static bool ContainsChinese(string text)
+    {
+        foreach (char c in text)
+        {
+            if (c >= '\u4e00' && c <= '\u9fa5')
+                return true;
+        }
         return false;
     }
 }

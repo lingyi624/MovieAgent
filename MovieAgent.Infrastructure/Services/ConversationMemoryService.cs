@@ -247,11 +247,14 @@ public class ConversationMemoryService : IConversationMemoryService
         }
     }
 
+    private static readonly HttpClient _sharedHttpClient = new HttpClient();
+
     private async Task<string> GenerateSummaryAsync(List<ChatMessage> messages, string ollamaUrl, string modelName)
     {
         try
         {
-            var client = new HttpClient { BaseAddress = new Uri(ollamaUrl) };
+            // 复用静态 HttpClient，避免每次调用 new HttpClient 导致 socket 句柄泄漏
+            _sharedHttpClient.BaseAddress = new Uri(ollamaUrl);
             var sb = new StringBuilder();
             sb.AppendLine("请将以下对话历史压缩为一段简洁的摘要（不超过200字），保留关键信息：");
             sb.AppendLine("---");
@@ -276,7 +279,7 @@ public class ConversationMemoryService : IConversationMemoryService
             };
             var json = JsonSerializer.Serialize(request);
             var content = new StringContent(json, Encoding.UTF8, "application/json");
-            var response = await client.PostAsync("/api/chat", content);
+            var response = await _sharedHttpClient.PostAsync("/api/chat", content);
 
             if (response.IsSuccessStatusCode)
             {

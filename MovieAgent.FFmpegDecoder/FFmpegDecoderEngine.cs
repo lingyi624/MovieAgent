@@ -42,9 +42,8 @@ namespace MovieAgent.FFmpegDecoder
         private ID3D12CommandQueue? _d3d12SharedQueue; // 渲染器命令队列的 Vortice 包装器（AddRef 保持，防止 GC Release 误释放）
 
         // D3D11 硬解私有纹理池：复制 FFmpeg 纹理数组的 ArraySlice 到私有纹理
-        // FFmpeg 的 av_frame_unref 会立即释放 ArraySlice 回解码器池，导致渲染器读到的数据被新帧覆盖
-        // 在 av_frame_unref 之前复制到私有纹理，GPU 命令串行执行，确保复制在新帧解码之前完成
-        private const int HwCopyTextureSlots = 6; // 比渲染器三缓冲(3)多1个，确保复用时渲染器已释放
+        // FFmpeg 和渲染器使用不同的 D3D11Device，必须复制到渲染器设备才能创建 InputView
+        private const int HwCopyTextureSlots = 6; // GPU异步管线深度：解码→复制→队列→渲染，需足够槽位防止覆盖
         private readonly Vortice.Direct3D11.ID3D11Texture2D?[] _hwCopyTextures = new Vortice.Direct3D11.ID3D11Texture2D?[HwCopyTextureSlots];
         private int _hwCopyIndex = 0;
         private int _hwCopyWidth, _hwCopyHeight;
@@ -145,6 +144,17 @@ namespace MovieAgent.FFmpegDecoder
         private bool _isFirstVideoFrame = true;
 
         /// <summary>
+        /// 杜比视界解码总开关（DV转HDR方案）：
+        /// true  = P5 走 ICtCp 管线：RPU逆重塑 + ycc_to_rgb矩阵 还原成标准 PQ/BT.2020 RGB，
+        ///         之后与 HDR10 完全相同的静态色调映射（TARGET_WHITE=250/KNEE/ROLLOFF/饱和度1.20），
+        ///         即"杜比视界转HDR10静态渲染"；P7/P8 双层（如阿凡达）BL 本身就是标准 HDR10，
+        ///         无论开关状态都走 HDR10 管线，不受影响。
+        /// false = 彻底放弃 DV：P5 的 IPTPQc2 被当作 BT.2020 YCbCr 解读（青黄偏色，不可用）。
+        /// 若转换测试仍不理想，改回 false 即彻底放弃。
+        /// </summary>
+        public const bool SupportDolbyVisionDecoding = true;
+
+        /// <summary>
         /// 是否为杜比视界视频（DV Profile 5/7/8）
         /// 杜比视界使用 IPTPQc2 色彩空间，需要驱动色调映射而非自定义 HDR 着色器
         /// </summary>
@@ -154,6 +164,16 @@ namespace MovieAgent.FFmpegDecoder
         /// 杜比视界检测结果（公开属性，供渲染器查询）
         /// </summary>
         public bool IsDolbyVision => _isDolbyVision;
+
+        /// <summary>
+        /// 是否为 HDR 传输特性（PQ SMPTE2084 / HLG ARIB-B67，或杜比视界）。
+        /// SDR 10bit 视频（蓝光 x265 10bit）同样输出 P010 纹理，
+        /// 渲染器不能仅凭 P010 判定 HDR，必须结合本属性。
+        /// </summary>
+        private bool _isPqTransfer = false;
+
+        /// <summary>HDR 传输特性检测结果（公开属性，供渲染器查询）</summary>
+        public bool IsPqTransfer => _isPqTransfer;
 
         /// <summary>
         /// 是否为 ICtCp 色彩空间输入（杜比视界 Profile 5，流媒体WEB-DL常见）。
@@ -180,6 +200,7 @@ namespace MovieAgent.FFmpegDecoder
         /// </summary>
         private DoviRenderMetadata? _doviMetadata = null;
         private bool _doviMetadataLogged = false;
+        private bool _doviReshapeLogged = false;
         public DoviRenderMetadata? DoviMetadata => _doviMetadata;
 
         /// <summary>
@@ -202,15 +223,25 @@ namespace MovieAgent.FFmpegDecoder
         /// </summary>
         private double _audioClock = 0;
 
+        /// <summary>
+        /// 音频同步诊断计数器（每60帧约2秒打印一次播放位置偏差）
+        /// </summary>
+        private int _audioSyncDiagCount = 0;
+
+        /// <summary>
+        /// 音频落后追赶（清空队列）触发次数
+        /// </summary>
+        private long _audioLagFlushCount = 0;
+
         #endregion
 
         #region 显示队列相关
 
         /// <summary>
         /// 显示队列，用于解码线程和显示线程之间的帧传递
-        /// 容量为2帧，最小化内存占用（4K降级到1080p后每帧约6MB，2帧约12MB）
+        /// 容量为12帧，平衡内存占用与播放平滑度（4K硬解每帧纹理约16MB，12帧纹理池≈96MB）
         /// </summary>
-        private BlockingCollection<FrameData> _displayQueue = new BlockingCollection<FrameData>(50);
+        private BlockingCollection<FrameData> _displayQueue = new BlockingCollection<FrameData>(12);
 
         /// <summary>
         /// 显示线程，负责从队列中获取帧并触发FrameDecoded事件
@@ -298,7 +329,13 @@ namespace MovieAgent.FFmpegDecoder
         /// 播放任务取消令牌源
         /// </summary>
         private CancellationTokenSource? _playCts;
+        // ===== 1. 定义锁对象 =====
+        private readonly object _packetLock = new object();
 
+        // ===== 2. 定义停止标志 =====
+         private volatile bool _shouldInterrupt = false;
+ 
+ 
         /// <summary>
         /// 播放任务
         /// </summary>
@@ -909,7 +946,8 @@ namespace MovieAgent.FFmpegDecoder
         {
             _decodeMode = mode;
             _d3DMode = d3dModel;
-            InitializeFFmpeg();
+            _shouldInterrupt = false;
+             InitializeFFmpeg();
         }
 
         #endregion
@@ -1500,26 +1538,29 @@ namespace MovieAgent.FFmpegDecoder
                 DebugLogger.WriteLine("[FFmpeg] Starting async decode architecture...");
 
                 // 创建数据包队列（带容量限制，防止内存溢出）
-                _audioPacketQueue = Channel.CreateUnbounded<PacketData>(new UnboundedChannelOptions
+                // 使用BoundedChannel防止demux快于解码时内存无限增长
+                // 4K HEVC每包约100-500KB，视频100包≈50MB，音频50包≈2MB
+                _audioPacketQueue = Channel.CreateBounded<PacketData>(new BoundedChannelOptions(50)
                 {
                     SingleWriter = false,
-                    SingleReader = true
+                    SingleReader = true,
+                    FullMode = BoundedChannelFullMode.Wait
                 });
                 DebugLogger.WriteLine("[FFmpeg] 音频数据包队列创建完成");
                 
-                // 使用Unbounded避免BoundedChannel在Seek时因demux快于消费导致死锁
-                // 4K HEVC码率高，Seek后demux瞬间产出大量数据包，Bounded(30)极易写满阻塞
-                _videoPacketQueue = Channel.CreateUnbounded<PacketData>(new UnboundedChannelOptions
+                _videoPacketQueue = Channel.CreateBounded<PacketData>(new BoundedChannelOptions(100)
                 {
                     SingleWriter = false,
-                    SingleReader = true
+                    SingleReader = true,
+                    FullMode = BoundedChannelFullMode.Wait
                 });
                 DebugLogger.WriteLine("[FFmpeg] 视频数据包队列创建完成");
 
-                _subtitlePacketQueue = Channel.CreateUnbounded<PacketData>(new UnboundedChannelOptions
+                _subtitlePacketQueue = Channel.CreateBounded<PacketData>(new BoundedChannelOptions(20)
                 {
                     SingleWriter = false,
-                    SingleReader = true
+                    SingleReader = true,
+                    FullMode = BoundedChannelFullMode.Wait
                 });
                 DebugLogger.WriteLine("[FFmpeg] 字幕数据包队列创建完成");
 
@@ -1668,8 +1709,13 @@ namespace MovieAgent.FFmpegDecoder
 
                             if (_isPaused)
                             {
+                                // Pause: maintain master clock at current frame position
+                                // so resume picks up exactly where we left off, but do NOT
+                                // deliver frames to the renderer (that would be fast-forward).
                                 masterClockBaseTick = nowSysTick;
                                 masterClockBasePts = videoPts;
+                                Thread.Sleep(10);
+                                continue;
                             }
 
                             // 视频主时钟 = 基准PTS + 系统时间推进
@@ -1801,6 +1847,7 @@ namespace MovieAgent.FFmpegDecoder
                 }
 
                 AVFormatContext* fmtCtx = ffmpeg.avformat_alloc_context();
+ 
                 _formatContext = (IntPtr)fmtCtx;
                 if (fmtCtx == null)
                 {
@@ -1870,10 +1917,21 @@ namespace MovieAgent.FFmpegDecoder
                                 break;
                             }
                         }
-                        // 放弃杜比视界 ICtCp 管线，统一走 HDR10 路径（BT.2020 + PQ）处理。
-                        // ICtCp 着色器矩阵还原颜色效果差（洋红/偏绿），HDR10 管线已调优，观感更稳定。
-                        _isIctcpInput = false;
-                        _ictcpInputChecked = true; // 阻止首帧 colorspace 检测再次启用 ICtCp
+                        // 杜比视界解码总开关关闭时，一律不走 ICtCp 专属管线，
+                        // 所有 DV 内容统一按 HDR10（PQ + BT.2020 YCbCr）管线处理：
+                        // P7/P8 双层 BL 为标准 HDR10，色彩正确；P5 的 IPTPQc2 接受偏色。
+                        // 开关打开时：Profile 5 / compat_id=6 的 BL 为 ICtCp 色彩空间，
+                        // 必须走 ICtCp 管线（RPU ycc_to_rgb_matrix 还原）。
+                        _isIctcpInput = SupportDolbyVisionDecoding && _isDolbyVision && (dvProfile == 5 || dvCompatId == 6);
+                        _ictcpInputChecked = true; // 阻止首帧 colorspace 检测再次覆盖 ICtCp 判定
+
+                        // HDR 传输特性判定：DV 一律 HDR；非 DV 看 trc（PQ/HLG）。
+                        // SDR 10bit（trc=UNSPECIFIED/BT709/GAMMA22 等）即使输出 P010 也不是 HDR。
+                        _isPqTransfer = _isDolbyVision
+                            || codecParams->color_trc == AVColorTransferCharacteristic.AVCOL_TRC_SMPTE2084
+                            || codecParams->color_trc == AVColorTransferCharacteristic.AVCOL_TRC_ARIB_STD_B67;
+                        DebugLogger.WriteLine($"[FFmpeg] HDR传输特性判定: IsPqTransfer={_isPqTransfer} "
+                            + $"(dv={_isDolbyVision}, trc={codecParams->color_trc})");
 
                         if (_isDolbyVision)
                         {
@@ -1883,7 +1941,11 @@ namespace MovieAgent.FFmpegDecoder
                                 + $", dv_profile={dvProfile}, bl_compatibility_id={dvCompatId}"
                                 + $", color_space={codecParams->color_space}, color_trc={codecParams->color_trc}"
                                 + $", color_primaries={codecParams->color_primaries}, color_range={codecParams->color_range}");
-                            DebugLogger.WriteLine("[FFmpeg] 杜比视界视频，使用HDR10管线（BT.2020+PQ色调映射）");
+                            DebugLogger.WriteLine(SupportDolbyVisionDecoding
+                                ? (_isIctcpInput
+                                    ? "[FFmpeg] 杜比视界 P5（ICtCp色彩空间），使用ICtCp管线（RPU矩阵还原）"
+                                    : "[FFmpeg] 杜比视界 P7/P8（BT.2020 YCbCr），使用HDR10管线（BT.2020+PQ色调映射）")
+                                : "[FFmpeg] 杜比视界解码已禁用（SupportDolbyVisionDecoding=false），统一使用HDR10管线（BT.2020+PQ色调映射）");
                         }
                         else
                         {
@@ -3361,43 +3423,51 @@ namespace MovieAgent.FFmpegDecoder
         /// </summary>
         private unsafe int ReadPacket()
         {
-            // 1. 取局部快照，防止判断后被其他线程篡改
-            IntPtr localFormatCtx = _formatContext;
-            IntPtr localPacket = _packet;
-
-            if (localFormatCtx == IntPtr.Zero || localPacket == IntPtr.Zero)
+            // ===== 快速路径：如果没有停止，直接进入 =====
+            if (_playCts?.IsCancellationRequested == true || _shouldInterrupt)
                 return -1;
 
-            // 2. 转换为指针
-            AVFormatContext* fmtCtx = (AVFormatContext*)localFormatCtx;
-            AVPacket* pkt = (AVPacket*)localPacket;
-
-            try
+            // ===== 临界区保护 =====
+            lock (_packetLock)
             {
-                // 3. 停止检查：防止暂停/停止时原生对象已被释放，av_read_frame 访问野指针触发 ExecutionEngineException
-                if (_playCts?.IsCancellationRequested == true || _formatContext == IntPtr.Zero || _packet == IntPtr.Zero)
+                // ===== 再次检查（防止在获取锁期间状态改变） =====
+                if (_playCts?.IsCancellationRequested == true || _shouldInterrupt)
                     return -1;
 
-                // 4. 读取前重置packet状态（防止残留数据导致内存泄漏）
-                ffmpeg.av_packet_unref(pkt);
-                // 5. 执行读取
-                int ret = ffmpeg.av_read_frame(fmtCtx, pkt);
+                // ===== 验证指针 =====
+                if (_formatContext == IntPtr.Zero || _packet == IntPtr.Zero)
+                {
+                     return -1;
+                }
 
-                // 5. 如果读取失败，确保packet处于干净状态
+                // ===== 获取指针（此时安全） =====
+                AVFormatContext* fmtCtx = (AVFormatContext*)_formatContext;
+                AVPacket* pkt = (AVPacket*)_packet;
+
+                // ===== 第三次检查（防止竞态） =====
+                if (_playCts?.IsCancellationRequested == true)
+                    return -1;
+
+                // ===== 清理 packet =====
+                ffmpeg.av_packet_unref(pkt);
+
+                // ===== 执行读取 =====
+                 int ret = ffmpeg.av_read_frame(fmtCtx, pkt);
+
+                // ===== 处理错误 =====
                 if (ret < 0)
                 {
                     ffmpeg.av_packet_unref(pkt);
+
+                    // 用户中断（AVERROR_EXIT = -1414092869）
+                    if (ret == -1414092869 || _shouldInterrupt)
+                        return -1;
+
+                    // EOF 或其他错误
+                    return ret;
                 }
 
                 return ret;
-            }        
-            catch (Exception ex) when (ex is AccessViolationException or NullReferenceException or ExecutionEngineException)
-            {
-                // 6. 异常时清理packet，防止残留
-                ffmpeg.av_packet_unref(pkt);
-                // 标记格式上下文已失效，防止后续循环继续访问
-                _formatContext = IntPtr.Zero;
-                return -1;
             }
         }
         /// <summary>
@@ -3495,7 +3565,7 @@ namespace MovieAgent.FFmpegDecoder
 
                     // 读取数据包（调用unsafe方法）
                     var readStart = Stopwatch.GetTimestamp();
-                    int readResult = ReadPacket();
+                     int readResult = ReadPacket();
                     var readElapsed = (Stopwatch.GetTimestamp() - readStart) / (double)Stopwatch.Frequency;
                     if (readElapsed > 0.5)  // 超过500ms记录慢读警告
                         DebugLogger.WriteLine($"[FFmpeg] Demux: SLOW av_read_frame, took {readElapsed:F1}s");
@@ -3527,16 +3597,12 @@ namespace MovieAgent.FFmpegDecoder
                     else if (streamIndex == _subtitleStreamIndex && _subtitleStreamIndex >= 0)
                     {
                         _subtitlePacketsRouted++;
-                        if (_subtitlePacketsRouted % 50 == 1)
-                            DebugLogger.WriteLine($"[FFmpeg] Demux: 字幕包已路由 {_subtitlePacketsRouted} 个 (stream={_subtitleStreamIndex})");
                         await SendToSubtitleQueue(ct);
                     }
                     else if (streamIndex >= 12 && streamIndex <= 31 && streamIndex != _subtitleStreamIndex)
                     {
-                        // 检测到其他字幕流的包（可能是切换轨道后残留的旧包）
+                        // 检测到其他字幕流的包（可能是切换轨道后残留的旧包），跳过
                         _otherSubtitlePacketsSeen++;
-                        if (_otherSubtitlePacketsSeen <= 5)
-                            DebugLogger.WriteLine($"[FFmpeg] Demux: 跳过其他字幕流包 stream={streamIndex}, 当前字幕流={_subtitleStreamIndex}");
                     }
 
                     // 释放数据包（调用unsafe方法）
@@ -3808,22 +3874,47 @@ namespace MovieAgent.FFmpegDecoder
                         }
 
                         byte[] outBuffer = ConvertAudioFrame(aFrm);
+                        bool dropThisAudioFrame = false; // 音频落后追赶时丢弃本帧（不入队）
                         if (outBuffer != null && outBuffer.Length > 0)
                         {
-                            // ===== 视频主时钟反馈校正 =====
-                            // 比较音频PTS与视频主时钟，音频领先>30ms时跳过部分样本
+                            // ===== 视频主时钟反馈校正（对称补偿） =====
+                            // 实际播放位置 = 本帧PTS - 队列未播时长，与视频主时钟比较：
+                            // 领先 >30ms：跳过部分样本（原逻辑）
+                            // 落后 >120ms：清空设备队列+丢帧，让音频播放位置/解码全速追赶（新增）
+                            //   落后场景：Seek后旧队列残留、NAS网络断流导致解码滞后等。
+                            //   原代码只有单向超前补偿，落后偏差永远得不到纠正。
                             const double AUDIO_LEAD_CORRECT_THRESHOLD = 0.030; // 30ms
+                            const double AUDIO_LAG_CORRECT_THRESHOLD = 0.120;  // 120ms
                             double audioPtsSec = _audioClock / 1000.0;
                             double videoMasterPts = _currentDisplayedFramePts;
-                            
+
                             if (videoMasterPts > 0 && _audioOutput != null)
                             {
                                 double audioLead = audioPtsSec - videoMasterPts;
                                 // 考虑音频缓冲区中的延迟：音频真正播放到的位置 = audioPts - bufferedDuration
                                 double bufferedSec = _audioOutput.BufferedDuration.TotalSeconds;
                                 double effectiveAudioLead = audioLead - bufferedSec;
-                                
-                                if (effectiveAudioLead > AUDIO_LEAD_CORRECT_THRESHOLD)
+
+                                // 周期诊断：每60帧(约2s)打印播放位置与视频主时钟的偏差
+                                _audioSyncDiagCount++;
+                                if (_audioSyncDiagCount % 60 == 0)
+                                {
+                                    DebugLogger.WriteLine($"[音频同步] 播放位置-视频={effectiveAudioLead * 1000:F0}ms "
+                                        + $"(audioPts={audioPtsSec:F2}s, video={videoMasterPts:F2}s, 队列={bufferedSec * 1000:F0}ms)");
+                                }
+
+                                if (effectiveAudioLead < -AUDIO_LAG_CORRECT_THRESHOLD)
+                                {
+                                    // 音频实际播放位置落后视频主时钟：清空设备中的旧队列
+                                    // （清空后播放位置跳到最新提交点，音频解码不再受500ms水位节流，
+                                    //  可全速解码追赶视频；本帧丢弃加速对齐）
+                                    _audioOutput.ClearBuffer();
+                                    dropThisAudioFrame = true;
+                                    _audioLagFlushCount++;
+                                    DebugLogger.WriteLine($"[音频校正] 音频落后{-effectiveAudioLead * 1000:F0}ms，清空队列追赶 "
+                                        + $"(audioPts={audioPtsSec:F2}s, video={videoMasterPts:F2}s, 队列={bufferedSec * 1000:F0}ms, #{_audioLagFlushCount})");
+                                }
+                                else if (effectiveAudioLead > AUDIO_LEAD_CORRECT_THRESHOLD)
                                 {
                                     // 音频领先太多，跳过部分样本
                                     int sampleRate = _audioOutput.WaveFormat?.SampleRate ?? 48000;
@@ -3845,7 +3936,7 @@ namespace MovieAgent.FFmpegDecoder
                                 }
                             }
 
-                            if (_audioOutput != null && _audioOutput.BufferedDuration.TotalMilliseconds < 2000)
+                            if (!dropThisAudioFrame && _audioOutput != null && _audioOutput.BufferedDuration.TotalMilliseconds < 2000)
                             {
                                 _audioOutput.AddSamples(outBuffer, 0, outBuffer.Length);
                             }
@@ -4360,22 +4451,33 @@ namespace MovieAgent.FFmpegDecoder
                     }
 
                     // 首帧 colorspace 检测（仅当 DOVI 配置记录未覆盖时生效）。
-                    // DV 内容在 Open 阶段已强制 _isIctcpInput=false 走 HDR10 路径，
-                    // 此处 _ictcpInputChecked=true 已跳过检测，作为兜底保留代码。
+                    // DV 内容在 Open 阶段已根据 dv_profile 判定 _isIctcpInput 并置 _ictcpInputChecked=true，
+                    // 此处跳过检测，作为非 DV 内容的首帧 colorspace 兜底（检测 AVCOL_SPC_ICTCP）。
                     if (!_ictcpInputChecked)
                     {
                         _ictcpInputChecked = true;
                         var cs = frm->colorspace;
                         if (cs == AVColorSpace.AVCOL_SPC_ICTCP)
                         {
-                            _isIctcpInput = true;
-                            DebugLogger.WriteLine($"[FFmpeg] 检测到 ICtCp 色彩空间(colorspace={cs})，判定为杜比视界 Profile 5，"
-                                + "渲染器将使用 ICtCp 专用着色器（ICtCp→LMS→PQ→BT.2020→BT.709）");
+                            // DV 解码总开关关闭：即使识别出 ICtCp 也不走专属管线，统一 HDR10
+                            _isIctcpInput = SupportDolbyVisionDecoding;
+                            DebugLogger.WriteLine(SupportDolbyVisionDecoding
+                                ? $"[FFmpeg] 检测到 ICtCp 色彩空间(colorspace={cs})，判定为杜比视界 Profile 5，"
+                                    + "渲染器将使用 ICtCp 专用着色器（ICtCp→LMS→PQ→BT.2020→BT.709）"
+                                : $"[FFmpeg] 检测到 ICtCp 色彩空间(colorspace={cs})，但杜比视界解码已禁用，统一使用HDR10管线");
                         }
                         else
                         {
                             DebugLogger.WriteLine($"[FFmpeg] 首帧色彩空间: colorspace={cs}, trc={frm->color_trc}, "
                                 + $"primaries={frm->color_primaries}, range={frm->color_range}");
+                        }
+                        // 首帧 trc 补充判定：容器标记 UNSPECIFIED 的流，解码后帧可能携带真实 trc
+                        if (!_isPqTransfer && !_isDolbyVision
+                            && (frm->color_trc == AVColorTransferCharacteristic.AVCOL_TRC_SMPTE2084
+                                || frm->color_trc == AVColorTransferCharacteristic.AVCOL_TRC_ARIB_STD_B67))
+                        {
+                            _isPqTransfer = true;
+                            DebugLogger.WriteLine($"[FFmpeg] 首帧检测到 HDR 传输特性 trc={frm->color_trc}，判定为 HDR");
                         }
                     }
 
@@ -4403,22 +4505,18 @@ namespace MovieAgent.FFmpegDecoder
 
                                 if (srcTexturePtr != IntPtr.Zero)
                                 {
-                                    // ===== 关键修复：在 av_frame_unref 之前复制纹理到私有纹理 =====
-                                    // FFmpeg 硬解使用纹理数组循环复用 ArraySlice，av_frame_unref 会立即释放槽位
-                                    // 渲染器的 CopySubresourceRegion/VideoProcessorBlt 是异步 GPU 命令
-                                    // 若不复制，GPU 可能读到被新帧覆盖的混合数据 → 画面抖动
-                                    // 在这里同步复制并 Flush，GPU 命令串行执行，确保复制在新帧解码之前完成
+                                    // FFmpeg和渲染器使用不同的D3D11Device，必须复制纹理到渲染器设备
+                                    // CreateVideoProcessorInputView需要纹理与VideoProcessor在同一设备上
                                     IntPtr privatePtr = CopyHwTextureToPrivate(srcTexturePtr, srcArrayIndex, frm->width, frm->height);
                                     if (privatePtr != IntPtr.Zero)
                                     {
                                         nv12TexturePtr = privatePtr;
-                                        textureArrayIndex = 0; // 私有纹理不是数组，ArraySlice=0
+                                        textureArrayIndex = 0;
                                         canUseZeroCopy = true;
                                         isTextureArray = false;
                                     }
                                     else
                                     {
-                                        // 复制失败，回退到原始指针（仍可能抖动，但至少能显示）
                                         nv12TexturePtr = srcTexturePtr;
                                         textureArrayIndex = srcArrayIndex;
                                         canUseZeroCopy = true;
@@ -4509,8 +4607,8 @@ namespace MovieAgent.FFmpegDecoder
                         }
                     }
 
-                    // ========== 解析杜比视界 RPU 元数据（每帧） ==========
-                    if (_isDolbyVision)
+                    // ========== 解析杜比视界 RPU 元数据（每帧，仅 DV 解码启用时） ==========
+                    if (SupportDolbyVisionDecoding && _isDolbyVision)
                     {
                         _doviMetadata = ParseDoviMetadata(frm);
                     }
@@ -4597,7 +4695,7 @@ namespace MovieAgent.FFmpegDecoder
                     // ========== 安全入队（阻塞等待，不丢帧） ==========
                     if (frameData.YPlane != null || frameData.NV12TexturePtr != IntPtr.Zero) // 确保数据有效
                     {
-                        int maxQueue = _decodeMode == DecodeMode.Hardware ? 30 : 6;
+                        int maxQueue = _decodeMode == DecodeMode.Hardware ? 12 : 4;
                         // 等待队列有空位
                         while (_displayQueue.Count >= maxQueue && !_decodeCts.IsCancellationRequested)
                         {
@@ -4669,6 +4767,8 @@ namespace MovieAgent.FFmpegDecoder
                 byte* basePtr = sd->data;
                 if (basePtr == null) return null;
 
+                ulong headerOffset = *(ulong*)(basePtr + 0);
+                ulong mappingOffset = *(ulong*)(basePtr + 8);
                 ulong colorOffset = *(ulong*)(basePtr + 16);
                 if (colorOffset == 0) return null;
 
@@ -4718,7 +4818,8 @@ namespace MovieAgent.FFmpegDecoder
                     YccToRgbMatrix = matrix,
                     YccToRgbOffset = offset,
                     HasValidMatrix = hasValid,
-                    MetadataPresent = true
+                    MetadataPresent = true,
+                    Reshape = ParseDoviReshape(basePtr, headerOffset, mappingOffset)
                 };
             }
             catch (Exception ex)
@@ -4730,6 +4831,113 @@ namespace MovieAgent.FFmpegDecoder
                 }
                 return null;
             }
+        }
+
+        /// <summary>
+        /// 解析 AVDOVIDataMapping.curves[3] 重塑曲线（DV P5 的 BL 是重塑后的 IPTPQc2）。
+        /// 归一化对齐 mpv/libplacebo（pl_map_dovi_metadata）：
+        ///   pivots[i]    = raw / (2^bl_bit_depth - 1)
+        ///   poly/mmr 系数 = raw / 2^coef_log2_denom
+        /// 两个字段均来自 AVDOVIRpuDataHeader。
+        /// 布局（x64）AVDOVIReshapingCurve，stride=1672：
+        ///   +0 num_pivots(u8) | +2 pivots[9](u16) | +20 mapping_idc[8](i32)
+        ///   +52 poly_order[8](u8) | +64 poly_coef[8][3](i64)
+        ///   +256 mmr_order[8](u8) | +264 mmr_constant[8](i64) | +328 mmr_coef[8][3][7](i64)
+        /// curves[c] 位于 mapping + 8 + c*1672（前面 3 个 u8 字段 + 5 字节对齐填充）。
+        /// </summary>
+        private unsafe DoviReshapeChannel[]? ParseDoviReshape(byte* basePtr, ulong headerOffset, ulong mappingOffset)
+        {
+            if (headerOffset == 0 || mappingOffset == 0) return null;
+
+            // AVDOVIRpuDataHeader: coef_log2_denom@8, bl_bit_depth@11
+            byte* hdrPtr = basePtr + (long)headerOffset;
+            int coefLog2Denom = hdrPtr[8];
+            int blBitDepth = hdrPtr[11];
+            if (coefLog2Denom < 1 || coefLog2Denom > 31 || blBitDepth < 8 || blBitDepth > 16)
+            {
+                if (!_doviReshapeLogged)
+                {
+                    _doviReshapeLogged = true;
+                    DebugLogger.WriteLine($"[FFmpeg] DOVI reshape skipped: invalid header (coef_log2_denom={coefLog2Denom}, bl_bit_depth={blBitDepth})");
+                }
+                return null;
+            }
+
+            float pivotScale = 1.0f / ((1 << blBitDepth) - 1);
+            float coefScale = 1.0f / (1L << coefLog2Denom);
+            const int CurveSize = 1672;
+            byte* mapPtr = basePtr + (long)mappingOffset;
+
+            var result = new DoviReshapeChannel[3];
+            for (int c = 0; c < 3; c++)
+            {
+                byte* cv = mapPtr + 8 + c * CurveSize;
+                int np = cv[0];
+                if (np < 2 || np > 9)
+                {
+                    if (!_doviReshapeLogged)
+                    {
+                        _doviReshapeLogged = true;
+                        DebugLogger.WriteLine($"[FFmpeg] DOVI reshape invalid num_pivots={np} (ch {c}), reshape disabled");
+                    }
+                    return null;
+                }
+
+                var ch = new DoviReshapeChannel { NumPivots = np };
+                for (int i = 0; i < np; i++)
+                    ch.Pivots[i] = *(ushort*)(cv + 2 + i * 2) * pivotScale;
+                for (int i = 1; i < np; i++)
+                {
+                    if (ch.Pivots[i] < ch.Pivots[i - 1])
+                    {
+                        if (!_doviReshapeLogged)
+                        {
+                            _doviReshapeLogged = true;
+                            DebugLogger.WriteLine($"[FFmpeg] DOVI reshape pivots not ascending (ch {c}), reshape disabled");
+                        }
+                        return null;
+                    }
+                }
+
+                int segs = Math.Min(np - 1, 8);
+                for (int j = 0; j < segs; j++)
+                {
+                    ch.Method[j] = *(int*)(cv + 20 + j * 4);
+                    if (ch.Method[j] == 0)
+                    {
+                        // polynomial: poly_coef[seg][k] = x^0..x^2
+                        for (int k = 0; k < 3; k++)
+                            ch.PolyCoef[j * 3 + k] = *(long*)(cv + 64 + (j * 3 + k) * 8) * coefScale;
+                    }
+                    else
+                    {
+                        // MMR: constant + mmr_coef[seg][m][k], m=0..2 对应 1/2/3 阶，每阶 7 权重
+                        ch.MmrOrder[j] = cv[256 + j];
+                        ch.MmrConstant[j] = *(long*)(cv + 264 + j * 8) * coefScale;
+                        for (int m = 0; m < 3; m++)
+                            for (int k = 0; k < 7; k++)
+                                ch.MmrCoef[(j * 3 + m) * 7 + k] = *(long*)(cv + 328 + ((j * 3 + m) * 7 + k) * 8) * coefScale;
+                    }
+                }
+                result[c] = ch;
+            }
+
+            if (!_doviReshapeLogged)
+            {
+                _doviReshapeLogged = true;
+                var sb = new System.Text.StringBuilder();
+                sb.AppendLine($"[FFmpeg] DOVI reshape curves parsed (coef_log2_denom={coefLog2Denom}, bl_bit_depth={blBitDepth}):");
+                for (int c = 0; c < 3; c++)
+                {
+                    int np = result[c].NumPivots;
+                    int poly = 0, mmr = 0;
+                    for (int j = 0; j < np - 1; j++)
+                        if (result[c].Method[j] == 0) poly++; else mmr++;
+                    sb.AppendLine($"  ch{c}: pivots={np} (range [{result[c].Pivots[0]:F3}, {result[c].Pivots[np - 1]:F3}]), poly_segs={poly}, mmr_segs={mmr}");
+                }
+                DebugLogger.WriteLine(sb.ToString());
+            }
+            return result;
         }
 
         // 辅助方法：从 AVFrame 提取 YUV420P 并填充到 FrameData（需实现）
@@ -6596,19 +6804,22 @@ namespace MovieAgent.FFmpegDecoder
 
         private async Task StopInternalAsync()
         {
+            
             DebugLogger.WriteLine("[FFmpeg] StopInternalAsync - 开始停止");
-
+            
             if (_playTask == null && !_isPlaying && _demuxTask == null) return;
 
             _isPlaying = false;
             _isPaused = false;
-
+            
             // 第一步：取消所有令牌，触发解码循环退出
             DebugLogger.WriteLine("[FFmpeg] 取消所有令牌...");
             _playCts?.Cancel();       // 会连锁取消 _demuxCts, _audioCts, _videoCts, _subtitleCts
             _displayCts?.Cancel();    // 停止显示线程
             _decodeCts?.Cancel();     // 取消解码循环
             DebugLogger.WriteLine("[FFmpeg] 所有令牌已取消");
+
+           
 
             // 第二步：完成显示队列，确保显示线程不会阻塞在 TryTake
             _displayQueue?.CompleteAdding();
@@ -6680,15 +6891,17 @@ namespace MovieAgent.FFmpegDecoder
             _decodeCts = null;
             _displayQueue = null;
             _currentTimeMs = 0;
-
             DebugLogger.WriteLine("[FFmpeg] 资源释放完成，开始清理");
 
             Cleanup();
-            DebugLogger.WriteLine("[FFmpeg] StopInternalAsync - 停止完成");
-        }
 
+            DebugLogger.WriteLine("[FFmpeg] StopInternalAsync - 停止完成");
+
+        } 
+      
         public async Task StopAsync()
         {
+            _shouldInterrupt = true;
             await StopInternalAsync();
         }
 
@@ -6790,7 +7003,14 @@ namespace MovieAgent.FFmpegDecoder
 
                 if (_formatContext != IntPtr.Zero)
                 {
-                    var ctx = (AVFormatContext*)_formatContext;
+                    var ctx = (AVFormatContext*)_formatContext;  
+                     if (ctx->pb != null)
+                    {
+                        // ★★★ 关闭 IO，让 av_read_frame 立即返回 ★★★
+                        ffmpeg.avio_close(ctx->pb);
+                        ctx->pb = null;
+                        // 现在 av_read_frame 会返回错误，解码线程退出
+                    }
                     ffmpeg.avformat_close_input(&ctx);
                     ffmpeg.avformat_free_context(ctx);
                     _formatContext = IntPtr.Zero;
@@ -6814,6 +7034,7 @@ namespace MovieAgent.FFmpegDecoder
                     catch { }
                     _audioOutput = null;
                 }
+ 
             }
             catch { }
         }
@@ -7774,6 +7995,7 @@ namespace MovieAgent.FFmpegDecoder
         private unsafe bool OpenFileDirectly(string filePath)
         {
             AVFormatContext* fmtCtx = ffmpeg.avformat_alloc_context();
+ 
             _formatContext = (IntPtr)fmtCtx;
             if (fmtCtx == null)
             {
@@ -8007,6 +8229,33 @@ namespace MovieAgent.FFmpegDecoder
         public bool HasValidMatrix { get; set; }
         /// <summary>RPU 元数据是否存在（用于日志诊断）</summary>
         public bool MetadataPresent { get; set; }
+        /// <summary>3 通道重塑曲线（解析失败时为 null，着色器跳过重塑）</summary>
+        public DoviReshapeChannel[]? Reshape { get; set; }
+        /// <summary>重塑曲线是否可用</summary>
+        public bool HasValidReshape => Reshape != null;
+    }
+
+    /// <summary>
+    /// 杜比视界 RPU 重塑曲线（单通道）。DV P5 的 BL 信号是经 RPU poly/MMR 重塑的 IPTPQc2，
+    /// 必须先逆重塑才能用 ycc_to_rgb_matrix 还原。归一化对齐 mpv/libplacebo pl_map_dovi_metadata：
+    /// pivots 按 (2^bl_bit_depth - 1) 归一化，poly/MMR 系数按 2^coef_log2_denom 归一化。
+    /// </summary>
+    public class DoviReshapeChannel
+    {
+        /// <summary>pivot 数量 [2,9]</summary>
+        public int NumPivots;
+        /// <summary>归一化 pivot（raw / (2^bl_bit_depth - 1)），输入信号分段边界</summary>
+        public float[] Pivots = new float[9];
+        /// <summary>每段方法：0=poly, 1=MMR</summary>
+        public int[] Method = new int[8];
+        /// <summary>poly 系数 [seg*3+k]（x^0..x^2，已除以 2^coef_log2_denom）</summary>
+        public float[] PolyCoef = new float[8 * 3];
+        /// <summary>MMR 阶数 [1,3]</summary>
+        public int[] MmrOrder = new int[8];
+        /// <summary>MMR 常数项（已除以 2^coef_log2_denom）</summary>
+        public float[] MmrConstant = new float[8];
+        /// <summary>MMR 系数 [(seg*3+m)*7+k]，m=0..2 对应 1/2/3 阶（已除以 2^coef_log2_denom）</summary>
+        public float[] MmrCoef = new float[8 * 3 * 7];
     }
 
     /// <summary>

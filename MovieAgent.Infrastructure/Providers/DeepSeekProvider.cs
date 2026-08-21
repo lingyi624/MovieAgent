@@ -144,7 +144,7 @@ public class DeepSeekProvider : IChatProvider
     }
 
     private static string GetSystemPrompt() => """
-        你是电影管家"小影"。回答必须基于本地电影库，禁止编造，禁止推荐外部电影。
+        你是电影管家"小雪雪"。回答必须基于本地电影库，禁止编造，禁止推荐外部电影。
 
         回答规则：
         1. 必须使用电影库中的电影标题且电影标题必须用《电影标题》括起来，不管是英文还是中文标题。

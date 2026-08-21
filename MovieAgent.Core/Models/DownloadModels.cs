@@ -37,6 +37,8 @@ public class DownloadTask
     public double ProgressPercent => TotalBytes > 0 ? (double)DownloadedBytes / TotalBytes * 100 : 0;
     public double DownloadSpeedBps { get; set; }
     public string? SavePath { get; set; }
+    public string? TargetDirectory { get; set; }
+    public List<string>? SelectedFiles { get; set; }
     public DateTime CreatedAt { get; set; } = DateTime.Now;
     public DateTime? StartedAt { get; set; }
     public DateTime? CompletedAt { get; set; }
@@ -62,4 +64,21 @@ public class DownloadSettings
     public int MaxConcurrentDownloads { get; set; } = 3;
     public int MaxRetries { get; set; } = 3;
     public bool UseNasForDownload { get; set; }
+}
+
+public class TorrentFileInfo
+{
+    public string Path { get; set; } = string.Empty;
+    public string FileName => System.IO.Path.GetFileName(Path);
+    public long Size { get; set; }
+    public bool Selected { get; set; } = true;
+}
+
+public class TorrentPreviewInfo
+{
+    public string SuggestedName { get; set; } = string.Empty;
+    public string SuggestedDirectory { get; set; } = string.Empty;
+    public long TotalSize { get; set; }
+    public List<TorrentFileInfo> Files { get; set; } = new();
+    public string? ErrorMessage { get; set; }
 }

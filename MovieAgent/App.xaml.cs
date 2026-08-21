@@ -177,11 +177,9 @@ public partial class App : Application
 
             services.AddSingleton<IAgentService>(sp =>
                 new MovieAgentService(
-                    sp.GetRequiredService<IMovieRepository>(),
-                    sp.GetService<IMovieUpdateService>(),
+                    sp,
                     sp.GetRequiredService<IPlayerService>(),
                     sp.GetRequiredService<IConversationMemoryService>(),
-                    sp.GetRequiredService<IHybridSearchService>(),
                     sp.GetRequiredService<IVectorDatabaseService>(),  
                     sp.GetRequiredService<IConfiguration>()));
             services.AddScoped<IMovieRecommendationService, MovieRecommendationService>();

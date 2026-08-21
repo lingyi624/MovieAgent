@@ -18,6 +18,18 @@ namespace MovieAgent.Infrastructure.Services;
 
 public class MovieDownloadService : IMovieDownloadService, IDisposable
 {
+    // Well-known stable trackers, appended as &tr= params to magnet URLs
+    private static readonly string[] MagnetTrackers =
+    {
+        "udp://tracker.opentrackr.org:1337/announce",
+        "udp://tracker.openbittorrent.com:6969/announce",
+        "udp://open.demonii.com:1337/announce",
+        "udp://tracker.torrent.eu.org:451/announce",
+        "udp://explodie.org:6969/announce",
+        "udp://tracker.leechers-paradise.org:6969/announce",
+        "https://tracker.tamersunion.org:443/announce",
+    };
+
     private readonly IConfiguration _configuration;
     private readonly IHttpClientFactory _httpClientFactory;
     private readonly ILoggerService _logger;
@@ -140,7 +152,7 @@ public class MovieDownloadService : IMovieDownloadService, IDisposable
         }
     }
 
-    public async Task<string> AddDownloadAsync(string sourceUrl, string? customName = null)
+    public async Task<string> AddDownloadAsync(string sourceUrl, string? customName = null, string? customSaveDir = null, List<string>? selectedFiles = null)
     {
         var sourceType = DetectSourceType(sourceUrl);
         var name = customName ?? ExtractNameFromUrl(sourceUrl);
@@ -150,15 +162,164 @@ public class MovieDownloadService : IMovieDownloadService, IDisposable
             Name = name,
             SourceUrl = sourceUrl,
             SourceType = sourceType,
-            MaxRetries = _settings.MaxRetries
+            MaxRetries = _settings.MaxRetries,
+            TargetDirectory = customSaveDir,
+            SelectedFiles = selectedFiles
         };
 
         _tasks[task.Id] = task;
         await SaveTaskToDbAsync(task);
-        _logger.Information("[Download] 添加下载任务: {Name} ({Type})", task.Name, task.SourceType);
+        _logger.Information("[Download] 添加下载任务: {Name} ({Type}), 目录: {Dir}", task.Name, task.SourceType, customSaveDir ?? "默认");
 
         _ = ProcessDownloadAsync(task);
         return task.Id;
+    }
+
+    public Task<TorrentPreviewInfo?> GetTorrentPreviewAsync(string sourceUrl)
+    {
+        return GetTorrentPreviewAsync(sourceUrl, CancellationToken.None);
+    }
+
+    public async Task<TorrentPreviewInfo?> GetTorrentPreviewAsync(string sourceUrl, CancellationToken cancellationToken)
+    {
+        try
+        {
+            _logger.Information("[Download] GetTorrentPreviewAsync 开始, URL: {Url}", sourceUrl);
+            var sourceType = DetectSourceType(sourceUrl);
+            if (sourceType != DownloadSourceType.Magnet && sourceType != DownloadSourceType.TorrentFile)
+                return null;
+
+            var suggestedName = ExtractNameFromUrl(sourceUrl);
+            var defaultDir = await GetDefaultDownloadDirectoryAsync();
+
+            if (sourceType == DownloadSourceType.TorrentFile)
+            {
+                _logger.Information("[Download] 解析 .torrent 文件: {Url}", sourceUrl);
+                byte[] torrentData;
+
+                // 将文件读取和解析全部移到线程池执行，避免阻塞 UI 线程
+                if (sourceUrl.StartsWith("file://", StringComparison.OrdinalIgnoreCase))
+                {
+                    var localPath = new Uri(sourceUrl).LocalPath;
+                    torrentData = await Task.Run(() => File.ReadAllBytes(localPath), cancellationToken);
+                }
+                else if (File.Exists(sourceUrl))
+                {
+                    torrentData = await Task.Run(() => File.ReadAllBytes(sourceUrl), cancellationToken);
+                }
+                else
+                {
+                    _logger.Information("[Download] 从 HTTP 下载 .torrent: {Url}", sourceUrl);
+                    using var client = _httpClientFactory.CreateClient("DownloadClient");
+                    client.DefaultRequestHeaders.UserAgent.ParseAdd("Mozilla/5.0");
+                    torrentData = await client.GetByteArrayAsync(sourceUrl, cancellationToken);
+                }
+
+                cancellationToken.ThrowIfCancellationRequested();
+                _logger.Information("[Download] 种子文件读取完成, {Bytes} bytes, 开始解析", torrentData.Length);
+
+                var torrent = await Task.Run(() => Torrent.Load(torrentData), cancellationToken);
+                cancellationToken.ThrowIfCancellationRequested();
+                _logger.Information("[Download] 种子解析完成: {Name}, {Files} 个文件, {Size} bytes",
+                    torrent.Name, torrent.Files?.Count ?? 0, torrent.Size);
+
+                var preview = new TorrentPreviewInfo
+                {
+                    SuggestedName = torrent.Name ?? suggestedName,
+                    SuggestedDirectory = Path.Combine(defaultDir, SanitizeFileName(torrent.Name ?? suggestedName)),
+                    TotalSize = torrent.Size,
+                    Files = torrent.Files?.Select(f => new TorrentFileInfo
+                    {
+                        Path = f.Path,
+                        Size = f.Length,
+                        Selected = true
+                    }).ToList() ?? new()
+                };
+                return preview;
+            }
+            else // Magnet
+            {
+                _logger.Information("[Download] 磁力链接元数据获取: {Url}", sourceUrl);
+                var cacheDir = Path.Combine(defaultDir, ".monotorrent_preview_cache");
+                Directory.CreateDirectory(cacheDir);
+
+                var engineSettings = new EngineSettingsBuilder
+                {
+                    AllowPortForwarding = true,
+                    AllowLocalPeerDiscovery = true,
+                    AutoSaveLoadDhtCache = true,
+                    AutoSaveLoadMagnetLinkMetadata = true,
+                    CacheDirectory = cacheDir,
+                    ConnectionTimeout = TimeSpan.FromSeconds(10)
+                }.ToSettings();
+
+                using var engine = new ClientEngine(engineSettings);
+                var torrentSettings = new TorrentSettingsBuilder
+                {
+                    AllowDht = true,
+                    AllowPeerExchange = true,
+                    MaximumConnections = 50,
+                    UploadSlots = 4
+                }.ToSettings();
+
+                 var magnet = MagnetLink.Parse(InjectTrackers(sourceUrl));
+                var manager = await engine.AddAsync(magnet, defaultDir, torrentSettings);
+                await manager.StartAsync();
+
+                // Wait for metadata (max 15 seconds for preview)
+                using var metadataCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+                metadataCts.CancelAfter(TimeSpan.FromSeconds(15));
+                try
+                {
+                    while (manager.Torrent == null)
+                    {
+                        await Task.Delay(300, metadataCts.Token);
+                    }
+
+                    var torrent = manager.Torrent!;
+                    var preview = new TorrentPreviewInfo
+                    {
+                        SuggestedName = torrent.Name ?? suggestedName,
+                        SuggestedDirectory = Path.Combine(defaultDir, SanitizeFileName(torrent.Name ?? suggestedName)),
+                        TotalSize = torrent.Size,
+                        Files = torrent.Files?.Select(f => new TorrentFileInfo
+                        {
+                            Path = f.Path,
+                            Size = f.Length,
+                            Selected = true
+                        }).ToList() ?? new()
+                    };
+
+                    await TryStopManager(manager);
+                    return preview;
+                }
+                catch (OperationCanceledException)
+                {
+                    // 超时或调用方取消：真正停止 engine，释放 DHT 连接和线程，避免后台残留导致卡顿
+                    await TryStopManager(manager);
+                    if (cancellationToken.IsCancellationRequested)
+                        throw;
+                    return new TorrentPreviewInfo
+                    {
+                        SuggestedName = suggestedName,
+                        SuggestedDirectory = Path.Combine(defaultDir, SanitizeFileName(suggestedName)),
+                        ErrorMessage = "元数据获取超时，将使用默认名称"
+                    };
+                }
+            }
+        }
+        catch (Exception ex)
+        {
+            _logger.Information("[Download] 获取种子预览失败: {Error}", ex.Message);
+            var defaultDir = await GetDefaultDownloadDirectoryAsync();
+            var name = ExtractNameFromUrl(sourceUrl);
+            return new TorrentPreviewInfo
+            {
+                SuggestedName = name,
+                SuggestedDirectory = Path.Combine(defaultDir, SanitizeFileName(name)),
+                ErrorMessage = $"获取文件列表失败: {ex.Message}"
+            };
+        }
     }
 
     private static DownloadSourceType DetectSourceType(string url)
@@ -211,7 +372,7 @@ public class MovieDownloadService : IMovieDownloadService, IDisposable
             task.StartedAt = DateTime.Now;
             task.ErrorMessage = null;
 
-            var saveDir = await GetDefaultDownloadDirectoryAsync();
+            var saveDir = task.TargetDirectory ?? await GetDefaultDownloadDirectoryAsync();
             Directory.CreateDirectory(saveDir);
 
             if (task.SourceType == DownloadSourceType.Magnet || task.SourceType == DownloadSourceType.TorrentFile)
@@ -432,6 +593,7 @@ public class MovieDownloadService : IMovieDownloadService, IDisposable
                     AutoSaveLoadMagnetLinkMetadata = true,
                     CacheDirectory = cacheDir,
                     ConnectionTimeout = TimeSpan.FromSeconds(15),
+                    MaximumOpenFiles = 200,
                     //ListenPort = 0
                 }.ToSettings();
 
@@ -441,7 +603,8 @@ public class MovieDownloadService : IMovieDownloadService, IDisposable
                 {
                     AllowDht = true,
                     AllowPeerExchange = true,
-                    MaximumConnections = 60,
+                    MaximumConnections = 200,
+                    UploadSlots = 8,
                     CreateContainingDirectory = true
                 }.ToSettings();
 
@@ -452,23 +615,9 @@ public class MovieDownloadService : IMovieDownloadService, IDisposable
                 {
                     if (task.SourceType == DownloadSourceType.Magnet)
                     {
-                        // 添加 Tracker 列表（在添加任务前设置）
-                        List<string> trickList = new List<string>
-                        {
-                            "udp://tracker.opentrackr.org:1337/announce",
-                            "udp://tracker.openbittorrent.com:6969/announce",
-                            "udp://tracker.coppersurfer.tk:6969/announce",
-                            "udp://tracker.leechers-paradise.org:6969/announce",
-                            "udp://tracker.internetwarriors.net:1337/announce",
-                            "udp://explodie.org:6969/announce",
-                            "udp://tracker.pirateparty.gr:6969/announce",
-                            "udp://tracker.cyberia.is:6969/announce",
-                            "udp://tracker.zer0day.to:1337/announce"
-                        };
-                        var magnet = MagnetLink.Parse(task.SourceUrl);
+                        var magnet = MagnetLink.Parse(InjectTrackers(task.SourceUrl));
                         _logger.Information("[Download] 磁力链接已解析");
-                        
-                          manager = await engine.AddAsync(magnet, saveDir, torrentSettings);
+                        manager = await engine.AddAsync(magnet, saveDir, torrentSettings);
                     }
                     else
                     {
@@ -478,6 +627,11 @@ public class MovieDownloadService : IMovieDownloadService, IDisposable
                             var localPath = new Uri(task.SourceUrl).LocalPath;
                             _logger.Information("[Download] 正在读取本地种子文件: {Path}", localPath);
                             torrentData = await File.ReadAllBytesAsync(localPath, ct);
+                        }
+                        else if (File.Exists(task.SourceUrl))
+                        {
+                            _logger.Information("[Download] 正在读取本地种子文件: {Path}", task.SourceUrl);
+                            torrentData = await File.ReadAllBytesAsync(task.SourceUrl, ct);
                         }
                         else
                         {
@@ -778,6 +932,20 @@ public class MovieDownloadService : IMovieDownloadService, IDisposable
                 SpeedBps = task.DownloadSpeedBps
             });
         }
+    }
+
+    private static string InjectTrackers(string sourceUrl)
+    {
+        if (!sourceUrl.StartsWith("magnet:", StringComparison.OrdinalIgnoreCase))
+            return sourceUrl;
+
+        // Append tracker URLs as &tr= params to speed up peer discovery
+        foreach (var tracker in MagnetTrackers)
+        {
+            if (!sourceUrl.Contains($"&tr={Uri.EscapeDataString(tracker)}", StringComparison.OrdinalIgnoreCase))
+                sourceUrl += $"&tr={Uri.EscapeDataString(tracker)}";
+        }
+        return sourceUrl;
     }
 
     private static string SanitizeFileName(string name)

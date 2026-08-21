@@ -44,6 +44,9 @@ public interface IPlayerService
     /// <summary>是否为杜比视界视频</summary>
     bool IsDolbyVision { get; }
 
+    /// <summary>是否为HDR传输特性（PQ/HLG/DV）。SDR 10bit视频同样输出P010，渲染器不能仅凭P010判HDR</summary>
+    bool IsPqTransfer { get; }
+
     /// <summary>是否为ICtCp色彩空间输入（杜比视界Profile 5，需专用着色器渲染）</summary>
     bool IsIctcpInput { get; }
 

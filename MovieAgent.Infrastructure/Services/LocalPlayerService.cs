@@ -60,6 +60,8 @@ namespace MovieAgent.Infrastructure.Services
 
         public bool IsDolbyVision => _decoder?.IsDolbyVision ?? false;
 
+        public bool IsPqTransfer => _decoder?.IsPqTransfer ?? false;
+
         public bool IsIctcpInput => _decoder?.IsIctcpInput ?? false;
 
         public DoviRenderMetadata? DoviMetadata => _decoder?.DoviMetadata;

@@ -6,7 +6,9 @@ public interface IMovieDownloadService
 {
     event EventHandler<DownloadProgressEventArgs>? DownloadProgressChanged;
 
-    Task<string> AddDownloadAsync(string sourceUrl, string? customName = null);
+    Task<string> AddDownloadAsync(string sourceUrl, string? customName = null, string? customSaveDir = null, List<string>? selectedFiles = null);
+    Task<TorrentPreviewInfo?> GetTorrentPreviewAsync(string sourceUrl);
+    Task<TorrentPreviewInfo?> GetTorrentPreviewAsync(string sourceUrl, CancellationToken cancellationToken);
     Task PauseDownloadAsync(string taskId);
     Task ResumeDownloadAsync(string taskId);
     Task CancelDownloadAsync(string taskId);

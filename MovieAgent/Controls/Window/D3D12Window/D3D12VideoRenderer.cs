@@ -1,4 +1,4 @@
-﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿using MovieAgent.FFmpegDecoder;
+﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿using MovieAgent.FFmpegDecoder;
 using NAudio.CoreAudioApi;
 using NAudio.Utils;
 using SharpGen.Runtime;
@@ -307,7 +307,7 @@ namespace MovieAgent.D3D12Window
         {
             var desc = new SwapChainDescription1
             {
-                BufferCount = 2,
+                BufferCount = 3,
                 Width = (uint)_swapChainWidth,
                 Height = (uint)_swapChainHeight,
                 Format = Format.B8G8R8A8_UNorm,
@@ -376,7 +376,7 @@ namespace MovieAgent.D3D12Window
                 _rtvHeap?.Dispose();
 
                 // 调整交换链
-                _swapChain.ResizeBuffers(2, (uint)newWidth, (uint)newHeight, Format.B8G8R8A8_UNorm,
+                _swapChain.ResizeBuffers(3, (uint)newWidth, (uint)newHeight, Format.B8G8R8A8_UNorm,
                     SwapChainFlags.AllowTearing);
                 _swapChainWidth = newWidth;
                 _swapChainHeight = newHeight;
@@ -445,7 +445,7 @@ namespace MovieAgent.D3D12Window
                 }
                 _rtvHeap?.Dispose();
 
-                _swapChain.ResizeBuffers(2, (uint)newWidth, (uint)newHeight, Format.B8G8R8A8_UNorm,
+                _swapChain.ResizeBuffers(3, (uint)newWidth, (uint)newHeight, Format.B8G8R8A8_UNorm,
                     SwapChainFlags.None);
                 _swapChainWidth = newWidth;
                 _swapChainHeight = newHeight;

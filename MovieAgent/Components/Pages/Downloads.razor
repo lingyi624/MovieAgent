@@ -3,6 +3,8 @@
 @inject ISnackbar Snackbar
 @inject ILocalizationService LocalizationService
 @using MovieAgent.Core.Models
+@using System.Diagnostics
+@using Microsoft.Win32
 @implements IDisposable
 
 <PageTitle>下载管理 - Movie Agent</PageTitle>
@@ -41,7 +43,7 @@ else
         {
             <MudPaper Elevation="2" Style="padding: 16px; background: #2D2D44;">
                 <MudStack Row="true" Justify="Justify.SpaceBetween" AlignItems="AlignItems.Center" Style="margin-bottom: 8px;">
-                    <MudStack Row="true" Spacing="2" AlignItems="AlignItems.Center">
+                    <MudStack Row="true" Spacing="2" AlignItems="AlignItems.Center" Style="flex:1; min-width:0;">
                         <MudText Typo="Typo.body1" Style="color: #E0E0E0; font-weight: bold; max-width: 400px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">
                             @task.Name
                         </MudText>
@@ -49,8 +51,13 @@ else
                             @GetStatusText(task.Status)
                         </MudChip>
                         <MudChip T="string" Size="Size.Small" Color="Color.Default" Style="font-size: 10px;">
-                            @task.SourceType
+                            @GetSourceTypeText(task.SourceType)
                         </MudChip>
+                        @if (!string.IsNullOrEmpty(task.SavePath) && (task.Status == DownloadStatus.Completed || task.Status == DownloadStatus.Downloading))
+                        {
+                            <MudIconButton Icon="@Icons.Material.Filled.FolderOpen" Size="Size.Small" Color="Color.Primary"
+                                           OnClick="() => OpenDownloadFolder(task)" title="打开所在文件夹" />
+                        }
                     </MudStack>
                     <MudStack Row="true" Spacing="1">
                         <MudSelect T="DownloadPriority" Value="@task.Priority" ValueChanged="(v) => OnPriorityChanged(task.Id, v)"
@@ -123,6 +130,8 @@ else
                         }
                         else if (task.Status is DownloadStatus.Completed or DownloadStatus.Cancelled)
                         {
+                            <MudIconButton Icon="@Icons.Material.Filled.FolderOpen" Size="Size.Small" Color="Color.Info"
+                                           OnClick="() => OpenDownloadFolder(task)" title="打开文件夹" />
                             <MudIconButton Icon="@Icons.Material.Filled.Delete" Size="Size.Small" Color="Color.Error"
                                            OnClick="() => RemoveTask(task.Id)" title="删除" />
                         }
@@ -137,35 +146,113 @@ else
         }
     </MudStack>
 }
-   @* <MudDialog @bind-IsVisible="_addDialogVisible">  *@
-<MudDialog Visible="_addDialogVisible">
+
+@* === URL输入对话框 === *@
+<MudDialog @bind-Visible="_addDialogVisible" Options="@_dialogOptions">
     <DialogContent>
         <MudStack Spacing="3" Style="padding: 16px; min-width: 500px;">
             <MudText Typo="Typo.h6" Style="color: #E94560;">添加下载</MudText>
             <MudTextField @bind-Value="_addUrl" Label="下载链接" Variant="Variant.Outlined"
-                          Placeholder="magnet:?xt=... 或 https://... 或 .torrent链接"
+                          Placeholder="magnet:?xt=... 或 BT种子链接 或 .torrent文件路径"
                           Lines="3" Style="background: #2D2D44;" />
-            <MudTextField @bind-Value="_addName" Label="自定义名称（可选）" Variant="Variant.Outlined"
-                          Placeholder="留空则自动识别" Style="background: #2D2D44;" />
+            <MudStack Row="true" Spacing="2" AlignItems="AlignItems.Center">
+                <MudButton Variant="Variant.Outlined" Size="Size.Small" StartIcon="@Icons.Material.Filled.FolderOpen"
+                           OnClick="OpenTorrentFile">选择种子文件</MudButton>
+                @if (!string.IsNullOrEmpty(_addUrl))
+                {
+                    <MudText Typo="Typo.caption" Style="color: #888; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 300px;">
+                        @_addUrl
+                    </MudText>
+                }
+            </MudStack>
             <MudStack Row="true" Justify="Justify.FlexEnd" Spacing="2">
                 <MudButton Variant="Variant.Outlined" OnClick="CloseAddDialog">取消</MudButton>
-                <MudButton Variant="Variant.Filled" Color="Color.Primary" OnClick="AddDownload"
-                           Disabled="@string.IsNullOrEmpty(_addUrl)" Style="background: #E94560;">开始下载</MudButton>
+                <MudButton Variant="Variant.Filled" Color="Color.Primary" OnClick="NextStepAsync"
+                           Disabled="@string.IsNullOrEmpty(_addUrl)" Style="background: #E94560;">下一步</MudButton>
             </MudStack>
+        </MudStack>
+    </DialogContent>
+</MudDialog>
+
+@* === 种子内容预览对话框 === *@
+<MudDialog @bind-Visible="_previewDialogVisible" Options="@_dialogOptions" Style="width: 700px; max-width: 700px;">
+    <DialogContent>
+        <MudStack Spacing="3" Style="padding: 16px; min-width: 400px; max-height: 70vh; overflow-y: auto;">
+            <MudText Typo="Typo.h6" Style="color: #E94560;">新建下载任务</MudText>
+
+            @if (_previewLoading)
+            {
+                <MudStack Spacing="3" AlignItems="AlignItems.Center" Style="padding: 40px;">
+                    <MudProgressCircular Color="Color.Primary" Indeterminate="true" />
+                    <MudText Typo="Typo.body2" Style="color: #888;">正在获取种子信息...</MudText>
+                    <MudButton Variant="Variant.Outlined" Color="Color.Error" Size="Size.Small"
+                               OnClick="CancelPreviewAsync">取消</MudButton>
+                </MudStack>
+            }
+            else if (_previewInfo != null)
+            {
+                @if (!string.IsNullOrEmpty(_previewInfo.ErrorMessage))
+                {
+                    <MudAlert Severity="Severity.Warning" Style="margin-bottom: 8px;">@_previewInfo.ErrorMessage</MudAlert>
+                }
+
+                <MudTextField @bind-Value="_previewDirName" Label="保存到" Variant="Variant.Outlined"
+                              Style="background: #2D2D44;" />
+
+                <MudText Typo="Typo.body2" Style="color: #888;">
+                    总大小: @FormatBytes(_previewInfo.TotalSize) | 文件数: @_previewInfo.Files.Count
+                </MudText>
+
+                @if (_previewInfo.Files.Count > 0)
+                {
+                    <MudPaper Elevation="1" Style="background: #1A1A2E; max-height: 300px; overflow-y: auto;">
+                        <MudStack Spacing="0">
+                            <MudStack Row="true" Style="padding: 8px 12px; border-bottom: 1px solid #333; font-weight: bold; color: #888;">
+                                <MudCheckBox T="bool"   @bind-Checked="isAllSelected"
+                                             ValueChanged="@((bool isChecked) => ToggleAllFiles(isChecked))" Color="Color.Primary" Size="Size.Small" Style="margin-right: 8px;" />
+                                <MudText Typo="Typo.caption" Style="flex:1;">文件名</MudText>
+                                <MudText Typo="Typo.caption" Style="width: 100px; text-align: right;">大小</MudText>
+                            </MudStack>
+                            @foreach (var file in _previewInfo.Files)
+                            {
+                                <MudStack Row="true" Style="padding: 6px 12px; border-bottom: 1px solid #222; align-items: center;">
+                                    <MudCheckBox   @bind-Value="file.Selected" T="bool" Size="Size.Small" Color="Color.Primary"
+                                                 Style="margin-right: 8px;" />
+                                    <MudText Typo="Typo.caption" Style="color: #CCC; flex:1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;"
+                                              title="@file.Path">@file.FileName</MudText>
+                                    <MudText Typo="Typo.caption" Style="color: #888; width: 100px; text-align: right;">@FormatBytes(file.Size)</MudText>
+                                </MudStack>
+                            }
+                        </MudStack>
+                    </MudPaper>
+                }
+
+                <MudStack Row="true" Justify="Justify.FlexEnd" Spacing="2">
+                    <MudButton Variant="Variant.Outlined" OnClick="ClosePreviewDialog">取消</MudButton>
+                    <MudButton Variant="Variant.Filled" Color="Color.Primary" OnClick="ConfirmDownloadAsync"
+                               Style="background: #E94560;">开始下载</MudButton>
+                </MudStack>
+            }
         </MudStack>
     </DialogContent>
 </MudDialog>
 
 @code {
     private List<DownloadTask> _tasks = new();
-    private bool _addDialogVisible=false;
+    private bool _addDialogVisible;
+    private readonly DialogOptions _dialogOptions = new() { FullWidth = true, CloseButton = true };
+
+    private bool _previewDialogVisible;
+    private bool _previewLoading;
     private string _addUrl = string.Empty;
     private string _addName = string.Empty;
+    private string _previewDirName = string.Empty;
+    private TorrentPreviewInfo? _previewInfo;
     private System.Timers.Timer? _refreshTimer;
     private int _activeCount;
     private double _totalSpeed;
     private bool _isDisposed;
-
+    private bool isAllSelected;
     protected override async Task OnInitializedAsync()
     {
         _tasks = (await DownloadService.GetAllTasksAsync()).ToList();
@@ -231,20 +318,163 @@ else
         _addUrl = string.Empty;
         _addName = string.Empty;
         _addDialogVisible = true;
-        
     }
 
     private void CloseAddDialog() => _addDialogVisible = false;
 
-    private async void AddDownload()
+    private void OpenTorrentFile()
+    {
+        var dialog = new OpenFileDialog
+        {
+            Title = "选择种子文件",
+            Filter = "种子文件 (*.torrent)|*.torrent|所有文件 (*.*)|*.*",
+            DefaultExt = ".torrent",
+            Multiselect = false
+        };
+
+        if (dialog.ShowDialog() == true)
+        {
+            _addUrl = dialog.FileName;
+        }
+    }
+
+    private CancellationTokenSource? _previewCts;
+
+    private async void NextStepAsync()
     {
         if (string.IsNullOrWhiteSpace(_addUrl)) return;
 
-        _addDialogVisible = false;
-        var taskId = await DownloadService.AddDownloadAsync(_addUrl, string.IsNullOrWhiteSpace(_addName) ? null : _addName);
+        var sourceType = DetectSourceType(_addUrl);
+        if (sourceType == DownloadSourceType.Magnet || sourceType == DownloadSourceType.TorrentFile)
+        {
+            _addDialogVisible = false;
+            _previewDialogVisible = true;
+            _previewLoading = true;
+            _previewInfo = null;
+            StateHasChanged();
+
+            // 强制 yield，让 Dispatcher 先处理渲染队列，确保 UI 在异步操作开始前已更新
+            await Task.Yield();
+
+            try
+            {
+                _previewCts = new CancellationTokenSource(TimeSpan.FromSeconds(15));
+                _previewInfo = await DownloadService.GetTorrentPreviewAsync(_addUrl, _previewCts.Token);
+            }
+            catch (OperationCanceledException)
+            {
+                _previewInfo = CreateFallbackPreview(_addUrl);
+            }
+            catch
+            {
+                _previewInfo = CreateFallbackPreview(_addUrl);
+            }
+            finally
+            {
+                _previewCts?.Dispose();
+                _previewCts = null;
+            }
+
+            _previewLoading = false;
+            if (_previewInfo != null)
+            {
+                _previewDirName = _previewInfo.SuggestedDirectory;
+            }
+            StateHasChanged();
+        }
+        else
+        {
+            // Direct HTTP download
+            _addDialogVisible = false;
+            await DownloadService.AddDownloadAsync(_addUrl);
+            _tasks = (await DownloadService.GetAllTasksAsync()).ToList();
+            Snackbar.Add("下载任务已添加", Severity.Success);
+            StateHasChanged();
+        }
+    }
+
+    private void ClosePreviewDialog()
+    {
+        _previewCts?.Cancel();
+        _previewDialogVisible = false;
+        _previewInfo = null;
+    }
+
+    private async void CancelPreviewAsync()
+    {
+        _previewCts?.Cancel();
+        // 不立即关闭对话框，让 NextStepAsync 的 catch 块处理 UI 更新
+    }
+
+    private async void ConfirmDownloadAsync()
+    {
+        if (_previewInfo == null) return;
+
+        _previewDialogVisible = false;
+        var selectedFiles = _previewInfo.Files
+            .Where(f => f.Selected)
+            .Select(f => f.Path)
+            .ToList();
+
+        var taskId = await DownloadService.AddDownloadAsync(
+            _addUrl,
+            customName: _previewInfo.SuggestedName,
+            customSaveDir: _previewDirName,
+            selectedFiles: selectedFiles.Count < _previewInfo.Files.Count ? selectedFiles : null);
+
         _tasks = (await DownloadService.GetAllTasksAsync()).ToList();
         Snackbar.Add("下载任务已添加", Severity.Success);
+        _previewInfo = null;
         StateHasChanged();
+    }
+
+    private TorrentPreviewInfo CreateFallbackPreview(string url)
+    {
+        var name = ExtractNameFromUrl(url);
+        var defaultDir = DownloadService.GetDefaultDownloadDirectoryAsync().GetAwaiter().GetResult();
+        return new TorrentPreviewInfo
+        {
+            SuggestedName = name,
+            SuggestedDirectory = Path.Combine(defaultDir, SanitizeFileName(name)),
+            ErrorMessage = "元数据获取超时，将使用默认名称开始下载"
+        };
+    }
+
+    private void ToggleAllFiles(bool? selectAll)
+    {
+        if (_previewInfo == null) return;
+       // var allSelected = _previewInfo.Files.All(f => f.Selected);
+        foreach (var file in _previewInfo.Files)
+            file.Selected = selectAll.Value;
+    }
+
+    private static void OpenDownloadFolder(DownloadTask task)
+    {
+        try
+        {
+            var path = task.SavePath;
+            if (string.IsNullOrEmpty(path)) return;
+
+            if (task.SourceType == DownloadSourceType.Magnet || task.SourceType == DownloadSourceType.TorrentFile)
+            {
+                // For torrents, SavePath is the directory
+                if (Directory.Exists(path))
+                    Process.Start("explorer.exe", $"\"{path}\"");
+            }
+            else
+            {
+                // For HTTP downloads, SavePath is the file path
+                var dir = Path.GetDirectoryName(path);
+                if (Directory.Exists(dir))
+                    Process.Start("explorer.exe", $"\"{dir}\"");
+                else if (Directory.Exists(path))
+                    Process.Start("explorer.exe", $"\"{path}\"");
+            }
+        }
+        catch (Exception ex)
+        {
+            // Silently ignore
+        }
     }
 
     private async void PauseTask(string taskId)
@@ -301,6 +531,57 @@ else
     {
         await DownloadService.SetPriorityAsync(taskId, priority);
     }
+
+    private static string ExtractNameFromUrl(string url)
+    {
+        try
+        {
+            if (url.StartsWith("magnet:", StringComparison.OrdinalIgnoreCase))
+            {
+                var dnIndex = url.IndexOf("dn=", StringComparison.OrdinalIgnoreCase);
+                if (dnIndex >= 0)
+                {
+                    var dnStart = dnIndex + 3;
+                    var dnEnd = url.IndexOf('&', dnStart);
+                    var dn = dnEnd > 0 ? url[dnStart..dnEnd] : url[dnStart..];
+                    return Uri.UnescapeDataString(dn);
+                }
+                return "磁力链接下载";
+            }
+            var fileName = Path.GetFileName(url);
+            return !string.IsNullOrWhiteSpace(fileName) ? Uri.UnescapeDataString(fileName) : "未知下载";
+        }
+        catch
+        {
+            return "未知下载";
+        }
+    }
+
+    private static string SanitizeFileName(string name)
+    {
+        var invalid = Path.GetInvalidFileNameChars();
+        var sanitized = new string(name.Select(c => invalid.Contains(c) ? '_' : c).ToArray());
+        return string.IsNullOrWhiteSpace(sanitized) ? "download" : sanitized;
+    }
+
+    private static DownloadSourceType DetectSourceType(string url)
+    {
+        if (url.StartsWith("magnet:", StringComparison.OrdinalIgnoreCase))
+            return DownloadSourceType.Magnet;
+        if (url.EndsWith(".torrent", StringComparison.OrdinalIgnoreCase))
+            return DownloadSourceType.TorrentFile;
+        if (url.StartsWith("file://", StringComparison.OrdinalIgnoreCase))
+            return DownloadSourceType.TorrentFile;
+        return DownloadSourceType.DirectHttp;
+    }
+
+    private static string GetSourceTypeText(DownloadSourceType type) => type switch
+    {
+        DownloadSourceType.Magnet => "磁力",
+        DownloadSourceType.TorrentFile => "种子",
+        DownloadSourceType.DirectHttp => "HTTP",
+        _ => "未知"
+    };
 
     private static Color GetStatusColor(DownloadStatus status) => status switch
     {

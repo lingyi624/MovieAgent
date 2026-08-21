@@ -62,7 +62,7 @@ public partial class ControlWindow : System.Windows.Window
     private string? _lastSubtitleShown; // 当前已显示文本（去重，避免定时器反复刷TextBlock）
     private SubtitleBitmap? _lastSubtitleBitmap; // 当前已显示位图字幕（去重，避免定时器反复刷Image）
     private int _lastDiagSec = -1;      // 诊断：上次输出外挂字幕诊断的秒数
-    private bool _subtitleFirstTickLogged; // 诊断：首次UpdateActiveSubtitle日志
+    
 
     // 字幕独立透明覆盖窗口（解决D3D HwndHost遮挡Popup的z-order问题）
     private System.Windows.Window? _subtitleOverlay;
@@ -424,6 +424,8 @@ public partial class ControlWindow : System.Windows.Window
             // 每帧同步确保渲染器拿到最新值（ICtCp直通管线 vs HDR10路径）
             VideoView.IsIctcpInput = _playerService.IsIctcpInput;
             VideoView.DoviMetadata = _playerService.DoviMetadata;
+            // 同步HDR传输特性：SDR 10bit视频同样输出P010，首帧trc检测晚于PlayAsync，每帧同步
+            VideoView.IsPqTransfer = _playerService.IsPqTransfer;
 
             if (frameToRender.IsHardwareFrame)
             {
@@ -1111,12 +1113,6 @@ public partial class ControlWindow : System.Windows.Window
         lock (_subtitleLock)
         {
             _internalSubtitles.Add(subtitle);
-            // 诊断：每50条输出一次缓存计数，确认内部字幕在填充
-            if (_internalSubtitles.Count % 50 == 0)
-                _logger.Debug($"[Player] 内部字幕缓存: {_internalSubtitles.Count}条, first=[{_internalSubtitles[0].StartTime:F1}s-{_internalSubtitles[0].EndTime:F1}s]");
-            // 诊断：前5条字幕详细日志
-            else if (_internalSubtitles.Count <= 5)
-                _logger.Debug($"[Player] 字幕解码 #{_internalSubtitles.Count}: [{subtitle.StartTime:F1}s-{subtitle.EndTime:F1}s] {(subtitle.Bitmap != null ? $"[PGS {subtitle.Bitmap.Width}x{subtitle.Bitmap.Height}]" : $"'{subtitle.Text?.Substring(0, Math.Min(subtitle.Text?.Length ?? 0, 30))}'")}");
         }
     }
 
@@ -1794,7 +1790,6 @@ public partial class ControlWindow : System.Windows.Window
         };
         _subtitleUpdateTimer.Tick += (s, e) => UpdateActiveSubtitle();
         _subtitleUpdateTimer.Start();
-        _subtitleFirstTickLogged = false;
         _lastDiagSec = -1;
         _logger.Debug("[Player] 字幕更新定时器已启动");
     }
@@ -1811,13 +1806,6 @@ public partial class ControlWindow : System.Windows.Window
         try
         {
             double currentSec = _playerService.Position.TotalSeconds;
-
-            // 诊断：首次Tick日志，确认定时器在跑
-            if (!_subtitleFirstTickLogged)
-            {
-                _subtitleFirstTickLogged = true;
-                _logger.Debug($"[Player] UpdateActiveSubtitle首次触发: pos={currentSec:F1}s, extPath={_externalSubtitlePath != null}, extCount={_externalSubtitles.Count}, intCount=...");
-            }
 
             string? text = null;
             SubtitleBitmap? bitmap = null;
@@ -1931,7 +1919,7 @@ public partial class ControlWindow : System.Windows.Window
                     _subtitleOverlayText.Text = text;
                     _subtitleOverlayText.Visibility = Visibility.Visible;
                 }
-                _logger.Debug($"[Player] 字幕已显示: {(bitmap != null ? $"[PGS {bitmap.Width}x{bitmap.Height} Y={bitmap.Y}]" : $"'{text?.Substring(0, Math.Min(text?.Length ?? 0, 30))}'")}");
+                // 字幕渲染完成（调试日志已屏蔽）
             }
             else
             {

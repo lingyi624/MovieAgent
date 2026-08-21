@@ -10,8 +10,30 @@ public class SearchCacheService : ISearchCacheService
     private readonly ConcurrentDictionary<string, CachedSearchResult> _queryCache = new();
     private readonly ConcurrentDictionary<string, CachedSearchResult> _semanticCache = new();
     private readonly TimeSpan _cacheDuration = TimeSpan.FromMinutes(30);
+    // 每个缓存条目持有完整 Movie 列表（含海报字段），必须设上限防止单例长期持有导致内存膨胀
+    private const int MaxCacheEntries = 200;
     private long _cacheHits;
     private long _cacheMisses;
+
+    private void AddOrUpdateWithLimit(ConcurrentDictionary<string, CachedSearchResult> cache, string key, CachedSearchResult result)
+    {
+        cache[key] = result;
+        // 超出容量上限时，清除过期项；仍超出则强制清空最早过期的一半
+        if (cache.Count > MaxCacheEntries)
+        {
+            var expired = cache.Where(kv => kv.Value.ExpiresAt <= DateTime.UtcNow).Select(kv => kv.Key).ToList();
+            foreach (var k in expired) cache.TryRemove(k, out _);
+            if (cache.Count > MaxCacheEntries)
+            {
+                var toRemove = cache
+                    .OrderBy(kv => kv.Value.ExpiresAt)
+                    .Take(cache.Count - MaxCacheEntries)
+                    .Select(kv => kv.Key)
+                    .ToList();
+                foreach (var k in toRemove) cache.TryRemove(k, out _);
+            }
+        }
+    }
 
     public async Task<List<Movie>> GetCachedSearchAsync(string query)
     {
@@ -34,11 +56,11 @@ public class SearchCacheService : ISearchCacheService
     public Task CacheSearchAsync(string query, List<Movie> results)
     {
         var key = NormalizeQuery(query);
-        _queryCache[key] = new CachedSearchResult
+        AddOrUpdateWithLimit(_queryCache, key, new CachedSearchResult
         {
             Movies = results.ToList(),
             ExpiresAt = DateTime.UtcNow.Add(_cacheDuration)
-        };
+        });
         
         return Task.CompletedTask;
     }
@@ -64,11 +86,11 @@ public class SearchCacheService : ISearchCacheService
     public Task CacheSemanticSearchAsync(string query, List<Movie> results)
     {
         var key = NormalizeQuery(query);
-        _semanticCache[key] = new CachedSearchResult
+        AddOrUpdateWithLimit(_semanticCache, key, new CachedSearchResult
         {
             Movies = results.ToList(),
             ExpiresAt = DateTime.UtcNow.Add(_cacheDuration)
-        };
+        });
         
         return Task.CompletedTask;
     }

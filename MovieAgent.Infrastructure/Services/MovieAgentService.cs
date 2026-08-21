@@ -4,6 +4,7 @@ using System.Net.Http;
 using System.Text;
 using System.Text.Json;
 using Microsoft.Extensions.Configuration;
+using Microsoft.Extensions.DependencyInjection;
 using MovieAgent.Core.Interfaces;
 using MovieAgent.Infrastructure.Providers;
 
@@ -11,11 +12,9 @@ namespace MovieAgent.Infrastructure.Services;
 
 public class MovieAgentService : IAgentService
 {
-    private readonly IMovieRepository _movieRepo;
-    private readonly IMovieUpdateService? _movieUpdateService;
+    private readonly IServiceProvider _serviceProvider;
     private readonly IPlayerService _player;
     private readonly IConversationMemoryService _memoryService;
-    private readonly IHybridSearchService _hybridSearch;
     private readonly IVectorDatabaseService _vectorDb;
     private IChatProvider? _chatProvider;
     private readonly ModelConfig _modelConfig;
@@ -24,15 +23,13 @@ public class MovieAgentService : IAgentService
     public bool IsAvailable { get; private set; }
     public string? LastError { get; private set; }
 
-    public MovieAgentService(IMovieRepository movieRepo, IMovieUpdateService? movieUpdateService, IPlayerService player, 
-        IConversationMemoryService memoryService, IHybridSearchService hybridSearch,
+    public MovieAgentService(IServiceProvider serviceProvider, IPlayerService player, 
+        IConversationMemoryService memoryService,
         IVectorDatabaseService vectorDb, IConfiguration config)
     {
-        _movieRepo = movieRepo;
-        _movieUpdateService = movieUpdateService;
+        _serviceProvider = serviceProvider;
         _player = player;
         _memoryService = memoryService;
-        _hybridSearch = hybridSearch;
         _vectorDb = vectorDb;
         
         var providerType = Enum.TryParse<ModelProviderType>(config["AI:Provider"] ?? "Ollama", out var type) 
@@ -54,6 +51,15 @@ public class MovieAgentService : IAgentService
         Debug.WriteLine($"[Agent] Initializing with Provider: {_modelConfig.ProviderType}, Model: {_modelConfig.Name}, Endpoint: {_modelConfig.Endpoint}");
     }
     public string? ModelName => _modelConfig.Name;
+
+    /// <summary>
+    /// 在请求级 scope 中解析 scoped 服务的实例，避免 Singleton 长期持有 AppDbContext
+    /// </summary>
+    private async Task<T> WithScopeAsync<T>(Func<IServiceProvider, Task<T>> action)
+    {
+        using var scope = _serviceProvider.CreateScope();
+        return await action(scope.ServiceProvider);
+    }
 
     public async Task InitializeAsync()
     {
@@ -140,6 +146,20 @@ public class MovieAgentService : IAgentService
     {
         var msg = userMessage.Trim().ToLower();
         
+        // 局部命令涉及数据库操作，使用请求级 scope 解析 scoped 服务
+        // 避免 Singleton 长期持有 AppDbContext 导致连接和内存无法释放
+        return await WithScopeAsync<string?>(async sp =>
+        {
+            var hybridSearch = sp.GetRequiredService<IHybridSearchService>();
+            var movieRepo = sp.GetRequiredService<IMovieRepository>();
+            var movieUpdateService = sp.GetService<IMovieUpdateService>();
+            return await HandleLocalCommandCore(msg, userMessage, hybridSearch, movieRepo, movieUpdateService);
+        });
+    }
+
+    private async Task<string?> HandleLocalCommandCore(string msg, string userMessage,
+        IHybridSearchService _hybridSearch, IMovieRepository _movieRepo, IMovieUpdateService? _movieUpdateService)
+    {
         if (msg.StartsWith("播放") || msg.StartsWith("/play"))
         {
             var title = msg.StartsWith("/play") 
@@ -234,7 +254,7 @@ public class MovieAgentService : IAgentService
     }
 
     private static string GetSystemPrompt() => """
-        你是电影管家“小影”。回答必须基于本地电影库，禁止编造，禁止推荐外部电影。
+        你是电影管家“小雪雪”。回答必须基于本地电影库，禁止编造，禁止推荐外部电影。
 
         回答规则：
         1. 必须使用电影库中的电影标题且电影标题必须用《电影标题》括起来，不管是英文还是中文标题。
@@ -296,6 +316,20 @@ public class MovieAgentService : IAgentService
 """;
 
     private async Task<string> BuildMovieContextAsync(string userMessage)
+    {
+        try
+        {
+            // 查询电影库属于数据库操作，使用请求级 scope 解析 scoped 服务
+            return await WithScopeAsync<string?>(async sp =>
+            {
+                var hybridSearch = sp.GetRequiredService<IHybridSearchService>();
+                return await BuildMovieContextCore(hybridSearch, userMessage);
+            }) ?? "【电影库检索结果】\n未找到相关电影，请尝试其他关键词。\n---\n";
+        }
+        catch { return "【电影库检索结果】\n未找到相关电影，请尝试其他关键词。\n---\n"; }
+    }
+
+    private async Task<string> BuildMovieContextCore(IHybridSearchService _hybridSearch, string userMessage)
     {
         try
         {

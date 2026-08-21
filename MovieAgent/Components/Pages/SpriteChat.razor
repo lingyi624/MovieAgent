@@ -69,7 +69,7 @@
                             <MudChip T="string" Text="@movie.Title" 
                                      Color="Color.Primary"
                                      Style="background: rgba(233, 69, 96, 0.3); color: #E94560; cursor: pointer;"
-                                     OnClick="() => PlayMovie(movie.FilePath)" />
+                                     OnClick="() => PlayMovie(movie)" />
                         }
                     </div>
                 </div>
@@ -277,12 +277,12 @@
         return keywords;
     }
 
-    private async void PlayMovie(string filePath)
+    private async void PlayMovie(Movie movie)
     {
         try
         {
-            await PlayerService.PlayAsync(filePath);
-            Snackbar.Add($"正在播放: {filePath}", Severity.Success);
+            NavigationManager.NavigateTo($"/movie/{movie.Id}/videos"); 
+            Snackbar.Add($"正在播放: {movie.Title}", Severity.Success);
         }
         catch (Exception ex)
         {

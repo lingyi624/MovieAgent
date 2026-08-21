@@ -94,7 +94,7 @@
                 @foreach (var movie in _relatedMovies)
                 {
                     <MudCard Style="margin-bottom: 12px; background: #2D2D44;" Class="movie-card">
-                        <MudCardMedia Image="@GetPosterUrl(movie)" Height="400"   Style="object-fit: cover;" />
+                        <MudCardMedia Image="@GetPosterUrl(movie)" Height="420"   Style="object-fit: cover;" />
                         <MudCardContent Style="padding: 12px;">
                             <MudText Typo="Typo.subtitle1" Style="color: white; font-weight: bold;" Class="movie-title">
                                 @movie.Title
@@ -128,7 +128,7 @@
                             }
                             <MudButton Variant="Variant.Filled" Color="Color.Primary" 
                                        FullWidth="true" Style="margin-top: 8px; background: #E94560;"
-                                       OnClick="@(() => PlayMovie(movie.FilePath))">
+                                       OnClick="@(() => PlayMovie(movie))">
                                 <MudIcon Icon="@Icons.Material.Filled.PlayArrow" Style="margin-right: 4px;" />
                                 播放
                             </MudButton>
@@ -419,9 +419,10 @@
         return "https://via.placeholder.com/500x750?text=No+Poster";
     }
 
-    private void PlayMovie(string filePath)
+ 
+    private void PlayMovie(Movie movie)
     {
-        Navigation.NavigateTo($"/player?file={Uri.EscapeDataString(filePath)}");
+        Navigation.NavigateTo($"/movie/{movie.Id}/videos");
     }
 
     private async Task ScrollToBottom()

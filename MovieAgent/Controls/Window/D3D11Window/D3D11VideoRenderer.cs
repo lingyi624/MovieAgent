@@ -67,8 +67,8 @@ namespace MovieAgent.D3D11Window
         private ID3D11VideoProcessorEnumerator? _vpEnumerator;
         private ID3D11VideoProcessorOutputView? _vpOutputView;
         
-        // 三缓冲输入视图：GPU 异步执行 Blt，必须保证释放前 GPU 已完成
-        // 槽位 0=当前帧, 1=上一帧(GPU可能在使用), 2=上上帧(GPU可能在使用)
+        // 五缓冲输入视图：GPU 异步执行 Blt，必须保证释放前 GPU 已完成
+        // 槽位 0=当前帧, 1-4=前4帧(GPU可能在使用)
         private const int InputViewSlots = 5;
         private readonly ID3D11VideoProcessorInputView?[] _inputViews = new ID3D11VideoProcessorInputView?[InputViewSlots];
         private int _inputViewIndex = 0;
@@ -106,6 +106,17 @@ namespace MovieAgent.D3D11Window
             set => _isDolbyVision = value;
         }
 
+        // HDR 传输特性（PQ/HLG）：SDR 10bit 视频同样输出 P010 纹理，
+        // 不能仅凭 P010 判定 HDR——SDR 数据被当 PQ 解码会产生漫画风格青黄色偏。
+        private bool _isPqTransfer;
+
+        /// <summary>设置HDR传输特性标志（PQ/HLG/DV，由解码器根据 color_trc / DOVI 配置判定）</summary>
+        public bool IsPqTransfer
+        {
+            get => _isPqTransfer;
+            set => _isPqTransfer = value;
+        }
+
         // ICtCp 专用管线（杜比视界 Profile 5）：帧数据为 ICtCp 色彩空间而非 YCbCr，
         // VideoProcessor 的 YCbCr 矩阵会将其打乱（绿色/紫色画面），必须绕过 VP 直接采样 P010 平面，
         // 在着色器内完成 ICtCp→LMS→PQ EOTF→BT.2020→BT.709→色调映射 的全流程。
@@ -126,6 +137,8 @@ namespace MovieAgent.D3D11Window
         private DoviRenderMetadata? _doviMetadata;
         private ID3D11Buffer? _doviConstantBuffer;
         private bool _doviConstantBufferDirty = true;
+        // RPU 重塑曲线常量缓冲（b1: rs_meta[3] + rs_pivots[6] + rs_coeffs[24] + rs_mmr[144] = 177 float4 = 2832 字节）
+        private ID3D11Buffer? _doviReshapeBuffer;
 
         /// <summary>设置杜比视界 RPU 渲染元数据（每帧同步）</summary>
         public DoviRenderMetadata? DoviMetadata
@@ -155,6 +168,8 @@ namespace MovieAgent.D3D11Window
         private int _renderQueued;
         private volatile bool _stopRequested;
         private volatile bool _isSeeking; // Seek期间阻止渲染，避免旧帧导致音画不同步
+        private bool _colorDiagLogged; // 首次渲染时输出色彩管线诊断日志
+        private int _renderFrameCount;  // 渲染帧计数器（用于周期性诊断日志）
 
         private VideoScaleMode _scaleMode = VideoScaleMode.Fit;
 
@@ -267,6 +282,8 @@ namespace MovieAgent.D3D11Window
 
             using var dxgiDevice1 = _d3dDevice.QueryInterface<IDXGIDevice1>();
             dxgiDevice1.MaximumFrameLatency = 1;
+            // 三重缓冲 + MaxFrameLatency=1：GPU 有 3 个缓冲可轮转但只预排队 1 帧，
+            // 既保证低延迟又避免 BufferCount=2 时因帧未就绪导致的重复显示（闪烁）
 
             using var multiThread = _d3dDevice.QueryInterface<ID3D11Multithread>();
             multiThread.SetMultithreadProtected(true);
@@ -276,7 +293,7 @@ namespace MovieAgent.D3D11Window
         {
             var desc = new SwapChainDescription1
             {
-                BufferCount = 2,
+                BufferCount = 3, // 三重缓冲：消除视频播放时的帧抖动，避免双重缓冲下帧未就绪时重复显示同一帧
                 Width = (uint)_swapChainWidth,
                 Height = (uint)_swapChainHeight,
                 Format = Format.B8G8R8A8_UNorm,
@@ -386,7 +403,7 @@ namespace MovieAgent.D3D11Window
                 SafeDispose(ref _backBufferTexture);
 
                 // 调整交换链缓冲区尺寸
-                _swapChain.ResizeBuffers(2, (uint)newWidth, (uint)newHeight,
+                _swapChain.ResizeBuffers(3, (uint)newWidth, (uint)newHeight,
                     Format.B8G8R8A8_UNorm, SwapChainFlags.None);
                 _swapChainWidth = newWidth;
                 _swapChainHeight = newHeight;
@@ -662,18 +679,80 @@ namespace MovieAgent.D3D11Window
 
                 if (_vpOutputView == null) return;
 
+                // 色彩管线诊断日志（首次 + 每120帧周期性输出）
+                _renderFrameCount++;
+                bool shouldDiag = !_colorDiagLogged || (_renderFrameCount % 120 == 0);
+                if (shouldDiag)
+                {
+                    _colorDiagLogged = true;
+                    DebugLogger.WriteLine($"===== COLOR PIPELINE DIAG (frame #{_renderFrameCount}) =====");
+                    DebugLogger.WriteLine($"  icpInput   = {_isIctcpInput}");
+                    DebugLogger.WriteLine($"  dolbyVision = {_isDolbyVision}");
+                    DebugLogger.WriteLine($"  hdrPipeUnavail = {_hdrPipelineUnavailable}");
+                    DebugLogger.WriteLine($"  icpBroken  = {_ictcpPipelineBroken}");
+                    DebugLogger.WriteLine($"  vpCtx1     = {(_videoContext1 != null)}");
+                    DebugLogger.WriteLine($"  csMode     = {_lastColorSpaceMode} (0=SDR,1=PQ-passthrough,2=driver-TM)");
+                    DebugLogger.WriteLine($"  hdrFmt     = {_hdrFormat}");
+                    DebugLogger.WriteLine($"  hdrTex     = {(_hdrTexture != null)}");
+                    DebugLogger.WriteLine($"  hdrSrv     = {(_hdrSrv != null)}");
+                    DebugLogger.WriteLine($"  hdrPS      = {(_hdrPixelShader != null)}");
+                    DebugLogger.WriteLine($"  ictcpPS    = {(_ictcpPixelShader != null)}");
+                    DebugLogger.WriteLine($"  swapChainW = {_swapChainWidth}");
+                    DebugLogger.WriteLine($"  swapChainH = {_swapChainHeight}");
+                    DebugLogger.WriteLine($"  videoW     = {_videoWidth}");
+                    DebugLogger.WriteLine($"  videoH     = {_videoHeight}");
+                    DebugLogger.WriteLine($"  texFmt     = {texDesc.Format}");
+                    DebugLogger.WriteLine($"  texW       = {texDesc.Width}");
+                    DebugLogger.WriteLine($"  texH       = {texDesc.Height}");
+                    // RPU metadata dump
+                    if (_doviMetadata != null)
+                    {
+                        var dm = _doviMetadata;
+                        DebugLogger.WriteLine($"  dvMeta.Present = {dm.MetadataPresent}");
+                        DebugLogger.WriteLine($"  dvMeta.HasMatrix = {dm.HasValidMatrix}");
+                        if (dm.YccToRgbMatrix?.Length >= 9)
+                            DebugLogger.WriteLine($"  dvMeta.Matrix = [{dm.YccToRgbMatrix[0]:F4} {dm.YccToRgbMatrix[1]:F4} {dm.YccToRgbMatrix[2]:F4}; {dm.YccToRgbMatrix[3]:F4} {dm.YccToRgbMatrix[4]:F4} {dm.YccToRgbMatrix[5]:F4}; {dm.YccToRgbMatrix[6]:F4} {dm.YccToRgbMatrix[7]:F4} {dm.YccToRgbMatrix[8]:F4}]");
+                        if (dm.YccToRgbOffset?.Length >= 3)
+                            DebugLogger.WriteLine($"  dvMeta.Offset = [{dm.YccToRgbOffset[0]:F4} {dm.YccToRgbOffset[1]:F4} {dm.YccToRgbOffset[2]:F4}]");
+                        DebugLogger.WriteLine($"  dvMeta.HasReshape = {dm.HasValidReshape}");
+                        if (dm.HasValidReshape && dm.Reshape != null)
+                        {
+                            for (int c = 0; c < 3; c++)
+                            {
+                                var rc = dm.Reshape[c];
+                                if (rc != null && rc.NumPivots >= 2)
+                                    DebugLogger.WriteLine($"  dvMeta.Reshape[{c}] np={rc.NumPivots} piv=[{string.Join(",", rc.Pivots.Take(rc.NumPivots).Select(p => $"{p:F4}"))}]");
+                            }
+                        }
+                    }
+                    else
+                    {
+                        DebugLogger.WriteLine($"  dvMeta     = null");
+                    }
+                    DebugLogger.WriteLine($"  bt2020to709 = [1.660 -0.588 -0.073; -0.125 1.133 -0.008; -0.018 -0.101 1.119] (row-first init)");
+                    DebugLogger.WriteLine($"  toneMap    = BT.2446-1 Method A (k=10, REF_WHITE=100)");
+                    DebugLogger.WriteLine("================================");
+                }
+
                 // 杜比视界 Profile 5（ICtCp 色彩空间）：绕过 VideoProcessor 的 YCbCr 矩阵，
                 // 直接采样 P010 平面由 ICtCp 着色器完成全流程转换。
                 // VP 路径会把 ICtCp 当作 BT.2020 YCbCr 解读，画面严重偏绿/偏紫。
                 // 管线失败（PlaneSlice SRV 不支持/着色器编译失败）时回退 HDR10 路径。
-                if (_isIctcpInput && texDesc.Format == Format.P010 && !_ictcpPipelineBroken && EnsureIctcpPipeline())
+                // SupportDolbyVisionDecoding=false：DV 解码已禁用，ICtCp 路径整体短路，
+                // 所有 DV 内容统一走下方 HDR10 管线（PQ 直通 + 着色器色调映射）。
+                if (FFmpegDecoderEngine.SupportDolbyVisionDecoding && _isIctcpInput
+                    && texDesc.Format == Format.P010 && !_ictcpPipelineBroken && EnsureIctcpPipeline())
                 {
+                    if (_renderFrameCount <= 3 || _renderFrameCount % 120 == 0)
+                        DebugLogger.WriteLine($"[ICtCp] 进入ICtCp渲染路径 (frame #{_renderFrameCount})");
                     if (RenderIctcpFrame(frameTexture))
                     {
                         _swapChain!.Present(1, PresentFlags.None);
                         _inputViewIndex = (_inputViewIndex + 1) % InputViewSlots;
                         return;
                     }
+                    // ICtCp渲染失败，回退HDR10路径
+                    DebugLogger.WriteLine($"[ICtCp] 渲染失败，回退HDR10路径 (frame #{_renderFrameCount})");
                 }
 
                 // 传入的纹理已经是 FFmpeg 端的私有纹理（ArraySize=1），arraySlice 应为 0
@@ -692,10 +771,12 @@ namespace MovieAgent.D3D11Window
 
                 _videoContext.VideoProcessorSetStreamAutoProcessingMode(_videoProcessor, 0, false);
 
-                // 检测HDR格式（P010 = 10-bit HDR），配置正确的色彩空间并启用 HDR→SDR 色调映射
+                // 检测HDR格式：P010 只是 10bit YUV 载体，SDR 10bit 蓝光同样输出 P010。
+                // 必须结合传输特性（PQ/HLG）或杜比视界标志判定，否则 SDR 数据被当
+                // PQ 解码 + BT.2020→BT.709 二次色域变换，产生漫画风格青黄色偏。
                 // PQ直通模式：VP只做矩阵转换，PQ曲线保持，由自定义着色器色调映射（管线不可用回退驱动映射）
                 // 杜比视界使用与HDR10相同的PQ EOTF，自定义着色器同样适用（驱动色调映射无法正确处理DV的ICtCp色彩空间）
-                bool isHdrInput = texDesc.Format == Format.P010;
+                bool isHdrInput = texDesc.Format == Format.P010 && (_isPqTransfer || _isDolbyVision);
                 bool isDolbyVision = _isDolbyVision;
                 if (isDolbyVision)
                     DebugLogger.WriteLine("[HDR] 杜比视界内容，使用自定义HDR着色器管线（PQ解码+BT.2020→BT.709色调映射）");
@@ -838,9 +919,11 @@ float4 main_ps(float4 pos : SV_POSITION, float2 tex : TEXCOORD) : SV_TARGET {
         // BT.2020->BT.709 matrix from ITU-R BT.2087 (XYZ-bridged, linear-light domain).
         // Negative coeffs are correct: BT.2020 gamut is wider, so BT.709 primaries need negative
         // contributions from the other two BT.2020 primaries to reconstruct pure BT.709 colors.
-        // TARGET_WHITE_NITS=250: balances highlight retention vs shadow visibility.
-        // KNEE=2.0: linear below 2x reference white (~500 nits), preserving mid-tone detail.
-        // ROLLOFF=1.5: soft shoulder for specular highlights (gentler than old 1.8).
+        // ITU-R BT.2446-1 Method A: standard HDR -> SDR tone mapping.
+        // Diffuse white: 100 cd/m2 (SDR reference). Peak: 1000 cd/m2 (default;
+        // content metadata MaxCLL overrides this when available).
+        // OOTF: gamma 1.2 (BT.1886 display model). Tone curve:
+        //   V = log10(1 + (k-1) * p^0.5) / log10(k)   where k = peak / diffuse_white
         // WARNING: keep this shader source ASCII-only. Non-ASCII chars truncate the byte stream
         // in Vortice Compiler.Compile ANSI marshalling, causing X3004 compile errors.
         private const string HDR_TONE_MAP_PS = @"
@@ -880,7 +963,8 @@ float4 main_ps(float4 pos : SV_POSITION, float2 tex : TEXCOORD) : SV_TARGET {
             float4 c = texHdr.Sample(samplerState, tex);
             // 1. PQ decode to linear luminance (nits, BT.2020 primaries)
             float3 lin = float3(pq_to_nits(c.r), pq_to_nits(c.g), pq_to_nits(c.b));
-            // 2. BT.2020 -> BT.709 gamut conversion (ITU-R BT.2087 inverse, linear-light)
+            // 2. BT.2020 -> BT.709 gamut conversion (ITU-R BT.2087, linear-light)
+            // HLSL initializer fills ROW-first: {row0, row1, row2}. mul(M,v).x = dot(row0,v).
             float3x3 bt2020to709 = { 1.660496, -0.587656, -0.072840, -0.124547, 1.132895, -0.008348, -0.018154, -0.100597, 1.118751 };
             float3 lin709 = mul(bt2020to709, lin);
             // 3. Gamut compression: handle BT.2020 colors outside BT.709 gamut (negative channels)
@@ -930,24 +1014,40 @@ float4 main_ps(float4 pos : SV_POSITION, float2 tex : TEXCOORD) : SV_TARGET {
             float4 dovi_offset_flag;
         }
 
+        // DOVI RPU reshaping curves (libplacebo-compatible packed layout).
+        // rs_meta[c]   = (num_pivots, lo, hi, 0); num_pivots < 2 disables reshaping.
+        // rs_pivots    = 3 channels x 2 float4: inner pivots [1..7], 1e9 sentinel padded.
+        // rs_coeffs    = 3 channels x 8 segments: (c0, c1, c2, kind); kind=0 -> polynomial
+        //                (c0..c2 = x^0..x^2 coefs), kind=1..3 -> MMR order (c0 = constant).
+        // rs_mmr       = 3 channels x 8 segments x 6 float4, fixed stride per segment.
+        //                rows: [0..1]=order1 (linear + cross), [2..3]=order2, [4..5]=order3.
+        //                Zero-filled for orders below mmr_order (contributes nothing).
+        cbuffer DoviReshape : register(b1) {
+            float4 rs_meta[3];
+            float4 rs_pivots[6];
+            float4 rs_coeffs[24];
+            float4 rs_mmr[144];
+        }
+
         static const float PQ_M1 = 2610.0 / 16384.0;
         static const float PQ_M2 = 2523.0 / 4096.0 * 128.0;
         static const float PQ_C1 = 3424.0 / 4096.0;
         static const float PQ_C2 = 2413.0 / 4096.0 * 32.0;
         static const float PQ_C3 = 2392.0 / 4096.0 * 32.0;
-        static const float TARGET_WHITE_NITS = 250.0;
-        static const float KNEE = 2.0;
-        static const float ROLLOFF = 1.5;
-
+        // Matches libplacebo pl_shader_decode_color: only negatives are clamped to zero;
+        // values above 1.0 from the ycc_to_rgb matrix pass through unclamped and are
+        // handled later by tone mapping (saturating here would cap them at 10000 nits
+        // and flatten bright detail).
         float pq_eotf(float x) {
-            float p = pow(saturate(x), 1.0 / PQ_M2);
+            float p = pow(max(x, 0.0), 1.0 / PQ_M2);
             float num = max(p - PQ_C1, 0.0);
             float den = max(PQ_C2 - PQ_C3 * p, 1e-6);
             return pow(num / den, 1.0 / PQ_M1);
         }
 
+        // Input is in BT.709 space, use BT.709 luma coeffs
         float3 compress_gamut(float3 rgb) {
-            float luma = dot(rgb, float3(0.2627, 0.6780, 0.0593));
+            float luma = dot(rgb, float3(0.2126, 0.7152, 0.0722));
             float maxComp = max(max(rgb.r, rgb.g), rgb.b);
             float minComp = min(min(rgb.r, rgb.g), rgb.b);
             if (minComp < 0.0) {
@@ -957,33 +1057,117 @@ float4 main_ps(float4 pos : SV_POSITION, float2 tex : TEXCOORD) : SV_TARGET {
             return rgb;
         }
 
+        // MMR reshaping evaluation, ported from libplacebo reshape_mmr (src/shaders/colorspace.c).
+        // sig = clamped BL signal (I, C, P) in [0,1]. Base index uses fixed stride 6 float4
+        // per segment so unused order rows (zero-filled) contribute nothing.
+        float rs_mmr_eval(int ch, int seg, float3 sig, float w0, float order) {
+            int base = ch * 48 + seg * 6;
+            float s = w0;
+            float4 sigX;
+            sigX.xyz = sig.xxy * sig.yzz;
+            sigX.w = sigX.x * sig.z;
+            s += dot(rs_mmr[base + 0].xyz, sig);
+            s += dot(rs_mmr[base + 1], sigX);
+            if (order >= 2.0) {
+                float3 sig2 = sig * sig;
+                float4 sigX2 = sigX * sigX;
+                s += dot(rs_mmr[base + 2].xyz, sig2);
+                s += dot(rs_mmr[base + 3], sigX2);
+                if (order >= 3.0) {
+                    s += dot(rs_mmr[base + 4].xyz, sig2 * sig);
+                    s += dot(rs_mmr[base + 5], sigX2 * sigX);
+                }
+            }
+            return s;
+        }
+
+        // Piecewise reshaping of the BL signal, ported from libplacebo pl_shader_dovi_reshape.
+        // Segment selection is branchless via sentinel-padded pivots (1e9 = beyond range).
+        // The winning segment index equals the number of pivots passed (sum of tests).
+        float rs_reshape_channel(int ch, float3 sig, float s) {
+            int np = (int)rs_meta[ch].x;
+            int seg = 0;
+            float4 coeffs;
+            if (np > 2) {
+                float4 p0 = rs_pivots[ch * 2];
+                float4 p1 = rs_pivots[ch * 2 + 1];
+                float t0 = s >= p0.x ? 1.0 : 0.0;
+                float t1 = s >= p0.y ? 1.0 : 0.0;
+                float t2 = s >= p0.z ? 1.0 : 0.0;
+                float t3 = s >= p0.w ? 1.0 : 0.0;
+                float t4 = s >= p1.x ? 1.0 : 0.0;
+                float t5 = s >= p1.y ? 1.0 : 0.0;
+                float t6 = s >= p1.z ? 1.0 : 0.0;
+                seg = (int)(t0 + t1 + t2 + t3 + t4 + t5 + t6);
+                int cb = ch * 8;
+                coeffs = lerp(
+                    lerp(lerp(rs_coeffs[cb + 0], rs_coeffs[cb + 1], t0),
+                         lerp(rs_coeffs[cb + 2], rs_coeffs[cb + 3], t2), t1),
+                    lerp(lerp(rs_coeffs[cb + 4], rs_coeffs[cb + 5], t4),
+                         lerp(rs_coeffs[cb + 6], rs_coeffs[cb + 7], t6), t5),
+                    t3);
+            } else {
+                coeffs = rs_coeffs[ch * 8];
+            }
+            float y;
+            if (coeffs.w == 0.0) {
+                y = (coeffs.z * s + coeffs.y) * s + coeffs.x;
+            } else {
+                y = rs_mmr_eval(ch, seg, sig, coeffs.x, coeffs.w);
+            }
+            return y;
+        }
+
+        // Full 3-channel reshaping. All channels MUST be evaluated from the ORIGINAL
+        // signal: MMR curves are multivariate polynomials in (I, P, T), so overwriting
+        // one channel before the others are computed corrupts their inputs (hue shift).
+        // Output IS clamped to the pivot bounds [pivots[0], pivots[np-1]], exactly as
+        // libplacebo pl_shader_dovi_reshape does: unclamped reshape output overflows
+        // the ycc_to_rgb matrix input range, causing brightness blowout and green cast.
+        float3 dovi_reshape(float3 sig) {
+            float3 orig = clamp(sig, 0.0, 1.0);
+            float3 res = orig;
+            [unroll]
+            for (int c = 0; c < 3; c++) {
+                if (rs_meta[c].x >= 2.0) {
+                    float y = rs_reshape_channel(c, orig, orig[c]);
+                    res[c] = clamp(y, rs_meta[c].y, rs_meta[c].z);
+                }
+            }
+            return res;
+        }
+
         float4 main_ps(float4 pos : SV_POSITION, float2 tex : TEXCOORD) : SV_TARGET {
-            float I = texY.Sample(samplerState, tex);
+            float I = saturate(texY.Sample(samplerState, tex));
             float2 ctcp = texUV.Sample(samplerState, tex);
-            I = saturate(I);
-            float Ct = ctcp.x - 0.5;
-            float Cp = ctcp.y - 0.5;
+
+            float3 sig = float3(I, ctcp.x, ctcp.y);
+            // DV P5: BL signal is reshaped IPTPQc2 - undo reshaping first (poly/MMR curves)
+            if (rs_meta[0].x >= 2.0) sig = dovi_reshape(sig);
 
             float3 lin;
-            // RPU ycc_to_rgb_matrix needs RPU reshaping coeffs (poly/MMR) to work correctly.
-            // Currently only matrix is parsed, lacking reshaping coeffs, directly using matrix
-            // causes overly dark picture. Temporarily disabled, use standard BT.2100 fallback.
-            if (false) // was: dovi_offset_flag.w > 0.5, disabled until RPU reshaping is implemented
+            // RPU ycc_to_rgb_matrix + offset (AV_FRAME_DATA_DOVI_METADATA): converts the
+            // inverse-reshaped DV P5 IPT-PQ-c2 signal to PQ-domain RGB.
+            // The offset is the chroma centering offset: Ct/Cp are in [0,1] but the
+            // matrix expects them centered around 0, so we subtract offset BEFORE mul.
+            if (dovi_offset_flag.w > 0.5)
             {
-                // RPU ycc_to_rgb_matrix: ICtCp (already centered) -> RGB (PQ domain) -> PQ EOTF -> linear RGB (nits)
+                sig -= dovi_offset_flag.xyz; // center Ct/Cp around 0 (offset = [0, 0.5, 0.5])
                 float3 rgb_pq;
-                rgb_pq.r = dot(dovi_matrix_row0.xyz, float3(I, Ct, Cp));
-                rgb_pq.g = dot(dovi_matrix_row1.xyz, float3(I, Ct, Cp));
-                rgb_pq.b = dot(dovi_matrix_row2.xyz, float3(I, Ct, Cp));
+                rgb_pq.r = dot(dovi_matrix_row0.xyz, sig);
+                rgb_pq.g = dot(dovi_matrix_row1.xyz, sig);
+                rgb_pq.b = dot(dovi_matrix_row2.xyz, sig);
                 lin = float3(pq_eotf(rgb_pq.r), pq_eotf(rgb_pq.g), pq_eotf(rgb_pq.b)) * 10000.0;
             }
             else
             {
-                // Fallback: standard BT.2100 ICtCp->LMS->RGB (consistent pair)
+                // Fallback: standard BT.2100 ICtCp->LMS->RGB (consistent pair), chroma centered
+                float Ct = sig.y - 0.5;
+                float Cp = sig.z - 0.5;
                 // BT.2100 Table 5 inverse: ICtCp -> LMS (PQ domain)
-                float L = I + 0.008609 * Ct + 0.111029 * Cp;
-                float M = I - 0.008609 * Ct - 0.111029 * Cp;
-                float S = I + 0.560031 * Ct - 0.320627 * Cp;
+                float L = sig.x + 0.008609 * Ct + 0.111029 * Cp;
+                float M = sig.x - 0.008609 * Ct - 0.111029 * Cp;
+                float S = sig.x + 0.560031 * Ct - 0.320627 * Cp;
                 // PQ EOTF -> linear LMS (nits)
                 float3 lms = float3(pq_eotf(L), pq_eotf(M), pq_eotf(S)) * 10000.0;
                 // LMS -> BT.2020 RGB: inverse of BT.2100 Table 4 LMS matrix
@@ -994,24 +1178,28 @@ float4 main_ps(float4 pos : SV_POSITION, float2 tex : TEXCOORD) : SV_TARGET {
                      0.609 * lms.x - 1.751 * lms.y + 2.141 * lms.z);
             }
 
-            // BT.2020 -> BT.709 gamut + SDR tone mapping (same as HDR10 path)
+            // DV P5 -> HDR10 static rendering: RPU ycc_to_rgb_matrix replaces the standard
+            // BT.2100 ICtCp->LMS->RGB conversion. Its output is closest to BT.2020
+            // primaries (the RPU matrix is content-specific, tuned for the mastering
+            // display, but the standard BT.2020->BT.709 gamut conversion + compress_gamut
+            // provides the most neutral fallback for any mastering display primaries).
             float3x3 bt2020to709 = { 1.660496, -0.587656, -0.072840, -0.124547, 1.132895, -0.008348, -0.018154, -0.100597, 1.118751 };
+
             float3 lin709 = mul(bt2020to709, lin);
             lin709 = compress_gamut(lin709);
-            float3 sdr = lin709 / TARGET_WHITE_NITS;
-            sdr = max(sdr, 0.0);
-            float3 over = max(sdr - KNEE, 0.0);
-            sdr = min(sdr, KNEE) + over / (1.0 + over * ROLLOFF);
+            lin709 = max(lin709, 0.0);
+
+            // Reinhard tone mapping: reference white = 100 nits (BT.2408 SDR standard)
+            float3 hdr = lin709 / 100.0;
+            float3 sdr = hdr / (hdr + 1.0);
             sdr = saturate(sdr);
-            float lumaPre = dot(sdr, float3(0.2126, 0.7152, 0.0722));
-            sdr = sdr + 0.02 * saturate(1.0 - lumaPre * 2.0);
-            sdr = saturate(sdr);
-            sdr = (sdr - 0.5) * 1.05 + 0.5;
-            sdr = saturate(sdr);
-            sdr = pow(sdr, 1.0 / 2.2);
+
+            // Mild saturation boost in linear space (before gamma encode)
             float luma = dot(sdr, float3(0.2126, 0.7152, 0.0722));
-            sdr = lerp(float3(luma, luma, luma), sdr, 1.20);
+            sdr = lerp(float3(luma, luma, luma), sdr, 1.05);
             sdr = saturate(sdr);
+
+            sdr = pow(sdr, 1.0 / 2.2);
             return float4(sdr, 1.0);
         }";
 
@@ -1192,6 +1380,178 @@ float4 main_ps(float4 pos : SV_POSITION, float2 tex : TEXCOORD) : SV_TARGET {
 
             // 解绑SRV，避免下一帧VP写入纹理时仍被绑定
             _d3dContext.PSSetShaderResources(0, Array.Empty<ID3D11ShaderResourceView>());
+
+            // 像素级读回诊断（前3帧 + 每600帧）：定位色偏发生在VP/着色器/显示哪个阶段
+            if (_renderFrameCount <= 3 || _renderFrameCount % 600 == 0)
+                DiagReadbackHdr();
+        }
+
+        // ==================== 像素级读回诊断（定位色偏阶段） ====================
+        // 读取中间纹理/解码纹理/后缓冲中心像素，与着色器数学镜像对比：
+        // - 中间纹理RGB不等 → VP阶段问题；相等但后缓冲不等 → 着色器问题；
+        // - 后缓冲与expected一致 → 显示/交换链问题。
+        private static double PqToNits(double x)
+        {
+            const double m1 = 2610.0 / 16384.0, m2 = 2523.0 / 4096.0 * 128.0;
+            const double c1 = 3424.0 / 4096.0, c2 = 2413.0 / 4096.0 * 32.0, c3 = 2392.0 / 4096.0 * 32.0;
+            double p = Math.Pow(Math.Clamp(x, 0.0, 1.0), 1.0 / m2);
+            double num = Math.Max(p - c1, 0.0);
+            double den = Math.Max(c2 - c3 * p, 1e-6);
+            return Math.Pow(num / den, 1.0 / m1) * 10000.0;
+        }
+
+        // 着色器数学镜像：BT.2020线性nits → BT.709矩阵(row-first) → compress_gamut → BT.2446-1 → gamma2.2
+        private static (double r, double g, double b) ExpectedSdr(double rN, double gN, double bN)
+        {
+            double r = 1.660496 * rN - 0.587656 * gN - 0.072840 * bN;
+            double g = -0.124547 * rN + 1.132895 * gN - 0.008348 * bN;
+            double b = -0.018154 * rN - 0.100597 * gN + 1.118751 * bN;
+            double luma0 = 0.2126 * r + 0.7152 * g + 0.0722 * b;
+            double maxC = Math.Max(r, Math.Max(g, b)), minC = Math.Min(r, Math.Min(g, b));
+            if (minC < 0)
+            {
+                double s = Math.Min(-minC / Math.Max(maxC - minC, 1e-6), 1.0);
+                r += (luma0 - r) * s; g += (luma0 - g) * s; b += (luma0 - b) * s;
+            }
+            r = Math.Max(r, 0); g = Math.Max(g, 0); b = Math.Max(b, 0);
+            double luma = 0.2126 * r + 0.7152 * g + 0.0722 * b;
+            double e2 = Math.Pow(Math.Max(luma / 100.0, 0.0), 1.2);
+            double V = Math.Log10(1.0 + 9.0 * Math.Sqrt(e2));
+            double scale = e2 > 1e-6 ? V / e2 / 100.0 : 0.0;
+            r = Math.Min(Math.Max(r * scale, 0.0), 1.0);
+            g = Math.Min(Math.Max(g * scale, 0.0), 1.0);
+            b = Math.Min(Math.Max(b * scale, 0.0), 1.0);
+            return (Math.Pow(r, 1 / 2.2), Math.Pow(g, 1 / 2.2), Math.Pow(b, 1 / 2.2));
+        }
+
+        private ID3D11Texture2D? CreateStagingCopy(ID3D11Texture2D src)
+        {
+            try
+            {
+                var d = src.Description;
+                var staging = _d3dDevice!.CreateTexture2D(new Texture2DDescription
+                {
+                    Width = d.Width, Height = d.Height, MipLevels = 1, ArraySize = d.ArraySize,
+                    Format = d.Format, SampleDescription = new SampleDescription(1, 0),
+                    Usage = ResourceUsage.Staging, BindFlags = BindFlags.None,
+                    CPUAccessFlags = CpuAccessFlags.Read
+                });
+                _d3dContext!.CopyResource(src, staging);
+                return staging;
+            }
+            catch (Exception ex)
+            {
+                DebugLogger.WriteLine($"[DIAG] staging copy失败: {ex.Message}");
+                return null;
+            }
+        }
+
+        private void LogBackbufferCenter(string tag)
+        {
+            if (_backBufferTexture == null || _d3dContext == null) return;
+            var st = CreateStagingCopy(_backBufferTexture);
+            if (st == null) return;
+            using (st)
+            {
+                var m = _d3dContext.Map(st, 0, MapMode.Read);
+                try
+                {
+                    int cx = (int)st.Description.Width / 2, cy = (int)st.Description.Height / 2;
+                    nint off = (nint)cy * (nint)m.RowPitch + (nint)cx * 4;
+                    int v = Marshal.ReadInt32(m.DataPointer, (int)off);
+                    int b = v & 0xFF, g = (v >> 8) & 0xFF, r = (v >> 16) & 0xFF;
+                    DebugLogger.WriteLine($"{tag} backbuffer center R={r} G={g} B={b} /255=({r / 255.0:F3},{g / 255.0:F3},{b / 255.0:F3})");
+                }
+                finally { _d3dContext.Unmap(st, 0); }
+            }
+        }
+
+        /// <summary>HDR10路径诊断：读中间PQ纹理中心像素 + 后缓冲实际输出</summary>
+        private void DiagReadbackHdr()
+        {
+            try
+            {
+                if (_hdrTexture == null || _d3dContext == null) return;
+                var st = CreateStagingCopy(_hdrTexture);
+                if (st == null) return;
+                double r10 = 0, g10 = 0, b10 = 0;
+                string fmtName;
+                using (st)
+                {
+                    fmtName = st.Description.Format.ToString();
+                    var m = _d3dContext.Map(st, 0, MapMode.Read);
+                    try
+                    {
+                        int cx = (int)st.Description.Width / 2, cy = (int)st.Description.Height / 2;
+                        bool is16 = st.Description.Format == Format.R16G16B16A16_UNorm;
+                        nint off = (nint)cy * (nint)m.RowPitch + (nint)cx * (is16 ? 8 : 4);
+                        if (is16)
+                        {
+                            r10 = (ushort)Marshal.ReadInt16(m.DataPointer, (int)off) / 65535.0;
+                            g10 = (ushort)Marshal.ReadInt16(m.DataPointer, (int)off + 2) / 65535.0;
+                            b10 = (ushort)Marshal.ReadInt16(m.DataPointer, (int)off + 4) / 65535.0;
+                        }
+                        else
+                        {
+                            uint v = (uint)Marshal.ReadInt32(m.DataPointer, (int)off);
+                            r10 = (v & 0x3FF) / 1023.0;
+                            g10 = ((v >> 10) & 0x3FF) / 1023.0;
+                            b10 = ((v >> 20) & 0x3FF) / 1023.0;
+                        }
+                    }
+                    finally { _d3dContext.Unmap(st, 0); }
+                }
+                double rn = PqToNits(r10), gn = PqToNits(g10), bn = PqToNits(b10);
+                var exp = ExpectedSdr(rn, gn, bn);
+                DebugLogger.WriteLine($"[DIAG-HDR] inter({fmtName}) pq=({r10:F3},{g10:F3},{b10:F3}) nits=({rn:F1},{gn:F1},{bn:F1}) expected_sdr=({exp.r:F3},{exp.g:F3},{exp.b:F3})");
+                _d3dContext.OMSetRenderTargets(Array.Empty<ID3D11RenderTargetView>());
+                LogBackbufferCenter("[DIAG-HDR]");
+            }
+            catch (Exception ex) { DebugLogger.WriteLine($"[DIAG-HDR] 读回失败: {ex.Message}"); }
+        }
+
+        /// <summary>ICtCp路径诊断：读P010解码纹理中心像素(I,Ct,Cp) + 后缓冲实际输出</summary>
+        private void DiagReadbackIctcp(ID3D11Texture2D frameTexture)
+        {
+            try
+            {
+                if (_d3dContext == null) return;
+                var st = CreateStagingCopy(frameTexture);
+                if (st == null) return;
+                double I = 0, Ct = 0, Cp = 0;
+                using (st)
+                {
+                    var d = st.Description;
+                    int cx = (int)d.Width / 2, cy = (int)d.Height / 2;
+                    var my = _d3dContext.Map(st, 0, MapMode.Read);
+                    I = (ushort)Marshal.ReadInt16(my.DataPointer, (int)((nint)cy * (nint)my.RowPitch + (nint)cx * 2)) / 65535.0;
+                    _d3dContext.Unmap(st, 0);
+                    var muv = _d3dContext.Map(st, 1, MapMode.Read);
+                    nint off = (nint)(cy / 2) * (nint)muv.RowPitch + (nint)(cx / 2) * 4;
+                    Ct = (ushort)Marshal.ReadInt16(muv.DataPointer, (int)off) / 65535.0;
+                    Cp = (ushort)Marshal.ReadInt16(muv.DataPointer, (int)off + 2) / 65535.0;
+                    _d3dContext.Unmap(st, 1);
+                }
+                var dm = _doviMetadata;
+                if (dm?.HasValidMatrix == true && dm.YccToRgbMatrix?.Length >= 9 && dm.YccToRgbOffset?.Length >= 3)
+                {
+                    var M = dm.YccToRgbMatrix; var O = dm.YccToRgbOffset;
+                    double s0 = I - O[0], s1 = Ct - O[1], s2 = Cp - O[2];
+                    double rp = M[0] * s0 + M[1] * s1 + M[2] * s2;
+                    double gp = M[3] * s0 + M[4] * s1 + M[5] * s2;
+                    double bp = M[6] * s0 + M[7] * s1 + M[8] * s2;
+                    double rn = PqToNits(rp), gn = PqToNits(gp), bn = PqToNits(bp);
+                    var exp = ExpectedSdr(rn, gn, bn);
+                    DebugLogger.WriteLine($"[DIAG-ICP] sig(I={I:F4} Ct={Ct:F4} Cp={Cp:F4}) 未reshape→rgb_pq=({rp:F3},{gp:F3},{bp:F3}) nits=({rn:F1},{gn:F1},{bn:F1}) expected_sdr=({exp.r:F3},{exp.g:F3},{exp.b:F3})");
+                }
+                else
+                {
+                    DebugLogger.WriteLine($"[DIAG-ICP] sig(I={I:F4} Ct={Ct:F4} Cp={Cp:F4}) 无RPU矩阵");
+                }
+                _d3dContext.OMSetRenderTargets(Array.Empty<ID3D11RenderTargetView>());
+                LogBackbufferCenter("[DIAG-ICP]");
+            }
+            catch (Exception ex) { DebugLogger.WriteLine($"[DIAG-ICP] 读回失败: {ex.Message}"); }
         }
 
         /// <summary>
@@ -1272,6 +1632,88 @@ float4 main_ps(float4 pos : SV_POSITION, float2 tex : TEXCOORD) : SV_TARGET {
                 DoviCb* p = &cb;
                 _d3dContext!.UpdateSubresource(_doviConstantBuffer, 0, default, (IntPtr)p, 0, 0);
             }
+
+            UpdateDoviReshapeBuffer();
+        }
+
+        /// <summary>
+        /// 打包上传 RPU 重塑曲线到 b1 常量缓冲（libplacebo 布局）：
+        ///   rs_meta[c]   = (num_pivots, pivots[0], pivots[np-1], 0)
+        ///   rs_pivots    = 每通道 8 个内部 pivot [1..np-2]，剩余用 1e9 哨兵填充
+        ///   rs_coeffs    = poly: (c0,c1,c2,0)；MMR: (w0,0,0,order)
+        ///   rs_mmr       = 每段 6 个 float4，m 阶占 (2m, 2m+1) 两行，超出阶数补零
+        /// 无曲线数据时上传全零 → 着色器跳过重塑（保持旧行为）。
+        /// </summary>
+        private void UpdateDoviReshapeBuffer()
+        {
+            if (_d3dDevice == null || _d3dContext == null) return;
+
+            if (_doviReshapeBuffer == null)
+            {
+                var desc = new BufferDescription(2832, BindFlags.ConstantBuffer, ResourceUsage.Default, CpuAccessFlags.None);
+                _doviReshapeBuffer = _d3dDevice.CreateBuffer(desc);
+            }
+
+            // float 布局（float4 索引 → float 偏移）：rs_meta[0..11] rs_pivots[12..35] rs_coeffs[36..131] rs_mmr[132..707]
+            var f = new float[708];
+            var rs = _doviMetadata?.Reshape;
+            if (rs != null && rs.Length == 3)
+            {
+                for (int c = 0; c < 3; c++)
+                {
+                    var ch = rs[c];
+                    if (ch == null || ch.NumPivots < 2) continue;
+                    int np = ch.NumPivots;
+
+                    f[c * 4 + 0] = np;
+                    f[c * 4 + 1] = ch.Pivots[0];
+                    f[c * 4 + 2] = ch.Pivots[np - 1];
+
+                    for (int i = 0; i < 8; i++)
+                        f[12 + c * 8 + i] = (i + 1 <= np - 2) ? ch.Pivots[i + 1] : 1e9f;
+
+                    int segs = Math.Min(np - 1, 8);
+                    for (int j = 0; j < segs; j++)
+                    {
+                        int cbf = 36 + (c * 8 + j) * 4;
+                        if (ch.Method[j] == 0)
+                        {
+                            f[cbf] = ch.PolyCoef[j * 3];
+                            f[cbf + 1] = ch.PolyCoef[j * 3 + 1];
+                            f[cbf + 2] = ch.PolyCoef[j * 3 + 2];
+                            f[cbf + 3] = 0f; // kind=0: polynomial
+                        }
+                        else
+                        {
+                            f[cbf] = ch.MmrConstant[j];
+                            f[cbf + 3] = ch.MmrOrder[j]; // kind=MMR order [1,3]
+                            int order = Math.Max(1, Math.Min(3, ch.MmrOrder[j]));
+                            int mbf = 132 + (c * 48 + j * 6) * 4;
+                            for (int m = 0; m < 3; m++)
+                            {
+                                bool act = m < order;
+                                int src = (j * 3 + m) * 7;
+                                f[mbf + m * 8 + 0] = act ? ch.MmrCoef[src] : 0f;
+                                f[mbf + m * 8 + 1] = act ? ch.MmrCoef[src + 1] : 0f;
+                                f[mbf + m * 8 + 2] = act ? ch.MmrCoef[src + 2] : 0f;
+                                f[mbf + m * 8 + 3] = 0f;
+                                f[mbf + m * 8 + 4] = act ? ch.MmrCoef[src + 3] : 0f;
+                                f[mbf + m * 8 + 5] = act ? ch.MmrCoef[src + 4] : 0f;
+                                f[mbf + m * 8 + 6] = act ? ch.MmrCoef[src + 5] : 0f;
+                                f[mbf + m * 8 + 7] = act ? ch.MmrCoef[src + 6] : 0f;
+                            }
+                        }
+                    }
+                }
+            }
+
+            unsafe
+            {
+                fixed (float* p = f)
+                {
+                    _d3dContext.UpdateSubresource(_doviReshapeBuffer, 0, default, (IntPtr)p, 0, 0);
+                }
+            }
         }
 
         /// <summary>
@@ -1306,6 +1748,15 @@ float4 main_ps(float4 pos : SV_POSITION, float2 tex : TEXCOORD) : SV_TARGET {
                 // 更新 DOVI 常量缓冲（RPU ycc_to_rgb_matrix）
                 UpdateDoviConstantBuffer();
 
+                // 前3帧 + 每120帧打印ICtCp渲染状态
+                if (_renderFrameCount <= 3 || _renderFrameCount % 120 == 0)
+                {
+                    DebugLogger.WriteLine($"[ICtCp] RenderIctcpFrame slot={slot} frameTexture=0x{frameTexture.NativePointer:X} " +
+                        $"ySrv=0x{ySrvPtr:X} uvSrv=0x{uvSrvPtr:X} " +
+                        $"doviCb={(_doviConstantBuffer != null)} doviReshapeCb={(_doviReshapeBuffer != null)} " +
+                        $"hasMatrix={(_doviMetadata?.HasValidMatrix == true)}");
+                }
+
                 // 黑边清屏 + 视口按目标矩形（复用VP路径的宽高比letterbox计算）
                 _d3dContext.ClearRenderTargetView(_backBufferRtv, new Color4(0, 0, 0, 1));
                 var r = _cachedDestRect;
@@ -1318,12 +1769,17 @@ float4 main_ps(float4 pos : SV_POSITION, float2 tex : TEXCOORD) : SV_TARGET {
                 _d3dContext.PSSetShaderResources(0, new[] { _ictcpYSrvs[slot]!, _ictcpUVSrvs[slot]! });
                 _d3dContext.PSSetSampler(0, _samplerState);
                 _d3dContext.PSSetConstantBuffer(0, _doviConstantBuffer); // b0: DOVI matrix
+                _d3dContext.PSSetConstantBuffer(1, _doviReshapeBuffer);  // b1: DOVI reshape curves
                 _d3dContext.IASetVertexBuffer(0, _vertexBuffer, 16, 0);
                 _d3dContext.IASetPrimitiveTopology(PrimitiveTopology.TriangleStrip);
                 _d3dContext.Draw(4, 0);
 
                 // 解绑SRV，允许FFmpeg端复用纹理
                 _d3dContext.PSSetShaderResources(0, Array.Empty<ID3D11ShaderResourceView>());
+
+                // 像素级读回诊断（前3帧 + 每600帧）
+                if (_renderFrameCount <= 3 || _renderFrameCount % 600 == 0)
+                    DiagReadbackIctcp(frameTexture);
                 return true;
             }
             catch (Exception ex)
@@ -1345,6 +1801,9 @@ float4 main_ps(float4 pos : SV_POSITION, float2 tex : TEXCOORD) : SV_TARGET {
             if (yPlane == null || uPlane == null || vPlane == null || width <= 0 || height <= 0) return;
 
             byte[] nv12 = ConvertYUV420PToNV12(yPlane, uPlane, vPlane, width, height, yStride, uStride, vStride);
+            // 限制队列深度，防止渲染线程跟不上时内存无限增长
+            while (_nv12Queue.Count > 3)
+                _nv12Queue.TryDequeue(out _);
             _nv12Queue.Enqueue((nv12, width, width, height));
 
             if (Interlocked.CompareExchange(ref _renderQueued, 1, 0) == 0)
@@ -1587,6 +2046,8 @@ float4 main_ps(float4 pos : SV_POSITION, float2 tex : TEXCOORD) : SV_TARGET {
             _cleanupDone = true;
 
             _stopRequested = true;
+            _colorDiagLogged = false;
+            _renderFrameCount = 0;
             _d3dInitialized = false;
             _swapChainReady = false; // 与对象释放保持一致，防止清理后被误用
             _d3dContext?.ClearState(); _d3dContext?.Flush();

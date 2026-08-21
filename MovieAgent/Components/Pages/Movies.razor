@@ -13,9 +13,9 @@
     <MudText Typo="Typo.h4" Style="color: #E94560;">电影库</MudText>
 </MudStack>
 
- @if (!string.IsNullOrEmpty(_activeTag))
+@if (!string.IsNullOrEmpty(_activeTag))
 {
-    <MudAlert Severity="Severity.Info" Style="margin-bottom: 12px;" 
+    <MudAlert Severity="Severity.Info" Style="margin-bottom: 12px;"
               ShowCloseIcon="true" CloseIconClicked="ClearTagFilter">
         <MudText>当前筛选标签: <strong style="color: #E94560;">@_activeTag</strong></MudText>
     </MudAlert>
@@ -41,7 +41,7 @@
     <MudItem xs="6" sm="3" md="2">
         <MudSwitch @bind-Value="_sortDesc" @bind-Value:after="ApplyFilters" Label="降序" Color="Color.Primary" />
     </MudItem>
-</MudGrid> 
+</MudGrid>
 
 @if (_availableTags.Any())
 {
@@ -50,7 +50,7 @@
         <MudStack Row="true" Wrap="Wrap.Wrap" Spacing="2">
             @foreach (var tag in _availableTags)
             {
-                <MudChip T="string" Size="Size.Small" 
+                <MudChip T="string" Size="Size.Small"
                          Color="@(_selectedTags.Contains(tag) ? Color.Primary : Color.Default)"
                          OnClick="() => ToggleTag(tag)"
                          Style="@(_selectedTags.Contains(tag) ? "background: #E94560;" : "")">
@@ -99,36 +99,36 @@
                 <MudChip T="string" Color="@(_selectedResolution == resolution ? Color.Primary : Color.Default)" Size="Size.Small" OnClick="async () => await SelectResolution(resolution)" Class="filter-chip-sm">@resolution</MudChip>
             }
         </MudStack>
-        
+
         <MudDivider Vertical="true" Style="background: #444; height: 24px;" />
-        
+
         <MudStack Row="true" Spacing="1" AlignItems="AlignItems.Center">
             <MudText Typo="Typo.body2" Style="color: #888; width: 32px;">观看</MudText>
             <MudChip T="string" Color="@(_selectedWatched == null ? Color.Primary : Color.Default)" Size="Size.Small" OnClick="async () => await ClearWatched()" Class="filter-chip-sm">全部</MudChip>
             <MudChip T="string" Color="@(_selectedWatched == true ? Color.Primary : Color.Default)" Size="Size.Small" OnClick="async () => await SelectWatched(true)" Class="filter-chip-sm">已看</MudChip>
             <MudChip T="string" Color="@(_selectedWatched == false ? Color.Primary : Color.Default)" Size="Size.Small" OnClick="async () => await SelectWatched(false)" Class="filter-chip-sm">未看</MudChip>
         </MudStack>
-        
+
         <MudDivider Vertical="true" Style="background: #444; height: 24px;" />
-        
+
         <MudStack Row="true" Spacing="1" AlignItems="AlignItems.Center">
             <MudText Typo="Typo.body2" Style="color: #888; width: 32px;">收藏</MudText>
             <MudChip T="string" Color="@(_selectedFavorite == null ? Color.Primary : Color.Default)" Size="Size.Small" OnClick="async () => await ClearFavorite()" Class="filter-chip-sm">全部</MudChip>
             <MudChip T="string" Color="@(_selectedFavorite == true ? Color.Primary : Color.Default)" Size="Size.Small" OnClick="async () => await SelectFavorite(true)" Class="filter-chip-sm">已收藏</MudChip>
             <MudChip T="string" Color="@(_selectedFavorite == false ? Color.Primary : Color.Default)" Size="Size.Small" OnClick="async () => await SelectFavorite(false)" Class="filter-chip-sm">未收藏</MudChip>
         </MudStack>
-        
+
         <MudDivider Vertical="true" Style="background: #444; height: 24px;" />
-        
+
         <MudStack Row="true" Spacing="1" AlignItems="AlignItems.Center">
             <MudText Typo="Typo.body2" Style="color: #888; width: 32px;">年份</MudText>
             <MudTextField @bind-Value="_minYear" @bind-Value:after="ApplyFilters" Variant="Variant.Outlined" Margin="Margin.Dense" Style="width: 65px; font-size: 13px;" Placeholder="起始" />
             <MudText Style="color: #888;">-</MudText>
             <MudTextField @bind-Value="_maxYear" @bind-Value:after="ApplyFilters" Variant="Variant.Outlined" Margin="Margin.Dense" Style="width: 65px; font-size: 13px;" Placeholder="结束" />
         </MudStack>
-        
+
         <MudDivider Vertical="true" Style="background: #444; height: 24px;" />
-        
+
         <MudStack Row="true" Spacing="2" AlignItems="AlignItems.Center">
             <MudText Typo="Typo.body2" Style="color: #888; width: 32px;">评分</MudText>
             <MudSlider @bind-Value="_minRating" @bind-Value:after="ApplyFilters" Min="0" Max="10" Step="0.5" Style="width: 80px;" />
@@ -136,6 +136,28 @@
             <MudText Style="color: #888;">-</MudText>
             <MudSlider @bind-Value="_maxRating" @bind-Value:after="ApplyFilters" Min="0" Max="10" Step="0.5" Style="width: 80px;" />
             <MudText Typo="Typo.body2" Style="color: #E0E0E0; font-size: 12px;">@_maxRating.ToString("0.0")</MudText>
+        </MudStack>
+    </MudStack>
+
+    <MudStack Row="true" Spacing="4" AlignItems="AlignItems.Center" Style="margin-bottom: 8px;">
+        <MudStack Row="true" Spacing="1" AlignItems="AlignItems.Center">
+            <MudText Typo="Typo.body2" Style="color: #888; width: 48px;">HDR</MudText>
+            <MudChip T="string" Color="@(string.IsNullOrEmpty(_selectedHdrType) ? Color.Primary : Color.Default)" Size="Size.Small" OnClick="async () => await ClearHdrType()" Class="filter-chip-sm">全部</MudChip>
+            @foreach (var hdr in _allHdrTypes)
+            {
+                <MudChip T="string" Color="@(_selectedHdrType == hdr ? Color.Primary : Color.Default)" Size="Size.Small" OnClick="async () => await SelectHdrType(hdr)" Class="filter-chip-sm">@hdr</MudChip>
+            }
+        </MudStack>
+
+        <MudDivider Vertical="true" Style="background: #444; height: 24px;" />
+
+        <MudStack Row="true" Spacing="1" AlignItems="AlignItems.Center">
+            <MudText Typo="Typo.body2" Style="color: #888; width: 48px;">音频</MudText>
+            <MudChip T="string" Color="@(string.IsNullOrEmpty(_selectedAudioCodec) ? Color.Primary : Color.Default)" Size="Size.Small" OnClick="async () => await ClearAudioCodec()" Class="filter-chip-sm">全部</MudChip>
+            @foreach (var codec in _allAudioCodecs)
+            {
+                <MudChip T="string" Color="@(_selectedAudioCodec == codec ? Color.Primary : Color.Default)" Size="Size.Small" OnClick="async () => await SelectAudioCodec(codec)" Class="filter-chip-sm">@codec</MudChip>
+            }
         </MudStack>
     </MudStack>
 
@@ -151,23 +173,35 @@
     </MudStack>
 
     <MudStack Row="true" Spacing="1" AlignItems="AlignItems.Center">
-        <MudText Typo="Typo.body2" Style="color: #888; width: 32px;">语言</MudText>
-        <MudChip T="string" Color="@(_selectedLanguages.Count == 0 ? Color.Primary : Color.Default)" Size="Size.Small" OnClick="ClearLanguages" Class="filter-chip-sm">全部</MudChip>
-        @foreach (var language in _allLanguages)
-        {
-            <MudChip T="string" Color="@(_selectedLanguages.Contains(language) ? Color.Primary : Color.Default)" Size="Size.Small" OnClick="async () => await ToggleLanguage(language)" Class="filter-chip-sm">@language</MudChip>
-        }
+        <MudStack Row="true" Wrap="Wrap.NoWrap" Spacing="1" AlignItems="AlignItems.Center">
+            <MudText Typo="Typo.body2" Style="color: #888; width: 32px;">语言</MudText>
+            <MudChip T="string" Color="@(_selectedLanguages.Count == 0 ? Color.Primary : Color.Default)" Size="Size.Small" OnClick="ClearLanguages" Class="filter-chip-sm">全部</MudChip>
+        </MudStack>
+        <MudStack Row="true" Wrap="Wrap.Wrap" Spacing="1" Justify="Justify.FlexStart">
+
+            @foreach (var language in _allLanguages)
+            {
+                <MudChip T="string" Color="@(_selectedLanguages.Contains(language) ? Color.Primary : Color.Default)" Size="Size.Small" OnClick="async () => await ToggleLanguage(language)" Class="filter-chip-sm">@language</MudChip>
+            }
+        </MudStack>
     </MudStack>
 
     <MudStack Row="true" Spacing="4" AlignItems="AlignItems.Center" Style="margin-top: 8px;">
         <MudStack Row="true" Spacing="1" AlignItems="AlignItems.Center" Style="flex: 1;">
-            <MudText Typo="Typo.body2" Style="color: #888; width: 32px;">导演</MudText>
-            <MudChip T="string" Color="@(_selectedDirectors.Count == 0 ? Color.Primary : Color.Default)" Size="Size.Small" OnClick="async () => await ClearDirectors()" Class="filter-chip-sm">全部</MudChip>
-            @foreach (var dir in _allDirectors.Take(6))
-            {
-                <MudChip T="string" Color="@(_selectedDirectors.Contains(dir) ? Color.Primary : Color.Default)" Size="Size.Small" OnClick="async () => await ToggleDirector(dir)" Class="filter-chip-sm">@dir</MudChip>
-            }
-            @if (_allDirectors.Count > 6)
+            <MudStack Row="true" Wrap="Wrap.NoWrap" Spacing="1" AlignItems="AlignItems.Center">
+
+                <MudText Typo="Typo.body2" Style="color: #888; width: 37px;">导演</MudText>
+                <MudSwitch T="bool"  @bind-Value="_showChineseDirectors" @bind-Value:after="OnChineseDirectorToggle" Label="中国" Color="Color.Primary" Style="margin-left: 4px;" />
+                <MudChip T="string" Style="width: 48px;" Color="@(_selectedDirectors.Count == 0 ? Color.Primary : Color.Default)" Size="Size.Small" OnClick="async () => await ClearDirectors()" Class="filter-chip-sm">全部</MudChip>
+            </MudStack>
+            <MudStack Row="true" Wrap="Wrap.Wrap" Spacing="1" Justify="Justify.FlexStart">
+
+                @foreach (var dir in _allDirectors.Take(50))
+                {
+                    <MudChip T="string" Color="@(_selectedDirectors.Contains(dir) ? Color.Primary : Color.Default)" Size="Size.Small" OnClick="async () => await ToggleDirector(dir)" Class="filter-chip-sm">@dir</MudChip>
+                }
+            </MudStack>
+          @*   @if (_allDirectors.Count > 6)
             {
                 <MudMenu Icon="@Icons.Material.Filled.MoreHoriz" Size="Size.Small" Color="Color.Default">
                     @foreach (var dir in _allDirectors.Skip(6))
@@ -175,18 +209,25 @@
                         <MudMenuItem OnClick="async () => await ToggleDirector(dir)">@dir</MudMenuItem>
                     }
                 </MudMenu>
-            }
+            } *@
         </MudStack>
     </MudStack>
     <MudStack Row="true" Spacing="4" AlignItems="AlignItems.Center">
         <MudStack Row="true" Spacing="1" AlignItems="AlignItems.Center" Style="flex: 1;">
-            <MudText Typo="Typo.body2" Style="color: #888; width: 32px;">演员</MudText>
-            <MudChip T="string" Color="@(_selectedCasts.Count == 0 ? Color.Primary : Color.Default)" Size="Size.Small" OnClick="async () => await ClearCasts()" Class="filter-chip-sm">全部</MudChip>
-            @foreach (var cast in _allCasts.Take(6))
-            {
-                <MudChip T="string" Color="@(_selectedCasts.Contains(cast) ? Color.Primary : Color.Default)" Size="Size.Small" OnClick="async () => await ToggleCast(cast)" Class="filter-chip-sm">@cast</MudChip>
-            }
-            @if (_allCasts.Count > 6)
+            <MudStack Row="true" Wrap="Wrap.NoWrap" Spacing="1" AlignItems="AlignItems.Center">
+
+                <MudText Typo="Typo.body2" Style="color: #888; width: 37px;">演员</MudText>
+                <MudSwitch T="bool" @bind-Value="_showChineseCasts" @bind-Value:after="OnChineseCastToggle" Label="中国" Color="Color.Primary" Style="margin-left: 4px;" />
+                <MudChip T="string" Style="width: 48px;" Color="@(_selectedCasts.Count == 0 ? Color.Primary : Color.Default)" Size="Size.Small" OnClick="async () => await ClearCasts()" Class="filter-chip-sm">全部</MudChip>
+            </MudStack>
+            <MudStack Row="true" Wrap="Wrap.Wrap" Spacing="1" Justify="Justify.FlexStart">
+
+                @foreach (var cast in _allCasts.Take(40))
+                {
+                    <MudChip T="string" Color="@(_selectedCasts.Contains(cast) ? Color.Primary : Color.Default)" Size="Size.Small" OnClick="async () => await ToggleCast(cast)" Class="filter-chip-sm">@cast</MudChip>
+                }
+            </MudStack>
+          @*   @if (_allCasts.Count > 6)
             {
                 <MudMenu Icon="@Icons.Material.Filled.MoreHoriz" Size="Size.Small" Color="Color.Default">
                     @foreach (var cast in _allCasts.Skip(6))
@@ -194,7 +235,7 @@
                         <MudMenuItem OnClick="async () => await ToggleCast(cast)">@cast</MudMenuItem>
                     }
                 </MudMenu>
-            }
+            } *@
         </MudStack>
     </MudStack>
     <MudStack Row="true" Spacing="4" AlignItems="AlignItems.Center" Style="margin-top: 8px;">
@@ -218,7 +259,7 @@
 }
 else
 {
-    
+
     <MudTable Items="_movies" Hover="true" Style="background: #1A1A2E;">
         <HeaderContent>
             <MudTh>海报</MudTh>
@@ -244,17 +285,17 @@ else
                 }
             </MudTd>
             <MudTd>
-                <MudText Typo="Typo.caption"  >@context.Director</MudText>
+                <MudText Typo="Typo.caption">@context.Director</MudText>
 
-            </MudTd> 
+            </MudTd>
             <MudTd>
-                                <div style="display: flex; flex-wrap: wrap; gap: 4px; width:150px;">
+                <div style="display: flex; flex-wrap: wrap; gap: 4px; width:150px;">
 
-                <MudText Typo="Typo.caption"  >@context.Cast</MudText>
+                    <MudText Typo="Typo.caption">@context.Cast</MudText>
                 </div>
 
             </MudTd>
-           
+
             <MudTd>@context.ReleaseYear</MudTd>
             <MudTd>
                 @if (context.Rating.HasValue)
@@ -304,8 +345,8 @@ else
             <MudTablePager PageSizeOptions="new int[] { 15, 30, 50 }" />
         </PagerContent>
     </MudTable>
-  
-} 
+
+}
 
 @if (!_loading && _movies.Count == 0)
 {
@@ -319,8 +360,8 @@ else
     <DialogContent>
         <MudTextField @bind-Value="_editTitle" Label="电影标题" Variant="Variant.Outlined" Style="width: 100%;" />
         <MudText Typo="Typo.body2" Style="color: gray; margin-top: 8px;">
-                    修改标题后将自动从TMDB获取海报和媒体信息
-                </MudText>
+            修改标题后将自动从TMDB获取海报和媒体信息
+        </MudText>
     </DialogContent>
     <DialogActions>
         <MudButton OnClick="CloseEditDialog">取消</MudButton>
@@ -386,9 +427,15 @@ else
     private string _directorFilter = "";
     private string _castFilter = "";
     private bool? _selectedTVSeries;
+    private List<string> _allHdrTypes = new();
+    private string? _selectedHdrType;
+    private List<string> _allAudioCodecs = new();
+    private string? _selectedAudioCodec;
+    private bool _showChineseDirectors;
+    private bool _showChineseCasts;
 
     protected override async Task OnInitializedAsync()
-    { 
+    {
         ParseQueryParameters();
         NavigationManager.LocationChanged += OnLocationChanged;
 
@@ -479,6 +526,8 @@ else
         _allLanguages = await MovieRepo.GetAllLanguagesAsync();
         _allDirectors = await MovieRepo.GetAllDirectorsAsync();
         _allCasts = await MovieRepo.GetAllCastsAsync();
+        _allHdrTypes = await MovieRepo.GetAllHdrTypesAsync();
+        _allAudioCodecs = await MovieRepo.GetAllAudioCodecsAsync();
     }
 
     private async Task ToggleTag(string tag)
@@ -529,6 +578,8 @@ else
                 Countries = _selectedCountries.Any() ? _selectedCountries : null,
                 Languages = _selectedLanguages.Any() ? _selectedLanguages : null,
                 Resolution = string.IsNullOrEmpty(_selectedResolution) ? null : _selectedResolution,
+                HdrType = _selectedHdrType,
+                AudioCodec = _selectedAudioCodec,
                 MinYear = int.TryParse(_minYear, out minYearValue) ? minYearValue : null,
                 MaxYear = int.TryParse(_maxYear, out maxYearValue) ? maxYearValue : null,
                 MinRating = _minRating > 0 ? _minRating : null,
@@ -566,7 +617,7 @@ else
 
     private void PlayMovie(Movie movie)
     {
-        NavigationManager.NavigateTo($"/movie/{movie.Id}/videos"); 
+        NavigationManager.NavigateTo($"/movie/{movie.Id}/videos");
     }
 
     private void GoToDetail(int id) => NavigationManager.NavigateTo($"/movie/{id}");
@@ -593,7 +644,7 @@ else
     {
         _editingMovie = movie;
         _editTitle = movie.Title;
-        _editDialogOpen = true;  
+        _editDialogOpen = true;
     }
 
     private void CloseEditDialog()
@@ -613,8 +664,7 @@ else
 
         try
         {
-            _editingMovie.Title = _editTitle;
-
+            _editingMovie.Title = _editTitle; 
             var tmdbInfo = await TmdbService.SearchMovieAsync(_editTitle, _editingMovie.ReleaseYear);
             if (tmdbInfo != null)
             {
@@ -714,7 +764,7 @@ else
             {
                 await MovieRepo.UpdatePosterFromDirectoryAsync(_editingMovie);
                 await MovieRepo.UpdateMediaInfoFromDirectoryAsync(_editingMovie);
-                
+
                 // 使用统一更新服务，同步向量数据库
                 await MovieUpdateService.UpdateMovieWithVectorAsync(_editingMovie);
             }
@@ -789,6 +839,38 @@ else
     private async Task SelectTVSeries(bool? value) { _selectedTVSeries = _selectedTVSeries == value ? null : value; await ApplyFilters(); }
     private async Task ClearTVSeries() { _selectedTVSeries = null; await ApplyFilters(); }
 
+    private async Task SelectHdrType(string hdrType)
+    {
+        _selectedHdrType = _selectedHdrType == hdrType ? null : hdrType;
+        await ApplyFilters();
+    }
+    private async Task ClearHdrType() { _selectedHdrType = null; await ApplyFilters(); }
+
+    private async Task SelectAudioCodec(string codec)
+    {
+        _selectedAudioCodec = _selectedAudioCodec == codec ? null : codec;
+        await ApplyFilters();
+    }
+    private async Task ClearAudioCodec() { _selectedAudioCodec = null; await ApplyFilters(); }
+
+    private async Task OnChineseDirectorToggle()
+    {
+        _selectedDirectors.Clear();
+        _allDirectors = _showChineseDirectors
+            ? await MovieRepo.GetAllChineseDirectorsAsync()
+            : await MovieRepo.GetAllDirectorsAsync();
+        await ApplyFilters();
+    }
+
+    private async Task OnChineseCastToggle()
+    {
+        _selectedCasts.Clear();
+        _allCasts = _showChineseCasts
+            ? await MovieRepo.GetAllChineseCastsAsync()
+            : await MovieRepo.GetAllCastsAsync();
+        await ApplyFilters();
+    }
+
     private async Task ResetFilters()
     {
         _selectedGenres.Clear();
@@ -806,6 +888,8 @@ else
         _directorFilter = "";
         _castFilter = "";
         _selectedTVSeries = null;
+        _selectedHdrType = null;
+        _selectedAudioCodec = null;
         await ApplyFilters();
     }
 
@@ -813,7 +897,7 @@ else
     {
         _currentPage = 1;
         await LoadMovies();
-    } 
+    }
 
     private string BuildEmbeddingText(Movie movie)
     {
