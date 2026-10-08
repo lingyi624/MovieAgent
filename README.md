@@ -1,6 +1,10 @@
 AI智能电影管家MovieAgent
 
-https://github.com/lingyi624/MovieAgent/blob/master/%E5%BE%AE%E4%BF%A1%E5%9B%BE%E7%89%87_2026-06-08_154528_820.png
+<img width="2560" height="1440" alt="51fdee07551507f8d23b7d4247ee6580" src="https://github.com/user-attachments/assets/d3500211-9e37-44f7-93fe-9ddfdf27b2cf" />
+<img width="2560" height="1440" alt="03fee55375fbad08d8802ffc91a3c702" src="https://github.com/user-attachments/assets/2b8dad4f-43d4-452f-9939-e83f1c878d30" />
+<img width="2560" height="1440" alt="21078ffe3033545da053109af3f07dec" src="https://github.com/user-attachments/assets/21bd5cd8-4ba4-47b3-9675-c84735eb5166" />
+<img width="2560" height="1440" alt="ecedd16b35032fabf16fc16637d9281f" src="https://github.com/user-attachments/assets/257c8f04-bb6e-4f90-88aa-3da43d0969bc" />
+
 # 🎬 Movie Agent
 
 **Movie Agent** 是一款面向电影发烧友的 **AI 驱动的本地影视管理工具**。它将智能对话、电影管理、高清播放能力整合于一个桌面应用中，支持纯本地部署，保护你的数据隐私。
