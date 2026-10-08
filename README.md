@@ -1,18 +1,9 @@
 AI智能电影管家MovieAgent
 
-<img width="2560" height="1440" alt="b1dea0f808c8e2d5599de0eea8381d55" src="https://github.com/user-attachments/assets/1b325ac8-5f74-406f-b53d-a8f0f6d3687c" />
 <img width="2560" height="1440" alt="51fdee07551507f8d23b7d4247ee6580" src="https://github.com/user-attachments/assets/d3500211-9e37-44f7-93fe-9ddfdf27b2cf" />
 <img width="2560" height="1440" alt="03fee55375fbad08d8802ffc91a3c702" src="https://github.com/user-attachments/assets/2b8dad4f-43d4-452f-9939-e83f1c878d30" />
 <img width="2560" height="1440" alt="21078ffe3033545da053109af3f07dec" src="https://github.com/user-attachments/assets/21bd5cd8-4ba4-47b3-9675-c84735eb5166" />
 <img width="2560" height="1440" alt="ecedd16b35032fabf16fc16637d9281f" src="https://github.com/user-attachments/assets/257c8f04-bb6e-4f90-88aa-3da43d0969bc" />
-<img width="2560" height="1440" alt="feedff9d392cb416e0e74a2195572e60" src="https://github.com/user-attachments/assets/b244eaa8-875a-4078-ae94-106f495bab24" /> 
-<img width="2560" height="1440" alt="a90b958235f639e3b2e227448203c7a6" src="https://github.com/user-attachments/assets/ba2065d2-0e68-4b72-a7bc-fc0314ae6d74" />
-<img width="2560" height="1440" alt="5771554f5254b619fb08177be9721943" src="https://github.com/user-attachments/assets/2afa56ba-4708-4723-b4d1-c23c6a60e44f" />
-<img width="2560" height="1440" alt="4218351fa5fcc0d075e243a108495211" src="https://github.com/user-attachments/assets/5e044a17-7e2d-469a-9521-dfd0d3c72372" />
-<img width="2560" height="1440" alt="64b6c0b10f87aebe65355c002cc232eb" src="https://github.com/user-attachments/assets/a2780c7a-7592-49a7-89db-73550893ba65" />
-<img width="2560" height="1440" alt="24d945a57f2369b379f6f20712215ad3" src="https://github.com/user-attachments/assets/297ea46b-afa2-46a6-ae02-5948e2334e14" />
-<img width="2560" height="1440" alt="80617635cd82b5523c4d2ff1acca0278" src="https://github.com/user-attachments/assets/8a5edfcf-0b5d-4699-a0f2-6b4e7c14f4a9" />
-<img width="2560" height="1440" alt="7f8502dfa06a0e7444fbce0a5dc5acc3" src="https://github.com/user-attachments/assets/040e576f-2459-479d-ab25-80e9f8f92e86" />
 
 # 🎬 Movie Agent
 
