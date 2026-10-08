@@ -37,17 +37,16 @@ public class MovieScannerService : IMovieScannerService
         _configStorage = configStorage;
     }
 
-    async Task GetFilesSafe(string currentPath, HashSet<string> extensions, List<string> result)
+    void GetFilesSafe(string currentPath, HashSet<string> extensions, List<string> result, DateTime lastTime)
     {
         try
         {
-            var LastTime = await GetLastScanTimeAsync();
             DirectoryInfo rootDir = new DirectoryInfo(currentPath);
             var filteredDirs = rootDir.GetDirectories()
-                          .Where(d => d.CreationTime > LastTime)
+                          .Where(d => d.CreationTime > lastTime)
                           .ToList();
             var filteredFiles = rootDir.GetFiles()
-                      .Where(f => f.LastWriteTime > LastTime)
+                      .Where(f => f.LastWriteTime > lastTime)
                       .ToArray();
             foreach (var file in filteredFiles)
             {
@@ -59,7 +58,7 @@ public class MovieScannerService : IMovieScannerService
            
             foreach (var dir in filteredDirs)
             {
-                await GetFilesSafe(dir.FullName, extensions, result);
+                GetFilesSafe(dir.FullName, extensions, result, lastTime);
             }
         }
         catch (UnauthorizedAccessException)
@@ -77,6 +76,8 @@ public class MovieScannerService : IMovieScannerService
         return await Task.Run(async () =>
         {
             var files = new List<string>();
+            // 扫描时间在循环外读取一次，避免每个目录都去读一次配置
+            var lastScanTime = await GetLastScanTimeAsync();
             foreach (var path in sharePaths)
             {
                 if (!Directory.Exists(path))
@@ -88,7 +89,7 @@ public class MovieScannerService : IMovieScannerService
                 try
                 {
                     var found = new List<string>();
-                  await  GetFilesSafe(path, VideoExtensions, found);
+                    GetFilesSafe(path, VideoExtensions, found, lastScanTime);
                     files.AddRange(found);
                     ScanProgressChanged?.Invoke(this, new ScanProgressEventArgs
                     {
@@ -123,7 +124,7 @@ public class MovieScannerService : IMovieScannerService
             try
             {
                 var found = new List<string>();
-              await  GetFilesSafe(path, VideoExtensions, found);
+                GetFilesSafe(path, VideoExtensions, found, lastScanTime);
                 
                 foreach (var file in found)
                 {
@@ -158,11 +159,15 @@ public class MovieScannerService : IMovieScannerService
         return newFiles;
     }
 
+    // 扫描并行度：同时处理的文件数。每个文件包含一次 NAS 读取（FFmpeg 探测）
+    // 和最多两次 TMDB 网络请求，6 是吞吐与 TMDB 限流/NAS 磁盘竞争之间的折中值。
+    private const int ScanConcurrency = 6;
+
     public async Task<int> ImportNewMoviesAsync(List<string> filePaths, CancellationToken ct = default)
     {
         int total = filePaths.Count;
-        var movieDataList = new List<(string FilePath, Movie Movie, MediaInfoResult? MediaInfo)>();
-        
+        var stopwatch = Stopwatch.StartNew();
+
         ReportProgress(new ScanProgressEventArgs
         {
             Stage = "Scanning",
@@ -170,83 +175,129 @@ public class MovieScannerService : IMovieScannerService
             TotalScanned = 0
         });
 
-        for (int i = 0; i < total; i++)
+        // 一次性载入已有电影建立索引：既省掉每文件一次数据库查询，
+        // 也避免在并行区访问共享 DbContext（EF Core 不支持并发使用同一上下文）。
+        var existingByPath = new Dictionary<string, Movie>(StringComparer.OrdinalIgnoreCase);
+        try
         {
-            if (ct.IsCancellationRequested) break;
-            var fp = filePaths[i];
-            
-            // 只在处理完一批（每50个）或者最后更新进度，避免频繁UI更新
-            if (i % 50 == 0 || i == total - 1)
+            var existingMovies = await _repo.GetAllAsync();
+            foreach (var m in existingMovies)
             {
-                ReportProgress(new ScanProgressEventArgs
-                {
-                    Stage = "Scanning",
-                    CurrentFileName = System.IO.Path.GetFileName(fp),
-                    CurrentIndex = i + 1,
-                    TotalFiles = total,
-                    TotalScanned = i + 1
-                });
+                if (!string.IsNullOrEmpty(m.FilePath))
+                    existingByPath[m.FilePath] = m;
             }
+        }
+        catch (Exception ex)
+        {
+            Debug.WriteLine($"[Scanner] 预加载已有电影失败: {ex.Message}");
+        }
 
+        // 按下标写入结果数组，无锁且保持原始顺序
+        var results = new (string FilePath, Movie Movie, MediaInfoResult? MediaInfo, bool IsNew)?[total];
+        int slot = -1;
+        int finished = 0;
+
+        var parallelOptions = new ParallelOptions
+        {
+            CancellationToken = ct,
+            MaxDegreeOfParallelism = ScanConcurrency
+        };
+
+        await Parallel.ForEachAsync(filePaths, parallelOptions, async (fp, token) =>
+        {
+            var index = Interlocked.Increment(ref slot);
             try
             {
-                var existingMovie = await _repo.GetByFilePathAsync(fp);
+                existingByPath.TryGetValue(fp, out var existingMovie);
+                bool isNew = existingMovie == null;
 
                 Movie movie;
                 if (existingMovie != null)
                 {
-                    movie = existingMovie; 
+                    movie = existingMovie;
                 }
                 else
                 {
-                    movie = ParseFileName(fp);
-                    if (movie == null) continue;
+                    var parsed = ParseFileName(fp);
+                    if (parsed == null) return;
+                    movie = parsed;
                     movie.FilePath = fp;
                     try
                     {
-                        var fileInfo = new FileInfo(fp);
-                        movie.FileSize = fileInfo.Length;
+                        movie.FileSize = new FileInfo(fp).Length;
                     }
                     catch { }
                 }
 
+                // MediaInfo 是同步 FFmpeg 探测（要读 NAS 文件块），放到线程池执行；
+                // 已有完整媒体信息的电影跳过，避免重扫时重复读取网络盘。
                 MediaInfoResult? mediaInfo = null;
-                try
+                if (isNew || string.IsNullOrEmpty(movie.VideoCodec) || string.IsNullOrEmpty(movie.Resolution))
                 {
-                    mediaInfo = _mediaInfo.GetMediaInfo(fp);
-                    if (mediaInfo.Success)
+                    try
                     {
-                        movie.VideoCodec = mediaInfo.VideoCodec;
-                        movie.AudioCodec = mediaInfo.AudioCodec;
-                        movie.Resolution = mediaInfo.Resolution;
-                        movie.HdrType = mediaInfo.HdrType;
-                        movie.Width = mediaInfo.Width;
-                        movie.Height = mediaInfo.Height;
-                        movie.FrameRate = mediaInfo.FrameRate;
-                        movie.VideoBitrate = (long?)(mediaInfo.VideoBitrate * 1000000);
-                        movie.AudioBitrate = (long?)(mediaInfo.AudioBitrate * 1000);
+                        mediaInfo = await Task.Run(() => _mediaInfo.GetMediaInfo(fp), token);
+                        if (mediaInfo.Success)
+                        {
+                            movie.VideoCodec = mediaInfo.VideoCodec;
+                            movie.AudioCodec = mediaInfo.AudioCodec;
+                            movie.Resolution = mediaInfo.Resolution;
+                            movie.HdrType = mediaInfo.HdrType;
+                            movie.Width = mediaInfo.Width;
+                            movie.Height = mediaInfo.Height;
+                            movie.FrameRate = mediaInfo.FrameRate;
+                            movie.VideoBitrate = (long?)(mediaInfo.VideoBitrate * 1000000);
+                            movie.AudioBitrate = (long?)(mediaInfo.AudioBitrate * 1000);
+                        }
+                    }
+                    catch (Exception ex)
+                    {
+                        Debug.WriteLine($"[Scanner] MediaInfo error for {fp}: {ex.Message}");
                     }
                 }
-                catch (Exception ex)
+
+                // TMDB 每个文件最多两次网络请求，是最主要的耗时来源。
+                // 已取得元数据的电影不再重复请求，否则每次重扫都要全量拉取 3000 部。
+                if (isNew || string.IsNullOrEmpty(movie.TmdbId) || string.IsNullOrEmpty(movie.Overview))
                 {
-                    Debug.WriteLine($"[Scanner] MediaInfo error for {fp}: {ex.Message}");
+                    try
+                    {
+                        await _tmdb.FillMovieMetadataAsync(movie);
+                    }
+                    catch (Exception ex)
+                    {
+                        Debug.WriteLine($"[Scanner] TMDB metadata error for {fp}: {ex.Message}");
+                    }
                 }
 
-                try
-                {
-                    await _tmdb.FillMovieMetadataAsync(movie);
-                }
-                catch (Exception ex)
-                {
-                    Debug.WriteLine($"[Scanner] TMDB metadata error for {fp}: {ex.Message}");
-                }
-
-                movieDataList.Add((fp, movie, mediaInfo));
+                results[index] = (fp, movie, mediaInfo, isNew);
             }
             catch (Exception ex)
             {
                 Debug.WriteLine($"[Scanner] Error processing {fp}: {ex.Message}");
             }
+            finally
+            {
+                var done = Interlocked.Increment(ref finished);
+                // 每 20 个更新一次进度，避免频繁 UI 刷新
+                if (done % 20 == 0 || done == total)
+                {
+                    ReportProgress(new ScanProgressEventArgs
+                    {
+                        Stage = "Scanning",
+                        CurrentFileName = System.IO.Path.GetFileName(fp),
+                        CurrentIndex = done,
+                        TotalFiles = total,
+                        TotalScanned = done
+                    });
+                }
+            }
+        });
+
+        var movieDataList = new List<(string FilePath, Movie Movie, MediaInfoResult? MediaInfo, bool IsNew)>(total);
+        foreach (var r in results)
+        {
+            if (r.HasValue) movieDataList.Add(r.Value);
         }
 
         if (movieDataList.Count == 0)
@@ -275,10 +326,11 @@ public class MovieScannerService : IMovieScannerService
             });
         };
 
+        // 先写库（本地 SQLite，速度快），并取得新增电影的自增 Id 供向量生成使用
         var dbTask = Task.Run(async () =>
         {
             int count = 0;
-            foreach (var (fp, movie, mediaInfo) in movieDataList)
+            foreach (var (fp, movie, mediaInfo, isNew) in movieDataList)
             {
                 if (ct.IsCancellationRequested) break;
                 try
@@ -305,12 +357,18 @@ public class MovieScannerService : IMovieScannerService
 
         var vectorTask = Task.Run(async () =>
         {
-            int count = 0;
+            var count = 0;
+
+            // 等待写库完成，新增电影此时才拥有数据库 Id
+            var dbDone = await dbTask;
+
+            // 只为本次新导入的电影生成向量。已有电影的向量早已写入库中，
+            // 每次重扫都全量重算 3000+ 次本地推理是重复扫描的主要耗时来源。
             var moviesToVector = movieDataList
-                .Where(x => x.Movie.Id > 0)
+                .Where(x => x.IsNew && x.Movie.Id > 0)
                 .Select(x => x.Movie)
                 .ToList();
-            
+
             if (_vectorDb != null && moviesToVector.Count > 0)
             {
                 try
@@ -321,7 +379,7 @@ public class MovieScannerService : IMovieScannerService
                     
                     count = await _vectorDb.BatchGenerateAndAddAsync(vectorData, new Progress<(int Current, int Total, string Stage)>(p =>
                     {
-                        reportProgress(dbCount, p.Current);
+                        reportProgress(dbDone, p.Current);
                     }));
                 }
                 catch (Exception ex)
@@ -338,6 +396,9 @@ public class MovieScannerService : IMovieScannerService
         int vectorResult = vectorTask.Result;
 
         await UpdateLastScanTimeAsync();
+
+        stopwatch.Stop();
+        Debug.WriteLine($"[Scanner] 导入完成: {movieDataList.Count} 个文件, 写库 {dbResult} 条, 向量 {vectorResult} 条, 耗时 {stopwatch.Elapsed.TotalSeconds:F1}s");
 
         ReportProgress(new ScanProgressEventArgs
         {
@@ -377,7 +438,7 @@ public class MovieScannerService : IMovieScannerService
     {
         if (_configStorage != null)
         {
-            await _configStorage.SetConfigAsync(LastScanTimeKey, DateTime.UtcNow.ToString("o"));
+            await _configStorage.SetConfigAsync(LastScanTimeKey, DateTime.Now.ToString("o"));
         }
     }
 
